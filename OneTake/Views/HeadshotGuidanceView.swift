@@ -6,8 +6,11 @@ struct HeadshotGuidanceView: View {
     @Environment(\.dismiss) private var dismiss
 
     let audition: Audition
-    var targetAngle: HeadshotAngle? = nil
-    let onCompleted: () -> Void
+    /// When set, this view becomes a single-angle retake while retaining the
+    /// complete guided camera experience used by the multi-angle flow.
+    var retakeAngle: HeadshotAngle? = nil
+    var onRetakeComplete: ((UIImage) -> Void)? = nil
+    var onCompleted: () -> Void = {}
 
     @State private var guidanceService = HeadshotGuidanceService.shared
     @State private var currentStepIndex = 0 // 0: Front, 1: Left, 2: Right
@@ -27,7 +30,7 @@ struct HeadshotGuidanceView: View {
     private let sequence: [HeadshotAngle] = [.front, .left, .right]
 
     var currentAngle: HeadshotAngle {
-        if let target = targetAngle {
+        if let target = retakeAngle {
             return target
         }
         return sequence[min(currentStepIndex, sequence.count - 1)]
@@ -116,7 +119,7 @@ struct HeadshotGuidanceView: View {
                     }
                     triggerBatchCapture()
                 }
-                if let target = targetAngle, let idx = sequence.firstIndex(of: target) {
+                if let target = retakeAngle, let idx = sequence.firstIndex(of: target) {
                     currentStepIndex = idx
                 }
                 guidanceService.startSession(for: currentAngle)
@@ -164,31 +167,42 @@ struct HeadshotGuidanceView: View {
 
     @ViewBuilder
     private var angleSegmentedPicker: some View {
-        HStack(spacing: 2) {
-            ForEach(sequence, id: \.self) { angle in
-                let isSelected = (currentAngle == angle)
-                Button {
-                    if let idx = sequence.firstIndex(of: angle) {
-                        currentStepIndex = idx
-                        guidanceService.startSession(for: angle)
-                        guidanceService.announceAngle(angle)
+        if let retakeAngle {
+            Text("Retake \(retakeAngle.rawValue)")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 8)
+                .background(Color.black.opacity(0.55))
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 1))
+        } else {
+            HStack(spacing: 2) {
+                ForEach(sequence, id: \.self) { angle in
+                    let isSelected = (currentAngle == angle)
+                    Button {
+                        if let idx = sequence.firstIndex(of: angle) {
+                            currentStepIndex = idx
+                            guidanceService.startSession(for: angle)
+                            guidanceService.announceAngle(angle)
+                        }
+                    } label: {
+                        Text(angle.rawValue.capitalized)
+                            .font(.system(size: 11, weight: isSelected ? .bold : .medium))
+                            .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.5))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(isSelected ? Color.white.opacity(0.25) : Color.clear)
+                            .clipShape(Capsule())
                     }
-                } label: {
-                    Text(angle.rawValue.capitalized)
-                        .font(.system(size: 11, weight: isSelected ? .bold : .medium))
-                        .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.5))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(isSelected ? Color.white.opacity(0.25) : Color.clear)
-                        .clipShape(Capsule())
+                    .disabled(guidanceService.isCapturing)
                 }
-                .disabled(guidanceService.isCapturing)
             }
+            .padding(3)
+            .background(Color.black.opacity(0.55))
+            .clipShape(Capsule())
+            .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 1))
         }
-        .padding(3)
-        .background(Color.black.opacity(0.55))
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 1))
     }
 
     // MARK: - Live Viewfinder
@@ -629,9 +643,10 @@ struct HeadshotGuidanceView: View {
             default: break
             }
 
-            if targetAngle != nil {
+            if retakeAngle != nil {
                 guidanceService.stopSession()
-                self.showingReviewSheet = true
+                onRetakeComplete?(image)
+                dismiss()
                 return
             }
 

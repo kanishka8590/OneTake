@@ -217,9 +217,9 @@ struct AuditionPackageHubView: View {
         }
         // Capture Sheets
         .sheet(isPresented: $showingHeadshotFlow) {
-            HeadshotCaptureView(audition: audition) {
+            HeadshotCaptureView(audition: audition, onCompleted:  {
                 showBanner("Headshots saved successfully!")
-            }
+            })
         }
         .sheet(isPresented: $showingSlateSetup) {
             SlateProfileSetupView(audition: audition) {

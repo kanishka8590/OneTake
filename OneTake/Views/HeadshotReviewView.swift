@@ -134,12 +134,14 @@ struct HeadshotReviewView: View {
             }
             // Single Retake Camera Sheet
             .sheet(isPresented: $showingSingleRetakeCamera) {
-                SingleAngleCameraSheet(targetAngle: selectedAngle) { captured in
-                    showingSingleRetakeCamera = false
-                    updateImageForCurrentAngle(captured)
-                } onCancel: {
-                    showingSingleRetakeCamera = false
-                }
+                HeadshotCaptureView(
+                    audition: audition,
+                    retakeAngle: selectedAngle,
+                    onRetakeComplete: { captured in
+                        showingSingleRetakeCamera = false
+                        updateImageForCurrentAngle(captured)
+                    }
+                )
             }
             // Single Retake Photos Picker
             .photosPicker(
@@ -600,89 +602,5 @@ struct HeadshotReviewView: View {
         UIGraphicsEndImageContext()
 
         return result ?? original
-    }
-}
-
-// MARK: - Single Angle Camera Sheet (For Quick Retake)
-
-private struct SingleAngleCameraSheet: View {
-    @Environment(\.dismiss) private var dismiss
-
-    let targetAngle: HeadshotAngle
-    let onCaptured: (UIImage) -> Void
-    let onCancel: () -> Void
-
-    @State private var guidanceService = HeadshotGuidanceService.shared
-
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.black.ignoresSafeArea()
-
-                if let session = guidanceService.captureSession {
-                    LiveCameraPreview(session: session)
-                        .ignoresSafeArea()
-                }
-
-                // Silhouette Guide
-                GeometryReader { geo in
-                    let w = geo.size.width
-                    let h = geo.size.height
-
-                    ZStack {
-                        Ellipse()
-                            .stroke(Color.white.opacity(0.8), lineWidth: 2.5)
-                            .frame(width: w * 0.64, height: h * 0.46)
-                            .position(x: w / 2.0, y: h * 0.45)
-
-                        Text("Align \(targetAngle.rawValue) Angle")
-                            .font(Theme.Typography.cardTitle)
-                            .foregroundStyle(Color.white)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 6)
-                            .background(Color.black.opacity(0.6))
-                            .clipShape(Capsule())
-                            .position(x: w / 2.0, y: h * 0.16)
-                    }
-                }
-
-                // Shutter Button
-                VStack {
-                    Spacer()
-                    Button {
-                        guidanceService.startCountdown(seconds: 3) { captured in
-                            if let img = captured {
-                                guidanceService.stopSession()
-                                onCaptured(img)
-                            }
-                        }
-                    } label: {
-                        ZStack {
-                            Circle().stroke(Color.white, lineWidth: 4).frame(width: 74, height: 74)
-                            Circle().fill(Color.white).frame(width: 60, height: 60)
-                        }
-                    }
-                    .padding(.bottom, 36)
-                }
-            }
-            .navigationTitle("Retake \(targetAngle.rawValue)")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        guidanceService.stopSession()
-                        onCancel()
-                    }
-                    .foregroundStyle(.white)
-                }
-            }
-            .onAppear {
-                guidanceService.startSession(for: targetAngle)
-                guidanceService.announceAngle(targetAngle)
-            }
-            .onDisappear {
-                guidanceService.stopSession()
-            }
-        }
     }
 }
