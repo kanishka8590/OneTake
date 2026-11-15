@@ -1,0 +1,512 @@
+{
+  "source": "/Users/user6/Desktop/OneTake/OneTake/Views/AuditionDetailsEditorView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Edit Audition Details",
+        "location": {
+          "startingColumn": 50,
+          "startingLine": 237
+        }
+      },
+      {
+        "comment": "",
+        "key": "Audition Details",
+        "location": {
+          "startingColumn": 76,
+          "startingLine": 237
+        }
+      },
+      {
+        "comment": "",
+        "key": "Audition Information",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 66
+        }
+      },
+      {
+        "comment": "",
+        "key": "Production Type",
+        "location": {
+          "startingColumn": 42,
+          "startingLine": 98
+        }
+      },
+      {
+        "comment": "",
+        "key": "",
+        "location": {
+          "startingColumn": 44,
+          "startingLine": 104
+        }
+      },
+      {
+        "comment": "",
+        "key": "Submission Deadlines",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 120
+        }
+      },
+      {
+        "comment": "",
+        "key": "Submission Requirements",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 150
+        }
+      },
+      {
+        "comment": "",
+        "key": "Edit",
+        "location": {
+          "startingColumn": 42,
+          "startingLine": 159
+        }
+      },
+      {
+        "comment": "",
+        "key": "No extra notice requirements.",
+        "location": {
+          "startingColumn": 42,
+          "startingLine": 168
+        }
+      },
+      {
+        "comment": "",
+        "key": "Script Sides",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 196
+        }
+      },
+      {
+        "comment": "",
+        "key": "Change Sides",
+        "location": {
+          "startingColumn": 46,
+          "startingLine": 206
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save Changes",
+        "location": {
+          "startingColumn": 54,
+          "startingLine": 227
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save the Audition",
+        "location": {
+          "startingColumn": 71,
+          "startingLine": 227
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 241
+        }
+      },
+      {
+        "comment": "",
+        "key": "Edit Saved Audition",
+        "location": {
+          "startingColumn": 42,
+          "startingLine": 351
+        }
+      },
+      {
+        "comment": "",
+        "key": "Extracted from Notice",
+        "location": {
+          "startingColumn": 66,
+          "startingLine": 351
+        }
+      },
+      {
+        "comment": "",
+        "key": "Update casting call info, requirements, or script sides.",
+        "location": {
+          "startingColumn": 42,
+          "startingLine": 355
+        }
+      },
+      {
+        "comment": "",
+        "key": "Verify & customize your breakdown before starting.",
+        "location": {
+          "startingColumn": 103,
+          "startingLine": 355
+        }
+      },
+      {
+        "comment": "",
+        "key": "Attach dialogue sides for teleprompter scrolling & audio scene partner cues, or skip to capture freeform.",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 380
+        }
+      },
+      {
+        "comment": "",
+        "key": "Add Script Sides (Optional)",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 375
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld Cues",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 456
+        }
+      },
+      {
+        "comment": "",
+        "key": "Change Sides",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 472
+        }
+      },
+      {
+        "comment": "",
+        "key": "Remove",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 486
+        }
+      },
+      {
+        "comment": "",
+        "key": "Project Name",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 693
+        }
+      },
+      {
+        "comment": "",
+        "key": "Project Name",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 689
+        }
+      },
+      {
+        "comment": "",
+        "key": "Enter project title",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 690
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 697
+        }
+      },
+      {
+        "comment": "",
+        "key": "Role Details",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 715
+        }
+      },
+      {
+        "comment": "",
+        "key": "Character / Role Name",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 707
+        }
+      },
+      {
+        "comment": "",
+        "key": "Role Description",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 710
+        }
+      },
+      {
+        "comment": "",
+        "key": "Enter role name",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 708
+        }
+      },
+      {
+        "comment": "",
+        "key": "Character brief / age / details",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 711
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 719
+        }
+      },
+      {
+        "comment": "",
+        "key": "Deadline & Reminder",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 742
+        }
+      },
+      {
+        "comment": "",
+        "key": "Deadline",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 729
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reminder",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 733
+        }
+      },
+      {
+        "comment": "",
+        "key": "Submission Deadline",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 730
+        }
+      },
+      {
+        "comment": "",
+        "key": "Notify Me",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 734
+        }
+      },
+      {
+        "comment": "",
+        "key": "30 minutes before",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 735
+        }
+      },
+      {
+        "comment": "",
+        "key": "1 hour before",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 736
+        }
+      },
+      {
+        "comment": "",
+        "key": "2 hours before",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 737
+        }
+      },
+      {
+        "comment": "",
+        "key": "1 day before",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 738
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 746
+        }
+      },
+      {
+        "comment": "",
+        "key": "Recipient Email",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 763
+        }
+      },
+      {
+        "comment": "",
+        "key": "Casting / Submission Email",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 756
+        }
+      },
+      {
+        "comment": "",
+        "key": "e.g. casting@agency.com",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 757
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 767
+        }
+      },
+      {
+        "comment": "",
+        "key": "Edit Requirements",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 805
+        }
+      },
+      {
+        "comment": "",
+        "key": "Current Requirements",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 778
+        }
+      },
+      {
+        "comment": "",
+        "key": "Add Requirement",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 791
+        }
+      },
+      {
+        "comment": "",
+        "key": "New requirement...",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 793
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 809
+        }
+      },
+      {
+        "comment": "",
+        "key": "Attach Sides",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 858
+        }
+      },
+      {
+        "comment": "",
+        "key": "Choose Source",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 819
+        }
+      },
+      {
+        "comment": "",
+        "key": "Photo / Camera Roll",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 826
+        }
+      },
+      {
+        "comment": "",
+        "key": "Scan Document",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 835
+        }
+      },
+      {
+        "comment": "",
+        "key": "Files (PDF, DOCX, TXT)",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 844
+        }
+      },
+      {
+        "comment": "",
+        "key": "Type or Paste Sides",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 854
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 862
+        }
+      },
+      {
+        "comment": "",
+        "key": "Type or Paste Sides",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 886
+        }
+      },
+      {
+        "comment": "",
+        "key": "Paste your sides or character dialogue:",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 872
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 890
+        }
+      },
+      {
+        "comment": "",
+        "key": "Use Text",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 893
+        }
+      }
+    ]
+  },
+  "version": 1
+}

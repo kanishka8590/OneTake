@@ -1,0 +1,88 @@
+{
+  "source": "/Users/user6/Desktop/OneTake/OneTake/Views/TeleprompterRecorderView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "%lld",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 71
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reset",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 245
+        }
+      },
+      {
+        "comment": "",
+        "key": "0.5x",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 276
+        }
+      },
+      {
+        "comment": "",
+        "key": "2.5x",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 279
+        }
+      },
+      {
+        "comment": "",
+        "key": "Play Next Cue",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 338
+        }
+      },
+      {
+        "comment": "",
+        "key": "Light: %@",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 358
+        }
+      },
+      {
+        "comment": "",
+        "key": "Framing",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 372
+        }
+      },
+      {
+        "comment": "",
+        "key": "Disable voice guidance",
+        "location": {
+          "startingColumn": 76,
+          "startingLine": 412
+        }
+      },
+      {
+        "comment": "",
+        "key": "Enable voice guidance",
+        "location": {
+          "startingColumn": 103,
+          "startingLine": 412
+        }
+      },
+      {
+        "comment": "",
+        "key": "Flip camera",
+        "location": {
+          "startingColumn": 37,
+          "startingLine": 458
+        }
+      }
+    ]
+  },
+  "version": 1
+}

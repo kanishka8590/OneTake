@@ -1,0 +1,429 @@
+{
+  "" : {
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTake-primary.dia",
+    "emit-module-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTake-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTake-primary-emit-module.dia",
+    "pch" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTake-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTake-primary.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/AppState.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AppState.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AppState.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AppState.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AppState.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AppState.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AppState.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AppState.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AppState~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/MockData.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MockData.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MockData.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MockData.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MockData.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MockData.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MockData.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MockData.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MockData~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Models.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Models.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Models.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Models.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Models.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Models.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Models.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Models.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Models~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/OneTakeApp.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTakeApp.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTakeApp.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTakeApp.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTakeApp.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTakeApp.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTakeApp.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTakeApp.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTakeApp~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Services/CastingCallParserService.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CastingCallParserService.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CastingCallParserService.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CastingCallParserService.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CastingCallParserService.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CastingCallParserService.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CastingCallParserService.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CastingCallParserService.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CastingCallParserService~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Services/CuePartnerAudioEngine.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CuePartnerAudioEngine.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CuePartnerAudioEngine.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CuePartnerAudioEngine.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CuePartnerAudioEngine.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CuePartnerAudioEngine.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CuePartnerAudioEngine.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CuePartnerAudioEngine.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CuePartnerAudioEngine~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Services/HeadshotGuidanceService.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotGuidanceService.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotGuidanceService.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotGuidanceService.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotGuidanceService.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotGuidanceService.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotGuidanceService.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotGuidanceService.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotGuidanceService~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Services/PracticeSpeechPipeline.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeSpeechPipeline.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeSpeechPipeline.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeSpeechPipeline.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeSpeechPipeline.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeSpeechPipeline.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeSpeechPipeline.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeSpeechPipeline.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeSpeechPipeline~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Services/PracticeSpeechRecorder.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeSpeechRecorder.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeSpeechRecorder.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeSpeechRecorder.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeSpeechRecorder.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeSpeechRecorder.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeSpeechRecorder.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeSpeechRecorder.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeSpeechRecorder~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Services/TeleprompterRecorderService.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TeleprompterRecorderService.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TeleprompterRecorderService.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TeleprompterRecorderService.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TeleprompterRecorderService.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TeleprompterRecorderService.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TeleprompterRecorderService.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TeleprompterRecorderService.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TeleprompterRecorderService~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Services/VideoPostProcessingService.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VideoPostProcessingService.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VideoPostProcessingService.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VideoPostProcessingService.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VideoPostProcessingService.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VideoPostProcessingService.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VideoPostProcessingService.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VideoPostProcessingService.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VideoPostProcessingService~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Services/VoiceAuthorizationService.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VoiceAuthorizationService.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VoiceAuthorizationService.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VoiceAuthorizationService.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VoiceAuthorizationService.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VoiceAuthorizationService.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VoiceAuthorizationService.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VoiceAuthorizationService.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VoiceAuthorizationService~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Theme.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Theme.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Theme.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Theme.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Theme.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Theme.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Theme.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Theme.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Theme~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/AuditionDetailsEditorView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionDetailsEditorView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionDetailsEditorView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionDetailsEditorView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionDetailsEditorView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionDetailsEditorView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionDetailsEditorView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionDetailsEditorView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionDetailsEditorView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/AuditionModeAndCuesView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionModeAndCuesView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionModeAndCuesView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionModeAndCuesView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionModeAndCuesView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionModeAndCuesView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionModeAndCuesView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionModeAndCuesView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionModeAndCuesView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/AuditionPackageHubView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionPackageHubView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionPackageHubView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionPackageHubView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionPackageHubView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionPackageHubView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionPackageHubView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionPackageHubView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionPackageHubView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/AuditionsListView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionsListView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionsListView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionsListView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionsListView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionsListView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionsListView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionsListView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuditionsListView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/AuthView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuthView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuthView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuthView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuthView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuthView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuthView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuthView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AuthView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/CastingCallParsingView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CastingCallParsingView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CastingCallParsingView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CastingCallParsingView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CastingCallParsingView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CastingCallParsingView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CastingCallParsingView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CastingCallParsingView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CastingCallParsingView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/CueRecorderView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CueRecorderView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CueRecorderView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CueRecorderView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CueRecorderView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CueRecorderView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CueRecorderView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CueRecorderView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/CueRecorderView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/DocumentScannerRepresentable.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/DocumentScannerRepresentable.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/DocumentScannerRepresentable.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/DocumentScannerRepresentable.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/DocumentScannerRepresentable.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/DocumentScannerRepresentable.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/DocumentScannerRepresentable.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/DocumentScannerRepresentable.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/DocumentScannerRepresentable~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/GlobalSearchView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GlobalSearchView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GlobalSearchView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GlobalSearchView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GlobalSearchView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GlobalSearchView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GlobalSearchView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GlobalSearchView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GlobalSearchView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/HeadshotCropView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotCropView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotCropView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotCropView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotCropView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotCropView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotCropView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotCropView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotCropView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/HeadshotGuidanceView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotGuidanceView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotGuidanceView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotGuidanceView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotGuidanceView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotGuidanceView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotGuidanceView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotGuidanceView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotGuidanceView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/HeadshotImportPickerView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotImportPickerView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotImportPickerView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotImportPickerView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotImportPickerView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotImportPickerView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotImportPickerView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotImportPickerView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotImportPickerView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/HeadshotPackageGridView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotPackageGridView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotPackageGridView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotPackageGridView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotPackageGridView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotPackageGridView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotPackageGridView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotPackageGridView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotPackageGridView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/HeadshotReviewView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotReviewView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotReviewView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotReviewView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotReviewView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotReviewView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotReviewView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotReviewView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/HeadshotReviewView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/MainTabView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MainTabView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MainTabView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MainTabView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MainTabView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MainTabView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MainTabView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MainTabView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MainTabView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/OnboardingView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OnboardingView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OnboardingView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OnboardingView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OnboardingView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OnboardingView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OnboardingView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OnboardingView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OnboardingView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/PackageValidationAndExportView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PackageValidationAndExportView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PackageValidationAndExportView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PackageValidationAndExportView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PackageValidationAndExportView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PackageValidationAndExportView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PackageValidationAndExportView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PackageValidationAndExportView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PackageValidationAndExportView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/PracticeFlowView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeFlowView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeFlowView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeFlowView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeFlowView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeFlowView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeFlowView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeFlowView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeFlowView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/PracticeHubView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeHubView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeHubView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeHubView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeHubView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeHubView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeHubView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeHubView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/PracticeHubView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/ProfileSettingsViews.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/ProfileSettingsViews.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/ProfileSettingsViews.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/ProfileSettingsViews.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/ProfileSettingsViews.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/ProfileSettingsViews.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/ProfileSettingsViews.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/ProfileSettingsViews.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/ProfileSettingsViews~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/ProfileView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/ProfileView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/ProfileView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/ProfileView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/ProfileView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/ProfileView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/ProfileView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/ProfileView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/ProfileView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/SlateProfileSetupView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/SlateProfileSetupView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/SlateProfileSetupView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/SlateProfileSetupView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/SlateProfileSetupView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/SlateProfileSetupView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/SlateProfileSetupView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/SlateProfileSetupView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/SlateProfileSetupView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/SplashView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/SplashView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/SplashView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/SplashView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/SplashView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/SplashView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/SplashView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/SplashView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/SplashView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/TakeReviewView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TakeReviewView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TakeReviewView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TakeReviewView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TakeReviewView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TakeReviewView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TakeReviewView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TakeReviewView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TakeReviewView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/TakesListView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TakesListView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TakesListView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TakesListView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TakesListView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TakesListView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TakesListView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TakesListView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TakesListView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/TalkToOneTakeBriefingView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TalkToOneTakeBriefingView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TalkToOneTakeBriefingView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TalkToOneTakeBriefingView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TalkToOneTakeBriefingView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TalkToOneTakeBriefingView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TalkToOneTakeBriefingView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TalkToOneTakeBriefingView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TalkToOneTakeBriefingView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/TeleprompterRecorderView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TeleprompterRecorderView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TeleprompterRecorderView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TeleprompterRecorderView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TeleprompterRecorderView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TeleprompterRecorderView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TeleprompterRecorderView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TeleprompterRecorderView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/TeleprompterRecorderView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/VideoImportPickerView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VideoImportPickerView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VideoImportPickerView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VideoImportPickerView.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VideoImportPickerView.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VideoImportPickerView.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VideoImportPickerView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VideoImportPickerView.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/VideoImportPickerView~partial.swiftmodule"
+  },
+  "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/DerivedSources/GeneratedAssetSymbols.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GeneratedAssetSymbols.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GeneratedAssetSymbols.dia",
+    "index-unit-output-path" : "/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "llvm-bc" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GeneratedAssetSymbols.bc",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftdeps",
+    "swiftmodule" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GeneratedAssetSymbols~partial.swiftmodule"
+  }
+}

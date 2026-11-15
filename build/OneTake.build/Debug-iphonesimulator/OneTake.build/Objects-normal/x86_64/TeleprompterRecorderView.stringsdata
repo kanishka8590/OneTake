@@ -1,0 +1,96 @@
+{
+  "source": "/Users/user6/Desktop/OneTake/OneTake/Views/TeleprompterRecorderView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "%lld",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 71
+        }
+      },
+      {
+        "comment": "",
+        "key": "Camera Active (16:9 • 1080p • Mirror On)",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 217
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reset",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 243
+        }
+      },
+      {
+        "comment": "",
+        "key": "0.5x",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 274
+        }
+      },
+      {
+        "comment": "",
+        "key": "2.5x",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 277
+        }
+      },
+      {
+        "comment": "",
+        "key": "Play Next Cue",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 336
+        }
+      },
+      {
+        "comment": "",
+        "key": "Light: %@",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 356
+        }
+      },
+      {
+        "comment": "",
+        "key": "Framing",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 370
+        }
+      },
+      {
+        "comment": "",
+        "key": "Disable voice guidance",
+        "location": {
+          "startingColumn": 76,
+          "startingLine": 410
+        }
+      },
+      {
+        "comment": "",
+        "key": "Enable voice guidance",
+        "location": {
+          "startingColumn": 103,
+          "startingLine": 410
+        }
+      },
+      {
+        "comment": "",
+        "key": "Flip camera",
+        "location": {
+          "startingColumn": 37,
+          "startingLine": 456
+        }
+      }
+    ]
+  },
+  "version": 1
+}

@@ -1,0 +1,30 @@
+{
+  "/Users/user6/Desktop/OneTake/OneTake/Views/ProfileView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/ProfileView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/ProfileView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/ProfileView.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/ProfileView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/ProfileView.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/SlateProfileSetupView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/SlateProfileSetupView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/SlateProfileSetupView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/SlateProfileSetupView.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/SlateProfileSetupView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/SlateProfileSetupView.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/SplashView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/SplashView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/SplashView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/SplashView.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/SplashView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/SplashView.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/TakeReviewView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/TakeReviewView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/TakeReviewView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/TakeReviewView.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/TakeReviewView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/x86_64/TakeReviewView.swiftdeps"
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "source": "/Users/user6/Desktop/OneTake/OneTake/Views/HeadshotCropView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Adjust Crop",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "Ratio",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 73
+        }
+      },
+      {
+        "comment": "",
+        "key": "Auto-Align Face & Eye Line",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 90
+        }
+      },
+      {
+        "comment": "",
+        "key": "Apply Crop",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 105
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 116
+        }
+      }
+    ]
+  },
+  "version": 1
+}

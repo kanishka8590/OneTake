@@ -1,0 +1,208 @@
+{
+  "source": "/Users/user6/Desktop/OneTake/OneTake/Views/AuditionsListView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Auditions",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 114
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete Audition?",
+        "location": {
+          "startingColumn": 17,
+          "startingLine": 212
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 43,
+          "startingLine": 85
+        }
+      },
+      {
+        "comment": "",
+        "key": "Mark Sent",
+        "location": {
+          "startingColumn": 47,
+          "startingLine": 94
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reactivate",
+        "location": {
+          "startingColumn": 47,
+          "startingLine": 103
+        }
+      },
+      {
+        "comment": "",
+        "key": "Filter",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 119
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete \"%@\"",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 216
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 219
+        }
+      },
+      {
+        "comment": "",
+        "key": "This will permanently remove the audition, takes, and cue recordings.",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 221
+        }
+      },
+      {
+        "comment": "",
+        "key": "Add an audition",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 233
+        }
+      },
+      {
+        "comment": "",
+        "key": "Import the casting call requirements",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 237
+        }
+      },
+      {
+        "comment": "",
+        "key": "Type or Paste Notice",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 398
+        }
+      },
+      {
+        "comment": "",
+        "key": "Paste casting call notice, flyer, or sides text below:",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 384
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 402
+        }
+      },
+      {
+        "comment": "",
+        "key": "Read Call",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 406
+        }
+      },
+      {
+        "comment": "",
+        "key": "No Sent Auditions",
+        "location": {
+          "startingColumn": 48,
+          "startingLine": 453
+        }
+      },
+      {
+        "comment": "",
+        "key": "No Auditions Yet",
+        "location": {
+          "startingColumn": 70,
+          "startingLine": 453
+        }
+      },
+      {
+        "comment": "",
+        "key": "Auditions marked as sent will appear here.",
+        "location": {
+          "startingColumn": 48,
+          "startingLine": 457
+        }
+      },
+      {
+        "comment": "",
+        "key": "Import a casting call flyer, scan sides, or paste a notice to get started!",
+        "location": {
+          "startingColumn": 95,
+          "startingLine": 457
+        }
+      },
+      {
+        "comment": "",
+        "key": "Add an Audition",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 469
+        }
+      },
+      {
+        "comment": "",
+        "key": "Sent • 30-Day Link Active",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 497
+        }
+      },
+      {
+        "comment": "",
+        "key": "3 of 3 ready",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 500
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld of 3 ready",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 503
+        }
+      },
+      {
+        "comment": "",
+        "key": "Role: %@",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 510
+        }
+      },
+      {
+        "comment": "",
+        "key": "•",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 514
+        }
+      }
+    ]
+  },
+  "version": 1
+}

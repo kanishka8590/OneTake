@@ -1,0 +1,120 @@
+{
+  "source": "/Users/user6/Desktop/OneTake/OneTake/Views/HeadshotGuidanceView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "%lld",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 55
+        }
+      },
+      {
+        "comment": "",
+        "key": "Match this",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 94
+        }
+      },
+      {
+        "comment": "",
+        "key": "Simulator Active • %@ (%lld/3)",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 201
+        }
+      },
+      {
+        "comment": "",
+        "key": "Light: %@",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 275
+        }
+      },
+      {
+        "comment": "",
+        "key": "Tap, or say \"Action\" or \"Now\"",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 320
+        }
+      },
+      {
+        "comment": "",
+        "key": "Disable voice guidance",
+        "location": {
+          "startingColumn": 76,
+          "startingLine": 341
+        }
+      },
+      {
+        "comment": "",
+        "key": "Enable voice guidance",
+        "location": {
+          "startingColumn": 103,
+          "startingLine": 341
+        }
+      },
+      {
+        "comment": "",
+        "key": "Flip camera",
+        "location": {
+          "startingColumn": 37,
+          "startingLine": 377
+        }
+      },
+      {
+        "comment": "",
+        "key": "Talk to OneTake",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 438
+        }
+      },
+      {
+        "comment": "",
+        "key": "Hands-free voice commands for your headshot session",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 442
+        }
+      },
+      {
+        "comment": "",
+        "key": "Got It",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 477
+        }
+      },
+      {
+        "comment": "",
+        "key": "Industry Standard Headshot Guide",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 539
+        }
+      },
+      {
+        "comment": "",
+        "key": "For theatrical and commercial submissions, casting directors look for three essential angles: Front, 3/4 Left, and 3/4 Right.",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 543
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 570
+        }
+      }
+    ]
+  },
+  "version": 1
+}

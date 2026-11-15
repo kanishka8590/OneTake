@@ -1,0 +1,23 @@
+{
+  "/Users/user6/Desktop/OneTake/OneTake/AppState.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AppState.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AppState.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AppState.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AppState.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/AppState.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/MockData.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MockData.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MockData.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MockData.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MockData.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/MockData.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Models.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Models.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Models.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Models.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Models.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Models.swiftdeps"
+  }
+}

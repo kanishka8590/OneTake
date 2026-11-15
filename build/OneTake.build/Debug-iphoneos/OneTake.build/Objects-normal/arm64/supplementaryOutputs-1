@@ -1,0 +1,30 @@
+{
+  "/Users/user6/Desktop/OneTake/OneTake/Services/CastingCallParserService.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/CastingCallParserService.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/CastingCallParserService.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/CastingCallParserService.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/CastingCallParserService.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/CastingCallParserService.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Services/CuePartnerAudioEngine.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/CuePartnerAudioEngine.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/CuePartnerAudioEngine.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/CuePartnerAudioEngine.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/CuePartnerAudioEngine.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/CuePartnerAudioEngine.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Services/HeadshotGuidanceService.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotGuidanceService.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotGuidanceService.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotGuidanceService.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotGuidanceService.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotGuidanceService.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Services/PracticeSpeechPipeline.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/PracticeSpeechPipeline.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/PracticeSpeechPipeline.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/PracticeSpeechPipeline.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/PracticeSpeechPipeline.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/PracticeSpeechPipeline.swiftdeps"
+  }
+}

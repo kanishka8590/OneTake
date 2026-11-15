@@ -1,0 +1,304 @@
+{
+  "source": "/Users/user6/Desktop/OneTake/OneTake/Views/ProfileSettingsViews.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Recording settings",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 21
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reader cues",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 8
+        }
+      },
+      {
+        "comment": "",
+        "key": "Recording",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 15
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cue response",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 9
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cue delay",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 10
+        }
+      },
+      {
+        "comment": "",
+        "key": "Immediate",
+        "location": {
+          "startingColumn": 101,
+          "startingLine": 10
+        }
+      },
+      {
+        "comment": "",
+        "key": "+%llds",
+        "location": {
+          "startingColumn": 115,
+          "startingLine": 10
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cue volume",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 12
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld%%",
+        "location": {
+          "startingColumn": 61,
+          "startingLine": 12
+        }
+      },
+      {
+        "comment": "",
+        "key": "Teleprompter text",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 16
+        }
+      },
+      {
+        "comment": "",
+        "key": "Mirror front camera",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 17
+        }
+      },
+      {
+        "comment": "",
+        "key": "Video quality",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 18
+        }
+      },
+      {
+        "comment": "",
+        "key": "Frame rate",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 19
+        }
+      },
+      {
+        "comment": "",
+        "key": "30fps",
+        "location": {
+          "startingColumn": 95,
+          "startingLine": 19
+        }
+      },
+      {
+        "comment": "",
+        "key": "60fps",
+        "location": {
+          "startingColumn": 118,
+          "startingLine": 19
+        }
+      },
+      {
+        "comment": "",
+        "key": "Notification Preferences",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 37
+        }
+      },
+      {
+        "comment": "",
+        "key": "Audition Reminders",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 31
+        }
+      },
+      {
+        "comment": "",
+        "key": "Submission Reminders",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 32
+        }
+      },
+      {
+        "comment": "",
+        "key": "Practice Reminders",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 33
+        }
+      },
+      {
+        "comment": "",
+        "key": "Product Updates",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 34
+        }
+      },
+      {
+        "comment": "",
+        "key": "Privacy & data",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 64
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete account?",
+        "location": {
+          "startingColumn": 56,
+          "startingLine": 66
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete all local data?",
+        "location": {
+          "startingColumn": 76,
+          "startingLine": 66
+        }
+      },
+      {
+        "comment": "",
+        "key": "Storage on this device",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 54
+        }
+      },
+      {
+        "comment": "",
+        "key": "Privacy",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 58
+        }
+      },
+      {
+        "comment": "",
+        "key": "Privacy Policy",
+        "location": {
+          "startingColumn": 41,
+          "startingLine": 58
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete all local data",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 60
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete account",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 61
+        }
+      },
+      {
+        "comment": "",
+        "key": "Deleting local data removes auditions, recordings, practice sessions, and your profile from this device.",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 62
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete account",
+        "location": {
+          "startingColumn": 41,
+          "startingLine": 67
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete local data",
+        "location": {
+          "startingColumn": 60,
+          "startingLine": 67
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 71
+        }
+      },
+      {
+        "comment": "",
+        "key": "This removes your account data from this device. Contact support for any server-side request.",
+        "location": {
+          "startingColumn": 58,
+          "startingLine": 72
+        }
+      },
+      {
+        "comment": "",
+        "key": "This cannot be undone.",
+        "location": {
+          "startingColumn": 156,
+          "startingLine": 72
+        }
+      },
+      {
+        "comment": "",
+        "key": "Privacy Policy",
+        "location": {
+          "startingColumn": 359,
+          "startingLine": 79
+        }
+      },
+      {
+        "comment": "",
+        "key": "OneTake stores audition media and practice data on your device. Private delivery links are unlisted and expire after 30 days. We request camera, microphone, photo, speech, and notification access only for the features you enable.",
+        "location": {
+          "startingColumn": 63,
+          "startingLine": 79
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 440,
+          "startingLine": 79
+        }
+      }
+    ]
+  },
+  "version": 1
+}

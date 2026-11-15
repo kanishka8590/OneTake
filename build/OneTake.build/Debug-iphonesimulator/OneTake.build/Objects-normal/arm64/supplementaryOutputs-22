@@ -1,0 +1,23 @@
+{
+  "/Users/user6/Desktop/OneTake/OneTake/OneTakeApp.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTakeApp.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTakeApp.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTakeApp.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTakeApp.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/OneTakeApp.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Theme.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Theme.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Theme.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Theme.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Theme.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/Theme.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/DerivedSources/GeneratedAssetSymbols.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GeneratedAssetSymbols.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GeneratedAssetSymbols.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphonesimulator/OneTake.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftdeps"
+  }
+}

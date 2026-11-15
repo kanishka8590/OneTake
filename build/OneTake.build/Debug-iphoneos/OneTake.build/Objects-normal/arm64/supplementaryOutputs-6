@@ -1,0 +1,30 @@
+{
+  "/Users/user6/Desktop/OneTake/OneTake/Views/HeadshotPackageGridView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotPackageGridView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotPackageGridView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotPackageGridView.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotPackageGridView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotPackageGridView.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/HeadshotReviewView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotReviewView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotReviewView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotReviewView.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotReviewView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotReviewView.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/MainTabView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/MainTabView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/MainTabView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/MainTabView.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/MainTabView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/MainTabView.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/OnboardingView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/OnboardingView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/OnboardingView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/OnboardingView.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/OnboardingView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/OnboardingView.swiftdeps"
+  }
+}

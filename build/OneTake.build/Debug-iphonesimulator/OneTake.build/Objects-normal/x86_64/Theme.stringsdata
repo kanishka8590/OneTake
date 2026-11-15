@@ -1,0 +1,136 @@
+{
+  "source": "/Users/user6/Desktop/OneTake/OneTake/Theme.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "OneTake Design System",
+        "location": {
+          "startingColumn": 1,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "Colors",
+        "location": {
+          "startingColumn": 1,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "Typography",
+        "location": {
+          "startingColumn": 1,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "Screen Title (28 Bold)",
+        "location": {
+          "startingColumn": 1,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "Section Header (20 Semibold)",
+        "location": {
+          "startingColumn": 1,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "Card Title (17 Semibold)",
+        "location": {
+          "startingColumn": 1,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "Body Regular (15 Regular)",
+        "location": {
+          "startingColumn": 1,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "Caption Badge (12 Medium)",
+        "location": {
+          "startingColumn": 1,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "Buttons",
+        "location": {
+          "startingColumn": 1,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "Start Recording",
+        "location": {
+          "startingColumn": 1,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "View Library",
+        "location": {
+          "startingColumn": 1,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "Status Badges",
+        "location": {
+          "startingColumn": 1,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "Completed",
+        "location": {
+          "startingColumn": 1,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "In Progress",
+        "location": {
+          "startingColumn": 1,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "Failed",
+        "location": {
+          "startingColumn": 1,
+          "startingLine": 112
+        }
+      },
+      {
+        "comment": "",
+        "key": "Draft",
+        "location": {
+          "startingColumn": 1,
+          "startingLine": 112
+        }
+      }
+    ]
+  },
+  "version": 1
+}

@@ -1,0 +1,408 @@
+{
+  "source": "/Users/user6/Desktop/OneTake/OneTake/Views/ProfileView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Profile",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 172
+        }
+      },
+      {
+        "comment": "",
+        "key": "Log Out?",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 186
+        }
+      },
+      {
+        "comment": "",
+        "key": "Studio Metrics",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 42
+        }
+      },
+      {
+        "comment": "",
+        "key": "Credits & Previous Work",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 73
+        }
+      },
+      {
+        "comment": "",
+        "key": "Profile & settings",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 89
+        }
+      },
+      {
+        "comment": "",
+        "key": "Recording & Self-Tape Settings",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 98
+        }
+      },
+      {
+        "comment": "",
+        "key": "Rehearsal & Teleprompter",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 127
+        }
+      },
+      {
+        "comment": "",
+        "key": "Notifications",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 144
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 46
+        }
+      },
+      {
+        "comment": "",
+        "key": "Active Auditions",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 44
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 55
+        }
+      },
+      {
+        "comment": "",
+        "key": "Submitted Auditions",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 53
+        }
+      },
+      {
+        "comment": "",
+        "key": "Storage Used",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 62
+        }
+      },
+      {
+        "comment": "",
+        "key": "Edit slate",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 90
+        }
+      },
+      {
+        "comment": "",
+        "key": "Recording settings",
+        "location": {
+          "startingColumn": 40,
+          "startingLine": 91
+        }
+      },
+      {
+        "comment": "",
+        "key": "Notification Preferences",
+        "location": {
+          "startingColumn": 40,
+          "startingLine": 92
+        }
+      },
+      {
+        "comment": "",
+        "key": "Privacy & data",
+        "location": {
+          "startingColumn": 40,
+          "startingLine": 93
+        }
+      },
+      {
+        "comment": "",
+        "key": "Countdown Timer",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 99
+        }
+      },
+      {
+        "comment": "",
+        "key": "Auto-Trim Silence",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 106
+        }
+      },
+      {
+        "comment": "",
+        "key": "Noise Reduction by Default",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 110
+        }
+      },
+      {
+        "comment": "",
+        "key": "Mirror Front Camera",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 114
+        }
+      },
+      {
+        "comment": "",
+        "key": "Video Quality",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 118
+        }
+      },
+      {
+        "comment": "",
+        "key": "3 seconds",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 100
+        }
+      },
+      {
+        "comment": "",
+        "key": "5 seconds",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 101
+        }
+      },
+      {
+        "comment": "",
+        "key": "10 seconds",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 102
+        }
+      },
+      {
+        "comment": "",
+        "key": "Prompt Text Size",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 128
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cue Trigger Mode",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 135
+        }
+      },
+      {
+        "comment": "",
+        "key": "Audition Deadlines",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 145
+        }
+      },
+      {
+        "comment": "",
+        "key": "Practice Reminders",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 149
+        }
+      },
+      {
+        "comment": "",
+        "key": "Sign out",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 161
+        }
+      },
+      {
+        "comment": "",
+        "key": "Edit",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 175
+        }
+      },
+      {
+        "comment": "",
+        "key": "Log Out",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 187
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 192
+        }
+      },
+      {
+        "comment": "",
+        "key": "Are you sure you want to log out of OneTake?",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 194
+        }
+      },
+      {
+        "comment": "",
+        "key": "Representation: %@",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 239
+        }
+      },
+      {
+        "comment": "",
+        "key": "Edit Profile",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 339
+        }
+      },
+      {
+        "comment": "",
+        "key": "Profile photo",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 300
+        }
+      },
+      {
+        "comment": "",
+        "key": "Personal Details",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 305
+        }
+      },
+      {
+        "comment": "",
+        "key": "Credits & Past Projects",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 317
+        }
+      },
+      {
+        "comment": "",
+        "key": "Choose photo",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 302
+        }
+      },
+      {
+        "comment": "",
+        "key": "Full Name",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 306
+        }
+      },
+      {
+        "comment": "",
+        "key": "Email",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 307
+        }
+      },
+      {
+        "comment": "",
+        "key": "Height (e.g. 5'6\")",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 310
+        }
+      },
+      {
+        "comment": "",
+        "key": "Age",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 311
+        }
+      },
+      {
+        "comment": "",
+        "key": "Based In (e.g. Mumbai, India)",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 313
+        }
+      },
+      {
+        "comment": "",
+        "key": "Representation (e.g. Agency Name or Self-represented)",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 314
+        }
+      },
+      {
+        "comment": "",
+        "key": "Add project (e.g. Film Title)",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 326
+        }
+      },
+      {
+        "comment": "",
+        "key": "Add",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 327
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 343
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 350
+        }
+      }
+    ]
+  },
+  "version": 1
+}

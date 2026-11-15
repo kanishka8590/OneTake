@@ -1,0 +1,304 @@
+{
+  "source": "/Users/user6/Desktop/OneTake/OneTake/Views/PackageValidationAndExportView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Check your package",
+        "location": {
+          "startingColumn": 51,
+          "startingLine": 54
+        }
+      },
+      {
+        "comment": "",
+        "key": "Ready to Send",
+        "location": {
+          "startingColumn": 74,
+          "startingLine": 54
+        }
+      },
+      {
+        "comment": "",
+        "key": "Close",
+        "location": {
+          "startingColumn": 49,
+          "startingLine": 58
+        }
+      },
+      {
+        "comment": "",
+        "key": "Back",
+        "location": {
+          "startingColumn": 59,
+          "startingLine": 58
+        }
+      },
+      {
+        "comment": "",
+        "key": "Checking against the Requirements...",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 108
+        }
+      },
+      {
+        "comment": "",
+        "key": "Following casting instructions from your notice...",
+        "location": {
+          "startingColumn": 43,
+          "startingLine": 100
+        }
+      },
+      {
+        "comment": "",
+        "key": "Following standard casting call submission guidelines and format",
+        "location": {
+          "startingColumn": 98,
+          "startingLine": 100
+        }
+      },
+      {
+        "comment": "",
+        "key": "Continues even when an advisory item needs review",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 151
+        }
+      },
+      {
+        "comment": "",
+        "key": "A couple of things need attention...",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 135
+        }
+      },
+      {
+        "comment": "",
+        "key": "%@ Size is %lld MB — File limit is %lld MB",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 136
+        }
+      },
+      {
+        "comment": "",
+        "key": "Compress %@",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 141
+        }
+      },
+      {
+        "comment": "",
+        "key": "Review Your Package",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 149
+        }
+      },
+      {
+        "comment": "",
+        "key": "PASS",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 166
+        }
+      },
+      {
+        "comment": "",
+        "key": "REVIEW",
+        "location": {
+          "startingColumn": 44,
+          "startingLine": 166
+        }
+      },
+      {
+        "comment": "",
+        "key": "Bundle summary",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 190
+        }
+      },
+      {
+        "comment": "",
+        "key": "5 elements · ~%lld MB",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 186
+        }
+      },
+      {
+        "comment": "",
+        "key": "Share Package",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 194
+        }
+      },
+      {
+        "comment": "",
+        "key": "Rename %@",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 233
+        }
+      },
+      {
+        "comment": "",
+        "key": "Filename",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 222
+        }
+      },
+      {
+        "comment": "",
+        "key": "Send it your way",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 241
+        }
+      },
+      {
+        "comment": "",
+        "key": "Use whatever the casting notice asked for.",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 242
+        }
+      },
+      {
+        "comment": "",
+        "key": "Unlisted, works for 30 days",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 247
+        }
+      },
+      {
+        "comment": "",
+        "key": "Mail, AirDrop, Messages, or Save to Files",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 252
+        }
+      },
+      {
+        "comment": "",
+        "key": "Copy private link",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 244
+        }
+      },
+      {
+        "comment": "",
+        "key": "More ways to share",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 249
+        }
+      },
+      {
+        "comment": "",
+        "key": "Email %@",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 259
+        }
+      },
+      {
+        "comment": "",
+        "key": "Close",
+        "location": {
+          "startingColumn": 77,
+          "startingLine": 266
+        }
+      },
+      {
+        "comment": "",
+        "key": "Compress your Audition Clip",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 367
+        }
+      },
+      {
+        "comment": "",
+        "key": "COMPRESSING YOUR CLIP",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 357
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld%%",
+        "location": {
+          "startingColumn": 42,
+          "startingLine": 358
+        }
+      },
+      {
+        "comment": "",
+        "key": "Original: %lld MB → Compressed: ~%lld MB",
+        "location": {
+          "startingColumn": 70,
+          "startingLine": 358
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save Compressed File",
+        "location": {
+          "startingColumn": 65,
+          "startingLine": 363
+        }
+      },
+      {
+        "comment": "",
+        "key": "Compress Audition Clip",
+        "location": {
+          "startingColumn": 90,
+          "startingLine": 363
+        }
+      },
+      {
+        "comment": "",
+        "key": "Close",
+        "location": {
+          "startingColumn": 77,
+          "startingLine": 368
+        }
+      },
+      {
+        "comment": "",
+        "key": "It’s with casting.",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 450
+        }
+      },
+      {
+        "comment": "",
+        "key": "Break a leg.",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 452
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 453
+        }
+      }
+    ]
+  },
+  "version": 1
+}

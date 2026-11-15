@@ -1,0 +1,883 @@
+import SwiftUI
+import SwiftData
+import PhotosUI
+import AVFoundation
+
+enum PackageDeliverable: String, CaseIterable, Identifiable {
+    case headshots
+    case slate
+    case audition
+
+    var id: String { rawValue }
+
+    var stepNumber: Int {
+        switch self {
+        case .headshots: return 1
+        case .slate: return 2
+        case .audition: return 3
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .headshots: return "Headshot"
+        case .slate: return "Slate"
+        case .audition: return "Audition Clip"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .headshots: return "person.crop.rectangle.badge.plus"
+        case .slate: return "person.badge.shield.checkmark"
+        case .audition: return "movieclapper.fill"
+        }
+    }
+}
+
+enum PackageReviewTarget: Identifiable {
+    case headshots([HeadshotAsset])
+    case slate(VideoTake)
+    case audition(VideoTake)
+
+    var id: String {
+        switch self {
+        case .headshots: return "headshots"
+        case .slate(let take): return "slate-\(take.id)"
+        case .audition(let take): return "audition-\(take.id)"
+        }
+    }
+}
+
+struct AuditionPackageHubView: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+
+    @Bindable var audition: Audition
+
+    // Sheet / flow triggers
+    @State private var showingHeadshotFlow = false
+    @State private var showingSlateSetup = false
+    @State private var showingAuditionMode = false
+    @State private var showingDetailsEditor = false
+    @State private var showingPackageValidation = false
+    @State private var showingDeleteConfirmation = false
+
+    // Issue 8: Active review target enum
+    @State private var activeReviewTarget: PackageReviewTarget? = nil
+
+    // Upfront photo/video picker state
+    @State private var selectedHeadshotPhotoItems: [PhotosPickerItem] = []
+    @State private var showingHeadshotsPicker = false
+
+    @State private var selectedSlateVideoItem: PhotosPickerItem?
+    @State private var showingSlateVideoPicker = false
+
+    @State private var selectedAuditionVideoItem: PhotosPickerItem?
+    @State private var showingAuditionVideoPicker = false
+
+    // Imported photos review
+    @State private var showingHeadshotImportReview = false
+    @State private var importedHeadshotImages: [UIImage] = []
+
+    // Transient confirmation banners
+    @State private var bannerMessage: String?
+    @State private var bannerColor: Color = Theme.Colors.successGreen
+
+    // MARK: - Deliverables State
+
+    private func isDeliverableComplete(_ deliverable: PackageDeliverable) -> Bool {
+        switch deliverable {
+        case .headshots:
+            return audition.isHeadshotsReady
+        case .slate:
+            return audition.isSlateReady
+        case .audition:
+            return audition.isAuditionReady
+        }
+    }
+
+    private var incompleteDeliverables: [PackageDeliverable] {
+        PackageDeliverable.allCases.filter { !isDeliverableComplete($0) }
+    }
+
+    private var completedDeliverables: [PackageDeliverable] {
+        PackageDeliverable.allCases.filter { isDeliverableComplete($0) }
+    }
+
+    // MARK: - Body
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Theme.Colors.canvasBackground
+                .ignoresSafeArea()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    // Header: Eyebrow + Project Title + Deadline
+                    headerSection
+
+                    // PACKAGE header + 3-segment progress bar with labeled items
+                    packageProgressSection
+
+                    // Deliverables Section
+                    deliverablesSection
+
+                    // Export Package Button (Visible when at least 1 item ready)
+                    if audition.packageReadyCount > 0 {
+                        Button {
+                            showingPackageValidation = true
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "square.and.arrow.up.fill")
+                                Text("Export Package")
+                            }
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Theme.Colors.primaryPlum)
+                            .clipShape(Capsule())
+                        }
+                        .padding(.top, 4)
+                        .padding(.bottom, 36)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+            }
+
+            // Transient confirmation banner overlay
+            if let banner = bannerMessage {
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(bannerColor)
+                    Text(banner)
+                        .font(Theme.Typography.cardTitle)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                    Spacer()
+                }
+                .padding(14)
+                .background(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .shadow(color: Color.black.opacity(0.12), radius: 10, x: 0, y: 4)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .zIndex(99)
+            }
+        }
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .tabBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                        .frame(width: 32, height: 32)
+                        .background(Theme.Colors.lavenderSurface)
+                        .clipShape(Circle())
+                }
+            }
+
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
+                        showingDetailsEditor = true
+                    } label: {
+                        Label("Edit Audition Details", systemImage: "pencil")
+                    }
+
+                    Button(role: .destructive) {
+                        showingDeleteConfirmation = true
+                    } label: {
+                        Label("Delete Audition", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                        .frame(width: 32, height: 32)
+                        .background(Theme.Colors.lavenderSurface)
+                        .clipShape(Circle())
+                }
+            }
+        }
+        .confirmationDialog(
+            "Delete Audition?",
+            isPresented: $showingDeleteConfirmation
+        ) {
+            Button("Delete \"\(audition.projectName)\"", role: .destructive) {
+                appState.deleteAudition(audition)
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will permanently remove the audition, takes, and cue recordings.")
+        }
+        // Capture Sheets
+        .sheet(isPresented: $showingHeadshotFlow) {
+            HeadshotCaptureView(audition: audition) {
+                showBanner("Headshots saved successfully!")
+            }
+        }
+        .sheet(isPresented: $showingSlateSetup) {
+            SlateProfileSetupView(audition: audition) {
+                showBanner("Slate saved successfully!")
+            }
+        }
+        .sheet(isPresented: $showingAuditionMode) {
+            AuditionModeAndCuesView(audition: audition) {
+                showBanner("Audition take saved successfully!")
+            }
+        }
+        .sheet(isPresented: $showingDetailsEditor) {
+            AuditionDetailsEditorView(existingAudition: audition) { _ in
+                showBanner("Audition details updated!")
+            }
+        }
+        .sheet(isPresented: $showingPackageValidation) {
+            PackageValidationAndExportView(audition: audition)
+        }
+        // Issue 8: Direct Review FullScreenCover
+        .fullScreenCover(item: $activeReviewTarget) { target in
+            switch target {
+            case .headshots(let assets):
+                HeadshotReviewView(
+                    audition: audition,
+                    initialFront: nil,
+                    initialLeft: nil,
+                    initialRight: nil,
+                    assets: assets
+                ) {
+                    activeReviewTarget = nil
+                    showBanner("Headshots updated successfully!")
+                }
+            case .slate(let take):
+                TakeReviewView(
+                    audition: audition,
+                    rawVideoURL: URL(fileURLWithPath: take.filePath),
+                    totalDurationSeconds: take.durationSeconds,
+                    isSlate: true
+                ) { approvedTake in
+                    activeReviewTarget = nil
+                    audition.slateTakes.append(approvedTake)
+                    audition.selectedSlateTakeID = approvedTake.id
+                    for idx in audition.requirements.indices {
+                        if audition.requirements[idx].title.lowercased().contains("slate") {
+                            audition.requirements[idx].isCompleted = true
+                        }
+                    }
+                    try? appState.modelContext?.save()
+                    appState.loadData()
+                    showBanner("Slate video saved!")
+                } onRetake: {
+                    activeReviewTarget = nil
+                    showingSlateSetup = true
+                }
+            case .audition(let take):
+                TakeReviewView(
+                    audition: audition,
+                    rawVideoURL: URL(fileURLWithPath: take.filePath),
+                    totalDurationSeconds: take.durationSeconds,
+                    isSlate: false
+                ) { approvedTake in
+                    activeReviewTarget = nil
+                    audition.auditionTakes.append(approvedTake)
+                    audition.selectedAuditionTakeID = approvedTake.id
+                    for idx in audition.requirements.indices {
+                        let lower = audition.requirements[idx].title.lowercased()
+                        if lower.contains("audition") || lower.contains("self-tape") {
+                            audition.requirements[idx].isCompleted = true
+                        }
+                    }
+                    try? appState.modelContext?.save()
+                    appState.loadData()
+                    showBanner("Audition take saved!")
+                } onRetake: {
+                    activeReviewTarget = nil
+                    showingAuditionMode = true
+                }
+            }
+        }
+        // Upfront Photos Pickers
+        .photosPicker(
+            isPresented: $showingHeadshotsPicker,
+            selection: $selectedHeadshotPhotoItems,
+            maxSelectionCount: 3,
+            matching: .images
+        )
+        .onChange(of: selectedHeadshotPhotoItems) { _, items in
+            guard !items.isEmpty else { return }
+            loadUpfrontHeadshotPhotos(items)
+        }
+        .photosPicker(
+            isPresented: $showingSlateVideoPicker,
+            selection: $selectedSlateVideoItem,
+            matching: .videos
+        )
+        .onChange(of: selectedSlateVideoItem) { _, item in
+            guard let item = item else { return }
+            selectedSlateVideoItem = nil
+            loadUpfrontSlateVideo(item)
+        }
+        .photosPicker(
+            isPresented: $showingAuditionVideoPicker,
+            selection: $selectedAuditionVideoItem,
+            matching: .videos
+        )
+        .onChange(of: selectedAuditionVideoItem) { _, item in
+            guard let item = item else { return }
+            selectedAuditionVideoItem = nil
+            loadUpfrontAuditionVideo(item)
+        }
+        .sheet(isPresented: $showingHeadshotImportReview) {
+            if !importedHeadshotImages.isEmpty {
+                HeadshotReviewView(
+                    audition: audition,
+                    initialFront: importedHeadshotImages.indices.contains(0) ? importedHeadshotImages[0] : nil,
+                    initialLeft: importedHeadshotImages.indices.contains(1) ? importedHeadshotImages[1] : (importedHeadshotImages.indices.contains(0) ? importedHeadshotImages[0] : nil),
+                    initialRight: importedHeadshotImages.indices.contains(2) ? importedHeadshotImages[2] : (importedHeadshotImages.indices.contains(1) ? importedHeadshotImages[1] : nil)
+                ) {
+                    showingHeadshotImportReview = false
+                    importedHeadshotImages = []
+                    showBanner("Headshots saved successfully!")
+                }
+            }
+        }
+    }
+
+    // MARK: - Header Section
+
+    private var headerSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Eyebrow: "\(productionType.uppercased()) • AUDITIONING FOR \(roleName.uppercased())"
+            Text("\(audition.production.rawValue.uppercased()) • AUDITIONING FOR \(audition.roleName.uppercased())")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Theme.Colors.primaryPlum)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+
+            // Large bold project title
+            Text(audition.projectName)
+                .font(.system(size: 28, weight: .bold))
+                .foregroundStyle(Theme.Colors.textPrimary)
+                .lineLimit(2)
+                .minimumScaleFactor(0.85)
+
+            // Clean deadline line: "18 h left • Due 21 Nov, 10:00 AM"
+            Text(cleanDeadlineString)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Theme.Colors.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var cleanDeadlineString: String {
+        let diff = audition.deadline.timeIntervalSince(Date.now)
+        let timeRemaining: String
+        if audition.status == .sent {
+            return "Submitted • Complete"
+        } else if diff < 0 {
+            timeRemaining = "Overdue"
+        } else if diff < 3600 {
+            let mins = max(1, Int(diff / 60))
+            timeRemaining = "\(mins)m left"
+        } else if diff < 86400 {
+            let hours = max(1, Int(diff / 3600))
+            timeRemaining = "\(hours) h left"
+        } else {
+            let days = Int(diff / 86400)
+            timeRemaining = "\(days)d left"
+        }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d MMM, h:mm a"
+        let dueStr = formatter.string(from: audition.deadline)
+        return "\(timeRemaining) • Due \(dueStr)"
+    }
+
+    // MARK: - PACKAGE Progress Bar Section
+
+    private var packageProgressSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("PACKAGE")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Theme.Colors.textSecondary)
+
+                Spacer()
+
+                Text("\(audition.packageReadyCount) of 3 ready")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(audition.packageReadyCount == 3 ? Theme.Colors.successGreen : Theme.Colors.primaryPlum)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(audition.packageReadyCount == 3 ? Theme.Colors.successGreen.opacity(0.12) : Theme.Colors.lavenderSurface)
+                    .clipShape(Capsule())
+            }
+
+            // 3-segment progress bar (each segment colored by its own boolean)
+            HStack(spacing: 8) {
+                Capsule()
+                    .fill(audition.isHeadshotsReady ? Theme.Colors.successGreen : Theme.Colors.lavenderSurface)
+                    .frame(height: 6)
+                Capsule()
+                    .fill(audition.isSlateReady ? Theme.Colors.successGreen : Theme.Colors.lavenderSurface)
+                    .frame(height: 6)
+                Capsule()
+                    .fill(audition.isAuditionReady ? Theme.Colors.successGreen : Theme.Colors.lavenderSurface)
+                    .frame(height: 6)
+            }
+
+            // Labels under progress bar
+            HStack {
+                Text("Headshot")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(audition.isHeadshotsReady ? Theme.Colors.successGreen : Theme.Colors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Slate")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(audition.isSlateReady ? Theme.Colors.successGreen : Theme.Colors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                Text("Audition Clip")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(audition.isAuditionReady ? Theme.Colors.successGreen : Theme.Colors.textSecondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+    }
+
+    // MARK: - Deliverables Section
+
+    private var deliverablesSection: some View {
+        VStack(spacing: 12) {
+            // 1. Completed Items as Compact White Rounded Rows
+            ForEach(completedDeliverables) { deliverable in
+                completedRow(for: deliverable)
+            }
+
+            // 2. Current Incomplete Deliverable (Focus Card)
+            if let hero = incompleteDeliverables.first {
+                heroFocusCard(for: hero)
+
+                // 3. Any Remaining Incomplete Item After It as a Simple Compact Row
+                let remaining = incompleteDeliverables.dropFirst()
+                ForEach(Array(remaining)) { item in
+                    simpleRemainingRow(for: item)
+                }
+            } else if audition.packageReadyCount == 3 {
+                // All 3 Completed Card
+                allCompletedCard
+            }
+        }
+    }
+
+    // MARK: - Completed Row
+    // Compact white rounded rows with green checkmark.seal.fill, bold title, purple status, and Review button
+    private func completedRow(for deliverable: PackageDeliverable) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 20))
+                .foregroundStyle(Theme.Colors.successGreen)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(deliverableTitle(deliverable))
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Theme.Colors.textPrimary)
+
+                Text(completedStatusText(deliverable))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.Colors.primaryPlum)
+            }
+
+            Spacer()
+
+            Button("Review") {
+                triggerReview(for: deliverable)
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(Theme.Colors.primaryPlum)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(Theme.Colors.lavenderSurface)
+            .clipShape(Capsule())
+        }
+        .padding(14)
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 2)
+    }
+
+    private func deliverableTitle(_ deliverable: PackageDeliverable) -> String {
+        switch deliverable {
+        case .headshots: return "Headshot"
+        case .slate: return "Slate"
+        case .audition: return "Audition Clip"
+        }
+    }
+
+    private func completedStatusText(_ deliverable: PackageDeliverable) -> String {
+        switch deliverable {
+        case .headshots: return "3 Photos Saved"
+        case .slate: return "Video Saved"
+        case .audition: return "Video Saved"
+        }
+    }
+
+    // MARK: - Current Incomplete Focus Card
+    // UP NEXT • PIECE X OF 3 with ≈ 2 min, bold title, 1-line subtitle, primary pill & soft lavender pill
+
+    private func heroFocusCard(for deliverable: PackageDeliverable) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            // Eyebrow row: UP NEXT • PIECE X OF 3 on left, ≈ 2 min on right
+            HStack {
+                Text("UP NEXT • PIECE \(deliverable.stepNumber) OF 3")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Theme.Colors.primaryPlum)
+
+                Spacer()
+
+                Text("≈ 2 min")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.Colors.textSecondary)
+            }
+
+            // Bold Title
+            Text(focusCardTitle(deliverable))
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(Theme.Colors.textPrimary)
+
+            // Single short 1-line subtitle
+            Text(focusCardSubtitle(deliverable))
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(Theme.Colors.textSecondary)
+                .lineLimit(1)
+
+            // Buttons: Dark plum primary + soft lavender secondary
+            HStack(spacing: 10) {
+                Button {
+                    startAction(for: deliverable)
+                } label: {
+                    Text(focusPrimaryButtonTitle(deliverable))
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Theme.Colors.primaryPlum)
+                        .clipShape(Capsule())
+                }
+
+                Button {
+                    startImport(for: deliverable)
+                } label: {
+                    Text("Import from Photos")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.Colors.primaryPlum)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 14)
+                        .background(Theme.Colors.lavenderSurface)
+                        .clipShape(Capsule())
+                }
+            }
+        }
+        .padding(18)
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
+    }
+
+    private func focusCardTitle(_ deliverable: PackageDeliverable) -> String {
+        switch deliverable {
+        case .headshots: return "Your Headshots"
+        case .slate: return "Your Slate"
+        case .audition: return "Your Audition"
+        }
+    }
+
+    private func focusCardSubtitle(_ deliverable: PackageDeliverable) -> String {
+        switch deliverable {
+        case .headshots: return "Front, left profile, and right profile with auto-crop."
+        case .slate: return "Introduce yourself clearly using the teleprompter."
+        case .audition: return "Lights, Camera and Action!"
+        }
+    }
+
+    private func focusPrimaryButtonTitle(_ deliverable: PackageDeliverable) -> String {
+        switch deliverable {
+        case .headshots: return "Capture Headshots"
+        case .slate: return "Record your Slate"
+        case .audition: return "Record your Audition"
+        }
+    }
+
+    // MARK: - Simple Remaining Incomplete Row
+
+    private func simpleRemainingRow(for deliverable: PackageDeliverable) -> some View {
+        Button {
+            startAction(for: deliverable)
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(Theme.Colors.lavenderSurface)
+                        .frame(width: 32, height: 32)
+
+                    Image(systemName: deliverable.icon)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.Colors.primaryPlum)
+                }
+
+                Text(deliverableTitle(deliverable))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.Colors.textPrimary)
+
+                Spacer()
+
+                Text("Not started")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.Colors.textSecondary)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.Colors.textSecondary.opacity(0.5))
+            }
+            .padding(14)
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - All Completed Card
+
+    private var allCompletedCard: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 32))
+                .foregroundStyle(Theme.Colors.successGreen)
+
+            Text("Submission Package Ready!")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(Theme.Colors.textPrimary)
+
+            Text("Headshots, slate, and audition clips are fully completed.")
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(Theme.Colors.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(20)
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    // MARK: - Actions
+
+    private func startAction(for deliverable: PackageDeliverable) {
+        switch deliverable {
+        case .headshots: showingHeadshotFlow = true
+        case .slate: showingSlateSetup = true
+        case .audition: showingAuditionMode = true
+        }
+    }
+
+    private func startImport(for deliverable: PackageDeliverable) {
+        switch deliverable {
+        case .headshots: showingHeadshotsPicker = true
+        case .slate: showingSlateVideoPicker = true
+        case .audition: showingAuditionVideoPicker = true
+        }
+    }
+
+    // MARK: - Issue 8 Review Handler
+
+    private func triggerReview(for deliverable: PackageDeliverable) {
+        switch deliverable {
+        case .headshots:
+            activeReviewTarget = .headshots(audition.headshots)
+        case .slate:
+            if let take = audition.slateTakes.first(where: { $0.id == audition.selectedSlateTakeID }) ?? audition.slateTakes.last {
+                activeReviewTarget = .slate(take)
+            } else {
+                showingSlateSetup = true
+            }
+        case .audition:
+            if let take = audition.auditionTakes.first(where: { $0.id == audition.selectedAuditionTakeID }) ?? audition.auditionTakes.last {
+                activeReviewTarget = .audition(take)
+            } else {
+                showingAuditionMode = true
+            }
+        }
+    }
+
+    // MARK: - Upfront Import Loaders
+
+    private func loadUpfrontHeadshotPhotos(_ items: [PhotosPickerItem]) {
+        Task {
+            var images: [UIImage] = []
+            for item in items {
+                if let data = try? await item.loadTransferable(type: Data.self),
+                   let img = UIImage(data: data) {
+                    images.append(img)
+                }
+            }
+
+            guard !images.isEmpty else { return }
+
+            await MainActor.run {
+                self.importedHeadshotImages = images
+                self.selectedHeadshotPhotoItems = []
+                self.showingHeadshotImportReview = true
+            }
+        }
+    }
+
+    private func loadUpfrontSlateVideo(_ item: PhotosPickerItem) {
+        Task {
+            if let movie = try? await item.loadTransferable(type: MovieTransferable.self) {
+                let asset = AVURLAsset(url: movie.url)
+                let dur = (try? await asset.load(.duration).seconds) ?? 15.0
+                let take = VideoTake(
+                    title: "Imported Slate Take",
+                    filePath: movie.url.path,
+                    durationSeconds: dur,
+                    fileSizeMB: 10.0,
+                    trimEndSeconds: dur
+                )
+                await MainActor.run {
+                    self.activeReviewTarget = .slate(take)
+                }
+            }
+        }
+    }
+
+    private func loadUpfrontAuditionVideo(_ item: PhotosPickerItem) {
+        Task {
+            if let movie = try? await item.loadTransferable(type: MovieTransferable.self) {
+                let asset = AVURLAsset(url: movie.url)
+                let dur = (try? await asset.load(.duration).seconds) ?? 30.0
+                let take = VideoTake(
+                    title: "Imported Audition Take",
+                    filePath: movie.url.path,
+                    durationSeconds: dur,
+                    fileSizeMB: 25.0,
+                    trimEndSeconds: dur
+                )
+                await MainActor.run {
+                    self.activeReviewTarget = .audition(take)
+                }
+            }
+        }
+    }
+
+    // MARK: - Export Summary Sheet
+
+    private var exportSummarySheet: some View {
+        NavigationStack {
+            VStack(spacing: 24) {
+                Image(systemName: "shippingbox.fill")
+                    .font(.system(size: 54))
+                    .foregroundStyle(Theme.Colors.primaryPlum)
+                    .padding(.top, 24)
+
+                VStack(spacing: 6) {
+                    Text("Audition Submission Package")
+                        .font(Theme.Typography.screenTitle)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+
+                    Text("\(audition.projectName) • \(audition.roleName)")
+                        .font(Theme.Typography.bodyRegular)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    exportItemRow(
+                        title: "3 Headshots",
+                        subtitle: audition.isHeadshotsReady ? "All angles ready (\(audition.validationRules.requiredHeadshotRatio.rawValue))" : "Incomplete",
+                        isReady: audition.isHeadshotsReady
+                    )
+                    exportItemRow(
+                        title: "Slate Video",
+                        subtitle: audition.isSlateReady ? "Trimmed & sound cleaned" : "Not recorded",
+                        isReady: audition.isSlateReady
+                    )
+                    exportItemRow(
+                        title: "Audition Self-Tape",
+                        subtitle: audition.isAuditionReady ? "Final selected take" : "Not recorded",
+                        isReady: audition.isAuditionReady
+                    )
+                }
+                .padding()
+                .cardStyle()
+                .padding(.horizontal, 16)
+
+                Spacer()
+
+                VStack(spacing: 12) {
+                    Button {
+                        showingPackageValidation = false
+                        withAnimation {
+                            appState.updateAuditionStatus(audition, to: .sent)
+                            showBanner("Audition marked as Sent!")
+                        }
+                    } label: {
+                        Text("Mark Audition as Sent")
+                            .primaryCapsuleButton()
+                    }
+
+                    ShareLink(item: "Audition Package for \(audition.projectName) - \(audition.roleName)") {
+                        Text("Share via AirDrop or Mail")
+                            .secondaryLavenderButton()
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 24)
+            }
+            .navigationTitle("Package Summary")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { showingPackageValidation = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func exportItemRow(title: String, subtitle: String, isReady: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: isReady ? "checkmark.circle.fill" : "circle.dashed")
+                .foregroundStyle(isReady ? Theme.Colors.successGreen : Theme.Colors.textSecondary)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(Theme.Typography.cardTitle)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                Text(subtitle)
+                    .font(Theme.Typography.captionBadge)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+            }
+            Spacer()
+        }
+    }
+
+    // MARK: - Banner Trigger
+
+    private func showBanner(_ message: String, isSuccess: Bool = true) {
+        bannerMessage = message
+        bannerColor = isSuccess ? Theme.Colors.successGreen : Theme.Colors.warningAmber
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            withAnimation {
+                bannerMessage = nil
+            }
+        }
+    }
+}

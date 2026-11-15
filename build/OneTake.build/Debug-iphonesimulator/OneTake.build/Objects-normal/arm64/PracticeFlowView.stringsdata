@@ -1,0 +1,416 @@
+{
+  "source": "/Users/user6/Desktop/OneTake/OneTake/Views/PracticeFlowView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Practice a scene",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 38
+        }
+      },
+      {
+        "comment": "",
+        "key": "Practice a scene",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 18
+        }
+      },
+      {
+        "comment": "",
+        "key": "From an audition",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 24
+        }
+      },
+      {
+        "comment": "",
+        "key": "No recent sides",
+        "location": {
+          "startingColumn": 94,
+          "startingLine": 25
+        }
+      },
+      {
+        "comment": "",
+        "key": "Close",
+        "location": {
+          "startingColumn": 77,
+          "startingLine": 39
+        }
+      },
+      {
+        "comment": "",
+        "key": "Add practice script",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 50
+        }
+      },
+      {
+        "comment": "",
+        "key": "Scene title",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 49
+        }
+      },
+      {
+        "comment": "",
+        "key": "Paste or type script",
+        "location": {
+          "startingColumn": 75,
+          "startingLine": 49
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 81,
+          "startingLine": 51
+        }
+      },
+      {
+        "comment": "",
+        "key": "Continue",
+        "location": {
+          "startingColumn": 172,
+          "startingLine": 51
+        }
+      },
+      {
+        "comment": "",
+        "key": "Add Cue Lines",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 80
+        }
+      },
+      {
+        "comment": "",
+        "key": "Continue",
+        "location": {
+          "startingColumn": 154,
+          "startingLine": 79
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 70,
+          "startingLine": 82
+        }
+      },
+      {
+        "comment": "",
+        "key": "Add Cue Lines",
+        "location": {
+          "startingColumn": 84,
+          "startingLine": 87
+        }
+      },
+      {
+        "comment": "",
+        "key": "Tap each scene partner line to mark it as a cue. Every unmarked line is treated as the actor's line.",
+        "location": {
+          "startingColumn": 167,
+          "startingLine": 87
+        }
+      },
+      {
+        "comment": "",
+        "key": "Tap any line another speaker reads to make it a cue.",
+        "location": {
+          "startingColumn": 272,
+          "startingLine": 87
+        }
+      },
+      {
+        "comment": "",
+        "key": "CUE",
+        "location": {
+          "startingColumn": 885,
+          "startingLine": 89
+        }
+      },
+      {
+        "comment": "",
+        "key": "ADDED",
+        "location": {
+          "startingColumn": 893,
+          "startingLine": 89
+        }
+      },
+      {
+        "comment": "",
+        "key": "Level %lld of 3 — %@",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 105
+        }
+      },
+      {
+        "comment": "",
+        "key": "Continue",
+        "location": {
+          "startingColumn": 103,
+          "startingLine": 107
+        }
+      },
+      {
+        "comment": "",
+        "key": "Test Yourself",
+        "location": {
+          "startingColumn": 116,
+          "startingLine": 107
+        }
+      },
+      {
+        "comment": "",
+        "key": "Edit",
+        "location": {
+          "startingColumn": 69,
+          "startingLine": 111
+        }
+      },
+      {
+        "comment": "",
+        "key": "CUE",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 139
+        }
+      },
+      {
+        "comment": "",
+        "key": "Say It Aloud!",
+        "location": {
+          "startingColumn": 40,
+          "startingLine": 175
+        }
+      },
+      {
+        "comment": "",
+        "key": "Test Yourself!",
+        "location": {
+          "startingColumn": 58,
+          "startingLine": 175
+        }
+      },
+      {
+        "comment": "",
+        "key": "Test Yourself!",
+        "location": {
+          "startingColumn": 47,
+          "startingLine": 174
+        }
+      },
+      {
+        "comment": "",
+        "key": "Choose how much help you want before you start.",
+        "location": {
+          "startingColumn": 106,
+          "startingLine": 174
+        }
+      },
+      {
+        "comment": "",
+        "key": "Show",
+        "location": {
+          "startingColumn": 209,
+          "startingLine": 174
+        }
+      },
+      {
+        "comment": "",
+        "key": "Continue",
+        "location": {
+          "startingColumn": 374,
+          "startingLine": 174
+        }
+      },
+      {
+        "comment": "",
+        "key": "Next sentence: \"%@\"",
+        "location": {
+          "startingColumn": 105,
+          "startingLine": 213
+        }
+      },
+      {
+        "comment": "",
+        "key": "Need a clue?",
+        "location": {
+          "startingColumn": 61,
+          "startingLine": 212
+        }
+      },
+      {
+        "comment": "",
+        "key": "Recording microphone",
+        "location": {
+          "startingColumn": 460,
+          "startingLine": 214
+        }
+      },
+      {
+        "comment": "",
+        "key": "Start recording",
+        "location": {
+          "startingColumn": 485,
+          "startingLine": 214
+        }
+      },
+      {
+        "comment": "",
+        "key": "Resume",
+        "location": {
+          "startingColumn": 50,
+          "startingLine": 217
+        }
+      },
+      {
+        "comment": "",
+        "key": "Pause",
+        "location": {
+          "startingColumn": 61,
+          "startingLine": 217
+        }
+      },
+      {
+        "comment": "",
+        "key": "Start",
+        "location": {
+          "startingColumn": 72,
+          "startingLine": 217
+        }
+      },
+      {
+        "comment": "",
+        "key": "Stop",
+        "location": {
+          "startingColumn": 160,
+          "startingLine": 217
+        }
+      },
+      {
+        "comment": "",
+        "key": "Your delivery",
+        "location": {
+          "startingColumn": 69,
+          "startingLine": 253
+        }
+      },
+      {
+        "comment": "",
+        "key": "Practice saved",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 256
+        }
+      },
+      {
+        "comment": "",
+        "key": "Practice %lld",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 246
+        }
+      },
+      {
+        "comment": "",
+        "key": "%llds total · Skipped %lld · Forgot %lld · Hesitated %lld",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 249
+        }
+      },
+      {
+        "comment": "",
+        "key": "Retry",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 251
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save",
+        "location": {
+          "startingColumn": 90,
+          "startingLine": 251
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 75,
+          "startingLine": 256
+        }
+      },
+      {
+        "comment": "",
+        "key": "%llds",
+        "location": {
+          "startingColumn": 353,
+          "startingLine": 260
+        }
+      },
+      {
+        "comment": "",
+        "key": "Listen to your take",
+        "location": {
+          "startingColumn": 246,
+          "startingLine": 260
+        }
+      },
+      {
+        "comment": "",
+        "key": "No audio recording available",
+        "location": {
+          "startingColumn": 270,
+          "startingLine": 260
+        }
+      },
+      {
+        "comment": "",
+        "key": "Annotated delivery timeline",
+        "location": {
+          "startingColumn": 501,
+          "startingLine": 268
+        }
+      },
+      {
+        "comment": "",
+        "key": "Practice history",
+        "location": {
+          "startingColumn": 539,
+          "startingLine": 270
+        }
+      },
+      {
+        "comment": "",
+        "key": "Practice %lld · %@",
+        "location": {
+          "startingColumn": 336,
+          "startingLine": 270
+        }
+      },
+      {
+        "comment": "",
+        "key": "Close",
+        "location": {
+          "startingColumn": 622,
+          "startingLine": 270
+        }
+      }
+    ]
+  },
+  "version": 1
+}

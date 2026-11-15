@@ -1,0 +1,30 @@
+{
+  "/Users/user6/Desktop/OneTake/OneTake/Views/GlobalSearchView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/GlobalSearchView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/GlobalSearchView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/GlobalSearchView.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/GlobalSearchView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/GlobalSearchView.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/HeadshotCropView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotCropView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotCropView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotCropView.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotCropView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotCropView.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/HeadshotGuidanceView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotGuidanceView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotGuidanceView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotGuidanceView.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotGuidanceView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotGuidanceView.swiftdeps"
+  },
+  "/Users/user6/Desktop/OneTake/OneTake/Views/HeadshotImportPickerView.swift" : {
+    "const-values" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotImportPickerView.swiftconstvalues",
+    "dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotImportPickerView.d",
+    "diagnostics" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotImportPickerView.dia",
+    "object" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotImportPickerView.o",
+    "swift-dependencies" : "/Users/user6/Desktop/OneTake/build/OneTake.build/Debug-iphoneos/OneTake.build/Objects-normal/arm64/HeadshotImportPickerView.swiftdeps"
+  }
+}
