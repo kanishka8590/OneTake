@@ -30,14 +30,16 @@ struct AuthView: View {
                         ZStack {
                             Circle()
                                 .fill(Theme.Colors.lavenderSurface)
-                                .frame(width: 88, height: 88)
+                                .frame(width: 140, height: 140)
 
                             Image(systemName: "movieclapper.fill")
-                                .font(.system(size: 40, weight: .semibold))
-                                .foregroundStyle(Theme.Colors.primaryPlum)
+                                .font(.system(size: 60, weight: .semibold))
+                                .foregroundStyle(Theme.Colors.accent)
+                                .padding(.bottom, 5)
                         }
+                        .padding(.bottom, 20)
 
-                        VStack(spacing: 6) {
+                        VStack(spacing: 10) {
                             Text("Welcome to OneTake")
                                 .font(Theme.Typography.screenTitle)
                                 .foregroundStyle(Theme.Colors.textPrimary)
@@ -79,7 +81,7 @@ struct AuthView: View {
                                 Text("Continue with email")
                                     .font(Theme.Typography.cardTitle)
                             }
-                            .foregroundStyle(Theme.Colors.primaryPlum)
+                            .foregroundStyle(Theme.Colors.accent)
                             .frame(maxWidth: .infinity, minHeight: 50)
                             .background(Theme.Colors.lavenderSurface)
                             .clipShape(Capsule())
@@ -95,6 +97,7 @@ struct AuthView: View {
                                 .font(Theme.Typography.captionBadge)
                                 .foregroundStyle(Theme.Colors.textSecondary)
                                 .padding(.vertical, 8)
+                                .opacity(0)
                         }
                         .frame(minHeight: Theme.Layout.minTapTarget)
                         #endif
@@ -213,7 +216,6 @@ struct EmailOTPView: View {
                     Button("Cancel") {
                         isPresented = false
                     }
-                    .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
                 }
             }
             .onReceive(timer) { _ in
@@ -241,17 +243,18 @@ struct EmailOTPView: View {
             VStack(alignment: .leading, spacing: 8) {
                 TextField("name@example.com", text: $email)
                     .font(Theme.Typography.bodyRegular)
+                    .foregroundStyle(Theme.Colors.textPrimary)
                     .keyboardType(.emailAddress)
                     .textContentType(.emailAddress)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .focused($emailFieldFocused)
                     .padding()
-                    .background(Theme.Colors.cardSurface)
+                    .background(Theme.Colors.controlSurface)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.Layout.innerCornerRadius))
                     .overlay(
                         RoundedRectangle(cornerRadius: Theme.Layout.innerCornerRadius)
-                            .stroke(Theme.Colors.lavenderSurface, lineWidth: 1)
+                            .stroke(Theme.Colors.controlBorder, lineWidth: 1)
                     )
 
                 if let error = errorMessage {
@@ -266,7 +269,7 @@ struct EmailOTPView: View {
             } label: {
                 Text("Send Code")
                     .font(Theme.Typography.cardTitle)
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Theme.Colors.onAction)
                     .frame(maxWidth: .infinity, minHeight: 50)
                     .background(isValidEmail ? Theme.Colors.primaryPlum : Theme.Colors.primaryPlum.opacity(0.4))
                     .clipShape(Capsule())
@@ -296,16 +299,17 @@ struct EmailOTPView: View {
             VStack(alignment: .leading, spacing: 8) {
                 TextField("000000", text: $otpCode)
                     .font(.system(size: 28, weight: .bold, design: .monospaced))
+                    .foregroundStyle(Theme.Colors.textPrimary)
                     .multilineTextAlignment(.center)
                     .keyboardType(.numberPad)
                     .textContentType(.oneTimeCode)
                     .focused($otpFieldFocused)
                     .padding(.vertical, 16)
-                    .background(Theme.Colors.cardSurface)
+                    .background(Theme.Colors.controlSurface)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.Layout.innerCornerRadius))
                     .overlay(
                         RoundedRectangle(cornerRadius: Theme.Layout.innerCornerRadius)
-                            .stroke(Theme.Colors.lavenderSurface, lineWidth: 1)
+                            .stroke(Theme.Colors.controlBorder, lineWidth: 1)
                     )
                     .onChange(of: otpCode) { _, newValue in
                         if newValue.count > 6 {
@@ -333,7 +337,7 @@ struct EmailOTPView: View {
                         resendCode()
                     }
                     .font(Theme.Typography.captionBadge)
-                    .foregroundStyle(Theme.Colors.primaryPlum)
+                    .foregroundStyle(Theme.Colors.accent)
                     .frame(minHeight: Theme.Layout.minTapTarget)
                 }
                 Spacer()
@@ -344,7 +348,7 @@ struct EmailOTPView: View {
             } label: {
                 Text("Verify & Continue")
                     .font(Theme.Typography.cardTitle)
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Theme.Colors.onAction)
                     .frame(maxWidth: .infinity, minHeight: 50)
                     .background(otpCode.count == 6 ? Theme.Colors.primaryPlum : Theme.Colors.primaryPlum.opacity(0.4))
                     .clipShape(Capsule())

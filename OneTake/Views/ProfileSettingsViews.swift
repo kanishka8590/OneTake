@@ -8,13 +8,13 @@ struct RecordingSettingsView: View {
             Section("Reader cues") {
                 Picker("Cue response", selection: Bindable(appState.settings).cueTriggerMode) { ForEach(CueTriggerMode.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
                 HStack { Text("Cue delay"); Spacer(); Text(appState.settings.cueDelaySeconds == 0 ? "Immediate" : "+\(Int(appState.settings.cueDelaySeconds))s").foregroundStyle(Theme.Colors.textSecondary) }
-                Slider(value: Bindable(appState.settings).cueDelaySeconds, in: 0...5, step: 1).tint(Theme.Colors.primaryPlum)
+                Slider(value: Bindable(appState.settings).cueDelaySeconds, in: 0...5, step: 1).tint(Theme.Colors.accent)
                 HStack { Text("Cue volume"); Spacer(); Text("\(Int(appState.settings.cueVolume * 100))%") }
-                Slider(value: Bindable(appState.settings).cueVolume, in: 0...1).tint(Theme.Colors.primaryPlum)
+                Slider(value: Bindable(appState.settings).cueVolume, in: 0...1).tint(Theme.Colors.accent)
             }
             Section("Recording") {
                 Picker("Teleprompter text", selection: Bindable(appState.settings).teleprompterTextSize) { ForEach(TeleprompterTextSize.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
-                Toggle("Mirror front camera", isOn: Bindable(appState.settings).mirrorFrontCamera).tint(Theme.Colors.primaryPlum)
+                Toggle("Mirror front camera", isOn: Bindable(appState.settings).mirrorFrontCamera).tint(Theme.Colors.accent)
                 Picker("Video quality", selection: Bindable(appState.settings).videoQuality) { ForEach(VideoQuality.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
                 Picker("Frame rate", selection: Bindable(appState.settings).frameRate) { Text("30fps").tag(30); Text("60fps").tag(60) }
             }
@@ -28,13 +28,13 @@ struct NotificationPreferencesView: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Audition Reminders", isOn: Bindable(appState.settings).notifyAuditions).tint(Theme.Colors.primaryPlum)
-                Toggle("Submission Reminders", isOn: Bindable(appState.settings).notifySubmissions).tint(Theme.Colors.primaryPlum)
-                Toggle("Practice Reminders", isOn: Bindable(appState.settings).notifyPractice).tint(Theme.Colors.primaryPlum)
-                Toggle("Product Updates", isOn: Bindable(appState.settings).notifyProductUpdates).tint(Theme.Colors.primaryPlum)
+                Toggle("Audition Reminders", isOn: Bindable(appState.settings).notifyAuditions).tint(Theme.Colors.accent)
+                Toggle("Submission Reminders", isOn: Bindable(appState.settings).notifySubmissions).tint(Theme.Colors.accent)
+                Toggle("Practice Reminders", isOn: Bindable(appState.settings).notifyPractice).tint(Theme.Colors.accent)
+                Toggle("Product Updates", isOn: Bindable(appState.settings).notifyProductUpdates).tint(Theme.Colors.accent)
             } footer: { Text(authorizationNote ?? "We only send the reminders you choose.") }
         }
-        .navigationTitle("Notification Preferences")
+        .navigationTitle("Notifications")
         .onAppear { requestAuthorization() }
     }
     private func requestAuthorization() {

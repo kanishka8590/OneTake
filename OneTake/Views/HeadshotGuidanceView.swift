@@ -53,7 +53,8 @@ struct HeadshotGuidanceView: View {
                     ZStack {
                         Color.black.opacity(0.45).ignoresSafeArea()
                         Text("\(guidanceService.countdownRemaining)")
-                            .font(.system(size: 110, weight: .bold))
+                            .font(.system(size: 110, weight: .bold, design: .rounded))
+                            .monospacedDigit()
                             .foregroundStyle(Color.white)
                             .transition(.scale.combined(with: .opacity))
                     }
@@ -96,12 +97,12 @@ struct HeadshotGuidanceView: View {
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 9, weight: .bold))
                         }
-                        .foregroundStyle(Color(red: 0.95, green: 0.85, blue: 0.65))
+                        .foregroundStyle(Theme.Colors.cameraGuideGold)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(Color.black.opacity(0.55))
                         .clipShape(Capsule())
-                        .overlay(Capsule().stroke(Color(red: 0.85, green: 0.72, blue: 0.42).opacity(0.4), lineWidth: 1))
+                        .overlay(Capsule().stroke(Theme.Colors.cameraGuideGoldStroke.opacity(0.4), lineWidth: 1))
                     }
                     .disabled(guidanceService.isCapturing)
                 }
@@ -136,6 +137,14 @@ struct HeadshotGuidanceView: View {
             .onChange(of: selectedPhotoItems) { _, items in
                 guard !items.isEmpty else { return }
                 loadSelectedPhotos(items)
+            }
+            .onChange(of: guidanceService.feedback.allChecksPassed) { _, isAligned in
+                // The service also checks each live frame. Observing the published
+                // state here covers any other alignment input while the countdown
+                // overlay is visible and lets it reset before a bad capture.
+                if !isAligned {
+                    guidanceService.cancelCountdownIfAlignmentLost()
+                }
             }
             .sheet(isPresented: $showingReviewSheet) {
                 HeadshotReviewView(
@@ -227,7 +236,7 @@ struct HeadshotGuidanceView: View {
             let centerY = h * 0.43
             let isAligned = guidanceService.feedback.allChecksPassed
 
-            let strokeColor = isAligned ? Color.green : Color(red: 0.85, green: 0.72, blue: 0.42).opacity(0.75)
+            let strokeColor = isAligned ? Color.green : Theme.Colors.cameraGuideGoldStroke.opacity(0.75)
 
             ZStack {
                 Path { path in
@@ -427,12 +436,12 @@ struct HeadshotGuidanceView: View {
                 VStack(spacing: 8) {
                     ZStack {
                         Circle()
-                            .fill(Color(red: 0.85, green: 0.72, blue: 0.45).opacity(0.2))
+                            .fill(Theme.Colors.cameraGuideGoldFill.opacity(0.2))
                             .frame(width: 58, height: 58)
 
                         Image(systemName: "waveform.badge.mic")
                             .font(.system(size: 26, weight: .semibold))
-                            .foregroundStyle(Color(red: 0.95, green: 0.85, blue: 0.65))
+                            .foregroundStyle(Theme.Colors.cameraGuideGold)
                     }
 
                     Text("Talk to OneTake")
@@ -451,7 +460,7 @@ struct HeadshotGuidanceView: View {
                         phrase: "\"How do I look?\"",
                         desc: "Check live framing, angle & lighting aloud",
                         icon: "waveform",
-                        iconColor: Color(red: 0.80, green: 0.70, blue: 0.98)
+                        iconColor: Theme.Colors.cameraGuideLilac
                     )
 
                     Divider().background(Color.white.opacity(0.12))
@@ -491,7 +500,7 @@ struct HeadshotGuidanceView: View {
                 }
             }
             .padding(24)
-            .background(Color(red: 0.12, green: 0.12, blue: 0.14))
+            .background(Theme.Colors.cameraPanel)
             .clipShape(RoundedRectangle(cornerRadius: 24))
             .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.white.opacity(0.15), lineWidth: 1))
             .shadow(color: Color.black.opacity(0.5), radius: 30, x: 0, y: 15)
@@ -532,7 +541,7 @@ struct HeadshotGuidanceView: View {
     private var referenceMatchGuideSheet: some View {
         NavigationStack {
             ZStack {
-                Color(red: 0.08, green: 0.08, blue: 0.10).ignoresSafeArea()
+                Theme.Colors.cameraCanvas.ignoresSafeArea()
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
@@ -589,7 +598,7 @@ struct HeadshotGuidanceView: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 20))
-                .foregroundStyle(Color(red: 0.95, green: 0.85, blue: 0.65))
+                .foregroundStyle(Theme.Colors.cameraGuideGold)
                 .frame(width: 28)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -629,8 +638,7 @@ struct HeadshotGuidanceView: View {
             // Continuous batch: advance Front -> Left -> Right without re-showing intro guide
             if currentStepIndex < sequence.count - 1 {
                 currentStepIndex += 1
-                guidanceService.startSession(for: currentAngle)
-                guidanceService.announceAngle(currentAngle)
+                guidanceService.transitionToNextPose(currentAngle)
             } else {
                 guidanceService.stopSession()
                 self.showingReviewSheet = true

@@ -19,6 +19,14 @@ enum AddAuditionSourceOption: Identifiable {
     var id: Int { hashValue }
 }
 
+/// The editor is presented only when it has a complete parsed casting call.
+/// This prevents SwiftUI from constructing an empty sheet while a separate
+/// boolean and its payload are updated in different render passes.
+private struct AuditionEditorPresentation: Identifiable {
+    let id = UUID()
+    let parsedCall: ParsedCastingCall
+}
+
 struct AuditionsListView: View {
     @Environment(AppState.self) private var envAppState
     private let explicitAppState: AppState?
@@ -43,12 +51,13 @@ struct AuditionsListView: View {
     @State private var showingFileImporter = false
     @State private var showingPasteEditor = false
     @State private var pastedScriptBuffer = ""
+    @State private var pendingScannedImages: [UIImage] = []
+    @State private var pendingPastedText: String?
 
     // Parsing progress & navigation
     @State private var isParsingCall = false
     @State private var parsingSourceTitle = ""
-    @State private var parsedCallToEdit: ParsedCastingCall?
-    @State private var showingDetailsEditor = false
+    @State private var editorPresentation: AuditionEditorPresentation?
 
     var filteredAuditions: [Audition] {
         switch selectedFilter {
@@ -102,13 +111,17 @@ struct AuditionsListView: View {
                                     } label: {
                                         Label("Reactivate", systemImage: "arrow.uturn.backward")
                                     }
-                                    .tint(Theme.Colors.primaryPlum)
+                                    .tint(Theme.Colors.accent)
                                 }
                             }
                         }
                     }
                     .listStyle(.insetGrouped)
-                    .scrollContentBackground(.hidden)
+                        .scrollContentBackground(.hidden)
+                }
+
+                if isParsingCall {
+                    parsingOverlay
                 }
             }
             .navigationTitle("Auditions")
@@ -128,12 +141,11 @@ struct AuditionsListView: View {
                                 .foregroundStyle(Theme.Colors.textPrimary)
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Theme.Colors.primaryPlum)
+                                .foregroundStyle(Theme.Colors.accent)
                         }
                         .padding(.vertical, 4)
                         .padding(.horizontal, 8)
-                        .background(Theme.Colors.lavenderSurface.opacity(0.6))
-                        .clipShape(Capsule())
+
                     }
                 }
 
@@ -144,7 +156,7 @@ struct AuditionsListView: View {
                     } label: {
                         Image(systemName: "plus.circle.fill")
                             .font(.system(size: 22, weight: .semibold))
-                            .foregroundStyle(Theme.Colors.primaryPlum)
+                            .foregroundStyle(Theme.Colors.accent)
                             .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
                     }
                 }
@@ -155,6 +167,7 @@ struct AuditionsListView: View {
                     .presentationDetents([.height(225)])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(28)
+                    .presentationBackground(Theme.Colors.surface)
             }
             // Multi-Photo Picker
             .photosPicker(
@@ -170,12 +183,12 @@ struct AuditionsListView: View {
                 loadSelectedPhotos(items)
             }
             // Document Camera Scanner
-            .sheet(isPresented: $showingDocumentScanner) {
+            .sheet(isPresented: $showingDocumentScanner, onDismiss: processPendingScannedImages) {
                 DocumentScannerRepresentable { scannedImages in
+                    pendingScannedImages = scannedImages
                     showingDocumentScanner = false
-                    guard !scannedImages.isEmpty else { return }
-                    processScannedImages(scannedImages)
                 } onCancel: {
+                    pendingScannedImages = []
                     showingDocumentScanner = false
                 }
             }
@@ -188,23 +201,14 @@ struct AuditionsListView: View {
                 handleFileImport(result)
             }
             // Paste Editor
-            .sheet(isPresented: $showingPasteEditor) {
+            .sheet(isPresented: $showingPasteEditor, onDismiss: processPendingPastedText) {
                 pasteEditorSheet
             }
-            // Parsing extraction view
-            .fullScreenCover(isPresented: $isParsingCall) {
-                CastingCallParsingView(sourceTitle: parsingSourceTitle) { parsed in
-                    finishParsing(with: parsed)
-                } onCancel: {
-                    self.isParsingCall = false
-                }
-            }
-            // Details Editor View
-            .sheet(isPresented: $showingDetailsEditor) {
-                if let parsed = parsedCallToEdit {
-                    AuditionDetailsEditorView(parsedCall: parsed) { _ in
-                        showingDetailsEditor = false
-                    }
+            // The parsed call itself is the presentation trigger, so an editor
+            // can never appear before its content is ready.
+            .sheet(item: $editorPresentation) { presentation in
+                AuditionDetailsEditorView(parsedCall: presentation.parsedCall) { _ in
+                    editorPresentation = nil
                 }
             }
             // Delete confirmation
@@ -292,8 +296,7 @@ struct AuditionsListView: View {
         .padding(.horizontal, 24)
         .padding(.top, 24)
         .padding(.bottom, 20)
-        .background(Theme.Colors.canvasBackground)
-    }
+        }
 
     private func sourceOptionButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
@@ -305,7 +308,7 @@ struct AuditionsListView: View {
 
                     Image(systemName: systemImage)
                         .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(Theme.Colors.primaryPlum)
+                        .foregroundStyle(Theme.Colors.accent)
                 }
 
                 Text(title)
@@ -358,6 +361,16 @@ struct AuditionsListView: View {
         }
     }
 
+    /// Scanner delegates run before their sheet has fully disappeared. Delay
+    /// extraction until `onDismiss` so the eventual editor presentation never
+    /// competes with the scanner dismissal animation.
+    private func processPendingScannedImages() {
+        let images = pendingScannedImages
+        pendingScannedImages = []
+        guard !images.isEmpty else { return }
+        processScannedImages(images)
+    }
+
     private func handleFileImport(_ result: Result<[URL], Error>) {
         switch result {
         case .success(let urls):
@@ -378,6 +391,18 @@ struct AuditionsListView: View {
 
     // MARK: - Paste Editor Sheet
 
+    private func processPendingPastedText() {
+        guard let text = pendingPastedText else { return }
+        pendingPastedText = nil
+        parsingSourceTitle = "Pasted Notice"
+        isParsingCall = true
+
+        Task {
+            let result = await CastingCallParserService.shared.parseText(text)
+            await MainActor.run { finishParsing(with: result) }
+        }
+    }
+
     private var pasteEditorSheet: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 14) {
@@ -386,10 +411,12 @@ struct AuditionsListView: View {
                     .foregroundStyle(Theme.Colors.textSecondary)
 
                 TextEditor(text: $pastedScriptBuffer)
+                    .foregroundStyle(Theme.Colors.textPrimary)
                     .padding(8)
-                    .background(Theme.Colors.cardSurface)
+                    .scrollContentBackground(.hidden)
+                    .background(Theme.Colors.controlSurface)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.black.opacity(0.1), lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.Colors.controlBorder, lineWidth: 1))
 
                 Spacer()
             }
@@ -404,19 +431,8 @@ struct AuditionsListView: View {
 
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Read Call") {
-                        let text = pastedScriptBuffer
+                        pendingPastedText = pastedScriptBuffer
                         showingPasteEditor = false
-                        // Wait for the editor sheet to finish dismissing before
-                        // presenting the reading screen. Presenting both in one
-                        // transaction caused the first import to show blank.
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            parsingSourceTitle = "Pasted Notice"
-                            isParsingCall = true
-                            Task {
-                                let result = await CastingCallParserService.shared.parseText(text)
-                                await MainActor.run { self.finishParsing(with: result) }
-                            }
-                        }
                     }
                     .disabled(pastedScriptBuffer.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
@@ -424,15 +440,40 @@ struct AuditionsListView: View {
         }
     }
 
-    /// Modal transitions are intentionally serialized: first dismiss the
-    /// reading screen, then show the editor on the following run-loop turn.
+    /// Main-actor handoff publishes one complete, identifiable payload. This
+    /// replaces the old boolean-plus-optional state, which could show a blank
+    /// editor on the first import.
+    @MainActor
     private func finishParsing(with parsed: ParsedCastingCall?) {
-        parsedCallToEdit = parsed
         isParsingCall = false
-        guard parsed != nil else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            showingDetailsEditor = true
+        guard let parsed else { return }
+        editorPresentation = AuditionEditorPresentation(parsedCall: parsed)
+    }
+
+    private var parsingOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.18)
+                .ignoresSafeArea()
+
+            VStack(spacing: 14) {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(Theme.Colors.accent)
+                Text("Reading the Call…")
+                    .font(Theme.Typography.sectionHeader)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                Text(parsingSourceTitle)
+                    .font(Theme.Typography.captionBadge)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                    .lineLimit(1)
+            }
+            .padding(28)
+            .frame(maxWidth: 280)
+            .background(Theme.Colors.cardSurface, in: RoundedRectangle(cornerRadius: 22))
+            .shadow(color: .black.opacity(0.16), radius: 18, y: 8)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Reading \(parsingSourceTitle)")
     }
 
     // MARK: - Empty State View
@@ -446,7 +487,7 @@ struct AuditionsListView: View {
 
                 Image(systemName: "movieclapper.fill")
                     .font(.system(size: 36))
-                    .foregroundStyle(Theme.Colors.primaryPlum)
+                    .foregroundStyle(Theme.Colors.accent)
             }
 
             VStack(spacing: 6) {
@@ -461,15 +502,6 @@ struct AuditionsListView: View {
                     .padding(.horizontal, 32)
             }
 
-            Button {
-                showingAddSourceSheet = true
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "plus")
-                    Text("Add an Audition")
-                }
-                .primaryCapsuleButton()
-            }
             .padding(.top, 8)
             .padding(.horizontal, 32)
         }
@@ -482,13 +514,20 @@ struct AuditionsListView: View {
 struct AuditionCardRow: View {
     let audition: Audition
 
+    private var isUntitled: Bool {
+        audition.projectName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare("Untitled Audition") == .orderedSame
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             // Header: Project Name + Status / Ready Badge
             HStack(alignment: .center) {
                 Text(audition.projectName)
-                    .font(Theme.Typography.cardTitle)
-                    .foregroundStyle(Theme.Colors.textPrimary)
+                    .font(.system(size: 22, weight: .bold))
+                    .italic(isUntitled)
+                    .foregroundStyle(isUntitled ? Theme.Colors.textSecondary : Theme.Colors.textPrimary)
                     .lineLimit(1)
 
                 Spacer()
@@ -501,32 +540,42 @@ struct AuditionCardRow: View {
                         .statusBadge(color: Theme.Colors.successGreen)
                 } else {
                     Text("\(audition.packageReadyCount) of 3 ready")
-                        .statusBadge(color: Theme.Colors.primaryPlum)
+                        .statusBadge(color: Theme.Colors.accent)
                 }
             }
 
             // Role and Production Type
-            HStack(spacing: 8) {
-                Text("Role: \(audition.roleName)")
-                    .font(Theme.Typography.bodyRegular)
-                    .foregroundStyle(Theme.Colors.textSecondary)
+            HStack(spacing: 6) {
+                HStack(spacing: 4) {
+                    Text("Role:")
+                        .font(.system(size: 17, weight: .regular))
+                        .foregroundStyle(Theme.Colors.textSecondary)
+
+                    Text(audition.roleName)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                        .lineLimit(1)
+                }
 
                 Text("•")
+                    .font(.system(size: 13))
                     .foregroundStyle(Theme.Colors.textSecondary)
 
                 Text(audition.production.rawValue)
-                    .font(Theme.Typography.captionBadge)
+                    .font(.system(size: 13, weight: .medium))
+                    .italic()
                     .foregroundStyle(Theme.Colors.textSecondary)
+                    .lineLimit(1)
             }
 
-            // Deadline Indicator
-            HStack(spacing: 6) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 12))
+            // Deadline Indicator (Days Remaining Only)
+            HStack(spacing: 5) {
+                Image(systemName: "clock")
+                    .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(deadlineColor)
 
                 Text(deadlineText)
-                    .font(Theme.Typography.captionBadge)
+                    .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(deadlineColor)
             }
 
@@ -534,7 +583,7 @@ struct AuditionCardRow: View {
             HStack(spacing: 6) {
                 ForEach(0..<3) { idx in
                     Capsule()
-                        .fill(idx < audition.packageReadyCount ? (audition.status == .sent ? Theme.Colors.successGreen : Theme.Colors.primaryPlum) : Theme.Colors.lavenderSurface)
+                        .fill(idx < audition.packageReadyCount ? (audition.status == .sent ? Theme.Colors.successGreen : Theme.Colors.accent) : Theme.Colors.lavenderSurface)
                         .frame(height: 5)
                 }
             }
@@ -560,13 +609,10 @@ struct AuditionCardRow: View {
 
     private var deadlineText: String {
         if audition.status == .sent {
-            if let sent = audition.sentDate {
-                return "Sent on \(sent.formatted(date: .abbreviated, time: .omitted))"
-            }
             return "Submitted"
         }
         if audition.isOverdue {
-            return "Overdue (\(audition.deadline.formatted(date: .abbreviated, time: .omitted)))"
+            return "Overdue"
         }
         let days = audition.daysUntilDeadline
         if days == 0 {
@@ -574,7 +620,7 @@ struct AuditionCardRow: View {
         } else if days == 1 {
             return "Due tomorrow"
         } else {
-            return "\(days) days left (\(audition.deadline.formatted(date: .abbreviated, time: .omitted)))"
+            return "\(days) days left"
         }
     }
 }

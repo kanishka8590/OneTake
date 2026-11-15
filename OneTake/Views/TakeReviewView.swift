@@ -8,6 +8,9 @@ struct TakeReviewView: View {
     let rawVideoURL: URL
     let totalDurationSeconds: Double
     let isSlate: Bool
+    /// Imported and older takes may not have live-analysis metadata; in that
+    /// case the review deliberately shows only validations we can verify.
+    let qualityMetrics: PreTakeQualityMetrics
     let onTakeApproved: (VideoTake) -> Void
     let onRetake: () -> Void
 
@@ -44,14 +47,7 @@ struct TakeReviewView: View {
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
 
-                        // Quality Verification Badges
-                        HStack(spacing: 8) {
-                            qualityBadge(title: "Light: Good", isPassed: true)
-                            qualityBadge(title: "Framing: Centered", isPassed: true)
-                            qualityBadge(title: "Sound: Clear", isPassed: true)
-                            qualityBadge(title: "\(Int(trimEnd - trimStart))s", isPassed: trimEnd - trimStart <= maxAllowedSeconds)
-                        }
-                        .padding(.horizontal, 16)
+                        qualityChecks
 
                         // Interactive Video Trimmer
                         VStack(alignment: .leading, spacing: 10) {
@@ -64,7 +60,7 @@ struct TakeReviewView: View {
 
                                 Text(String(format: "%.1fs - %.1fs (Duration: %.1fs)", trimStart, trimEnd, max(0.1, trimEnd - trimStart)))
                                     .font(Theme.Typography.captionBadge)
-                                    .foregroundStyle(Theme.Colors.primaryPlum)
+                                    .foregroundStyle(Theme.Colors.accent)
                             }
 
                             // Range Slider Simulation
@@ -74,7 +70,7 @@ struct TakeReviewView: View {
                                         .font(Theme.Typography.captionBadge)
                                         .frame(width: 44, alignment: .leading)
                                     Slider(value: $trimStart, in: 0...max(0.1, trimEnd - 0.5))
-                                        .tint(Theme.Colors.primaryPlum)
+                                        .tint(Theme.Colors.accent)
                                         .onChange(of: trimStart) { _, newVal in
                                             seekPlayer(to: newVal)
                                         }
@@ -85,7 +81,7 @@ struct TakeReviewView: View {
                                         .font(Theme.Typography.captionBadge)
                                         .frame(width: 44, alignment: .leading)
                                     Slider(value: $trimEnd, in: min(totalDurationSeconds, trimStart + 0.5)...max(1.0, totalDurationSeconds))
-                                        .tint(Theme.Colors.primaryPlum)
+                                        .tint(Theme.Colors.accent)
                                         .onChange(of: trimEnd) { _, newVal in
                                             seekPlayer(to: newVal)
                                         }
@@ -97,79 +93,73 @@ struct TakeReviewView: View {
                         .padding(.horizontal, Theme.Layout.screenHPadding)
 
                         // Clean up Room Sound Toggle (A/B Audio Toggle)
-                        VStack(spacing: 12) {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "waveform.badge.magnifyingglass")
-                                            .foregroundStyle(Theme.Colors.primaryPlum)
-                                        Text("Clean up room sound")
-                                            .font(Theme.Typography.cardTitle)
-                                            .foregroundStyle(Theme.Colors.textPrimary)
-                                    }
+                        HStack(alignment: .center, spacing: 12) {
+                            Image(systemName: "waveform.badge.magnifyingglass")
+                                .foregroundStyle(Theme.Colors.accent)
 
-                                    Text("Eliminates room hum, AC noise, and enhances reader & actor vocal clarity.")
-                                        .font(Theme.Typography.bodyRegular)
-                                        .foregroundStyle(Theme.Colors.textSecondary)
-                                }
+                            Text("Clean up room sound")
+                                .font(Theme.Typography.cardTitle)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.85)
 
-                                Spacer()
+                            Spacer()
 
-                                Toggle("", isOn: $isNoiseCleaned)
-                                    .tint(Theme.Colors.primaryPlum)
-                            }
+                            Toggle("", isOn: $isNoiseCleaned)
+                                .labelsHidden()
+                                .tint(Theme.Colors.accent)
+                                .overlay(
+                                    Capsule()
+                                        .stroke(Theme.Colors.controlBorder.opacity(0.7), lineWidth: 1)
+                                )
                         }
                         .padding(16)
                         .cardStyle()
                         .padding(.horizontal, Theme.Layout.screenHPadding)
 
                         // File Size & Compression Info
-                        HStack(spacing: 8) {
-                            Image(systemName: "externaldrive")
-                                .foregroundStyle(Theme.Colors.primaryPlum)
-                            Text("Estimated Size: ~\(estimatedSizeMB) MB (Max: \(Int(audition.validationRules.maxPerClipSizeMB)) MB)")
-                                .font(Theme.Typography.captionBadge)
-                                .foregroundStyle(Theme.Colors.textSecondary)
-                        }
 
                         // Export Progress Indicator
                         if isExporting {
                             VStack(spacing: 6) {
                                 ProgressView(value: exportProgress, total: 1.0)
-                                    .tint(Theme.Colors.primaryPlum)
+                                    .tint(Theme.Colors.accent)
                                 Text("Processing Take (\(Int(exportProgress * 100))%)...")
                                     .font(Theme.Typography.captionBadge)
                                     .foregroundStyle(Theme.Colors.textSecondary)
                             }
                             .padding(.horizontal, 24)
                         }
-
-                        // Action Buttons: Retake vs Use Take
-                        HStack(spacing: 14) {
-                            Button {
-                                player?.pause()
-                                dismiss()
-                                onRetake()
-                            } label: {
-                                Text("Retake")
-                                    .secondaryLavenderButton()
-                            }
-
-                            Button {
-                                finalizeAndSaveTake()
-                            } label: {
-                                if isExporting {
-                                    ProgressView().tint(.white)
-                                } else {
-                                    Text("Use This Take")
-                                }
-                            }
-                            .primaryCapsuleButton()
-                            .disabled(isExporting)
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, 36)
                     }
+                    .padding(.bottom, 16)
+                }
+                .safeAreaInset(edge: .bottom) {
+                    // Action Buttons: Retake vs Use Take
+                    HStack(spacing: 14) {
+                        Button {
+                            player?.pause()
+                            onRetake()
+                        } label: {
+                            Text("Retake")
+                                .secondaryLavenderButton()
+                        }
+
+                        Button {
+                            finalizeAndSaveTake()
+                        } label: {
+                            if isExporting {
+                                ProgressView().tint(.white)
+                            } else {
+                                Text("Use This Take")
+                            }
+                        }
+                        .primaryCapsuleButton()
+                        .disabled(isExporting)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 12)
+                    .padding(.bottom, 16)
+                    .background(Theme.Colors.canvasBackground)
                 }
             }
             .navigationTitle("Review Take")
@@ -280,16 +270,15 @@ struct TakeReviewView: View {
                     noiseCleaned: isNoiseCleaned,
                     trimStartSeconds: trimStart,
                     trimEndSeconds: trimEnd,
-                    lightingPassed: true,
-                    framingPassed: true,
-                    soundPassed: true,
+                    lightingPassed: qualityMetrics.isLightingEvaluated && qualityMetrics.isLightPassed,
+                    framingPassed: qualityMetrics.isFramingEvaluated && qualityMetrics.isAlignmentPassed,
+                    soundPassed: false,
                     createdAt: Date()
                 )
 
                 await MainActor.run {
                     self.isExporting = false
                     self.onTakeApproved(videoTake)
-                    self.dismiss()
                 }
             } catch {
                 print("Export take error: \(error)")
@@ -306,9 +295,29 @@ struct TakeReviewView: View {
                         trimEndSeconds: trimEnd
                     )
                     self.onTakeApproved(videoTake)
-                    self.dismiss()
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var qualityChecks: some View {
+        let duration = trimEnd - trimStart
+        HStack(spacing: 8) {
+            if qualityMetrics.isLightingEvaluated {
+                qualityBadge(title: "Light: \(qualityMetrics.lightStatus)", isPassed: qualityMetrics.isLightPassed)
+            }
+            if qualityMetrics.isFramingEvaluated {
+                qualityBadge(title: qualityMetrics.isAlignmentPassed ? "Framing: Centered" : "Framing: Adjust", isPassed: qualityMetrics.isAlignmentPassed)
+            }
+            if qualityMetrics.isBackgroundEvaluated {
+                qualityBadge(title: "Background: \(qualityMetrics.backgroundStatus)", isPassed: qualityMetrics.isBackgroundPassed)
+            }
+            if qualityMetrics.isPhoneHeightEvaluated {
+                qualityBadge(title: "Camera: \(qualityMetrics.phoneHeightStatus)", isPassed: qualityMetrics.isPhoneHeightPassed)
+            }
+            qualityBadge(title: "\(Int(duration))s", isPassed: duration <= maxAllowedSeconds)
+        }
+        .padding(.horizontal, 16)
     }
 }

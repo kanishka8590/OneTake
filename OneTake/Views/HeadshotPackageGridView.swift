@@ -50,7 +50,7 @@ struct HeadshotPackageGridView: View {
                         // Ratio info banner
                         HStack(spacing: 8) {
                             Image(systemName: "aspectratio")
-                                .foregroundStyle(Theme.Colors.primaryPlum)
+                                .foregroundStyle(Theme.Colors.accent)
                             Text("Standard Casting Format: \(audition.validationRules.requiredHeadshotRatio.rawValue) Theatrical Ratio")
                                 .font(Theme.Typography.captionBadge)
                                 .foregroundStyle(Theme.Colors.textSecondary)
@@ -69,7 +69,7 @@ struct HeadshotPackageGridView: View {
                                 Text("Import angle from Photos instead")
                             }
                             .font(Theme.Typography.captionBadge)
-                            .foregroundStyle(Theme.Colors.primaryPlum)
+                            .foregroundStyle(Theme.Colors.accent)
                         }
                         .padding(.top, 4)
 
@@ -107,22 +107,23 @@ struct HeadshotPackageGridView: View {
     private func headshotCard(title: String, angle: HeadshotAngle, image: UIImage?) -> some View {
         VStack(spacing: 8) {
             ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Theme.Colors.cardSurface)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Theme.Colors.lavenderTint)
                     .aspectRatio(4.0 / 5.0, contentMode: .fit)
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.black.opacity(0.08), lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.Colors.accent.opacity(0.28), lineWidth: 1))
 
                 if let img = image {
                     Image(uiImage: img)
                         .resizable()
                         .scaledToFill()
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 } else {
                     VStack(spacing: 6) {
-                        Image(systemName: "camera")
-                            .font(.system(size: 20))
-                            .foregroundStyle(Theme.Colors.textSecondary)
-                        Text("Missing")
+                        Image(systemName: "person.crop.rectangle.badge.plus")
+                            .symbolRenderingMode(.hierarchical)
+                            .font(.system(size: 22))
+                            .foregroundStyle(Theme.Colors.accent)
+                        Text("Not captured")
                             .font(Theme.Typography.captionBadge)
                             .foregroundStyle(Theme.Colors.textSecondary)
                     }
@@ -138,7 +139,7 @@ struct HeadshotPackageGridView: View {
             } label: {
                 Text(image == nil ? "Capture" : "Retake")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Theme.Colors.primaryPlum)
+                    .foregroundStyle(Theme.Colors.accent)
             }
         }
     }

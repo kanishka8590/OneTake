@@ -65,10 +65,11 @@ struct TakesListView: View {
                                             Text(String(format: "%.1f MB", take.fileSizeMB))
                                             if take.noiseCleaned {
                                                 Text("• Clean Audio")
-                                                    .foregroundStyle(Theme.Colors.primaryPlum)
+                                                    .foregroundStyle(Theme.Colors.accent)
                                             }
                                         }
                                         .font(Theme.Typography.captionBadge)
+                                        .monospacedDigit()
                                         .foregroundStyle(Theme.Colors.textSecondary)
                                     }
 
@@ -80,7 +81,7 @@ struct TakesListView: View {
                                     } label: {
                                         Image(systemName: "play.circle.fill")
                                             .font(.system(size: 26))
-                                            .foregroundStyle(Theme.Colors.primaryPlum)
+                                            .foregroundStyle(Theme.Colors.accent)
                                     }
                                     .buttonStyle(.plain)
 

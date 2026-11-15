@@ -45,7 +45,7 @@ struct ProfileView: View {
                             Spacer()
                             Text("\(appState.activeAuditionsCount)")
                                 .font(Theme.Typography.cardTitle)
-                                .foregroundStyle(Theme.Colors.primaryPlum)
+                                .foregroundStyle(Theme.Colors.accent)
                         }
                         .frame(minHeight: Theme.Layout.minTapTarget)
 
@@ -104,15 +104,15 @@ struct ProfileView: View {
                         .frame(minHeight: Theme.Layout.minTapTarget)
 
                         Toggle("Auto-Trim Silence", isOn: Bindable(appState.settings).autoTrimSilence)
-                            .tint(Theme.Colors.primaryPlum)
+                            .tint(Theme.Colors.accent)
                             .frame(minHeight: Theme.Layout.minTapTarget)
 
                         Toggle("Noise Reduction by Default", isOn: Bindable(appState.settings).noiseReductionDefault)
-                            .tint(Theme.Colors.primaryPlum)
+                            .tint(Theme.Colors.accent)
                             .frame(minHeight: Theme.Layout.minTapTarget)
 
                         Toggle("Mirror Front Camera", isOn: Bindable(appState.settings).mirrorFrontCamera)
-                            .tint(Theme.Colors.primaryPlum)
+                            .tint(Theme.Colors.accent)
                             .frame(minHeight: Theme.Layout.minTapTarget)
 
                         Picker("Video Quality", selection: Bindable(appState.settings).videoQuality) {
@@ -143,11 +143,11 @@ struct ProfileView: View {
                     // Notifications
                     Section("Notifications") {
                         Toggle("Audition Deadlines", isOn: Bindable(appState.settings).notifyAuditions)
-                            .tint(Theme.Colors.primaryPlum)
+                            .tint(Theme.Colors.accent)
                             .frame(minHeight: Theme.Layout.minTapTarget)
 
                         Toggle("Practice Reminders", isOn: Bindable(appState.settings).notifyPractice)
-                            .tint(Theme.Colors.primaryPlum)
+                            .tint(Theme.Colors.accent)
                             .frame(minHeight: Theme.Layout.minTapTarget)
                     }
 
@@ -176,7 +176,7 @@ struct ProfileView: View {
                         showingEditProfile = true
                     }
                     .font(Theme.Typography.bodyRegular)
-                    .foregroundStyle(Theme.Colors.primaryPlum)
+                    .foregroundStyle(Theme.Colors.accent)
                     .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
                 }
             }
@@ -205,13 +205,9 @@ struct ProfileView: View {
                     .fill(Theme.Colors.lavenderSurface)
                     .frame(width: 84, height: 84)
 
-                if let data = user.avatarImageData, let image = UIImage(data: data) {
-                    Image(uiImage: image).resizable().scaledToFill().frame(width: 84, height: 84).clipShape(Circle())
-                } else {
-                    Text(userInitials)
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
-                        .foregroundStyle(Theme.Colors.primaryPlum)
-                }
+                Text(userInitials)
+                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.Colors.accent)
             }
 
             VStack(spacing: 4) {
@@ -351,7 +347,7 @@ struct EditProfileSheet: View {
                         saveProfile()
                     }
                     .font(Theme.Typography.cardTitle)
-                    .foregroundStyle(Theme.Colors.primaryPlum)
+                    .foregroundStyle(Theme.Colors.accent)
                     .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
                 }
             }

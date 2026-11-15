@@ -134,7 +134,7 @@ struct PackageValidationAndExportView: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("A couple of things need attention...").font(Theme.Typography.cardTitle)
                                 Text("\(oversizedTake.title) Size is \(Int(oversizedTake.fileSizeMB)) MB — File limit is \(Int(rules.maxPerClipSizeMB)) MB")
-                                    .font(Theme.Typography.captionBadge).foregroundStyle(Theme.Colors.textSecondary)
+                                    .font(Theme.Typography.captionBadge).monospacedDigit().foregroundStyle(Theme.Colors.textSecondary)
                             }
                         }
                         Button { showingCompressor = true } label: {
@@ -169,7 +169,7 @@ struct PackageValidationAndExportView: View {
                 Text(detail).font(Theme.Typography.captionBadge).foregroundStyle(Theme.Colors.textSecondary)
                 if let action, !passed {
                     Button(action, action: actionHandler)
-                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.Colors.primaryPlum)
+                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.Colors.accent)
                         .padding(.top, 2)
                 }
             }
@@ -215,15 +215,16 @@ struct PackageValidationAndExportView: View {
     private func bundleFileRow(_ item: BundleItem) -> some View {
         HStack(spacing: 12) {
             Image(systemName: item.fallbackExtension == "jpg" ? "photo.fill" : "video.fill")
-                .foregroundStyle(Theme.Colors.primaryPlum).frame(width: 34, height: 34)
+                .foregroundStyle(Theme.Colors.accent).frame(width: 34, height: 34)
                 .background(Theme.Colors.lavenderSurface).clipShape(RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 3) {
                 if editingFileID == item.id {
                     TextField("Filename", text: Binding(get: { names[item.id, default: item.title] }, set: { names[item.id] = $0 }))
                         .textInputAutocapitalization(.words)
                         .font(Theme.Typography.bodyRegular)
+                        .foregroundStyle(Theme.Colors.textPrimary)
                 } else { Text(names[item.id, default: item.title]).font(Theme.Typography.bodyRegular).lineLimit(1) }
-                Text(item.metadata).font(Theme.Typography.captionBadge).foregroundStyle(Theme.Colors.textSecondary)
+                Text(item.metadata).font(Theme.Typography.captionBadge).monospacedDigit().foregroundStyle(Theme.Colors.textSecondary)
             }
             Spacer()
             Button { editingFileID = editingFileID == item.id ? nil : item.id } label: {
@@ -313,7 +314,7 @@ struct PackageValidationAndExportView: View {
     }
     @ViewBuilder
     private func reviewView(take: VideoTake, isSlate: Bool) -> some View {
-        TakeReviewView(audition: audition, rawVideoURL: URL(fileURLWithPath: take.filePath), totalDurationSeconds: take.durationSeconds, isSlate: isSlate) { approved in
+        TakeReviewView(audition: audition, rawVideoURL: URL(fileURLWithPath: take.filePath), totalDurationSeconds: take.durationSeconds, isSlate: isSlate, qualityMetrics: PreTakeQualityMetrics()) { approved in
             if isSlate {
                 if let index = audition.slateTakes.firstIndex(where: { $0.id == take.id }) { audition.slateTakes[index] = approved } else { audition.slateTakes.append(approved) }
                 audition.selectedSlateTakeID = approved.id
@@ -356,8 +357,8 @@ private struct VideoCompressorView: View {
                 VStack(spacing: 8) {
                     Text("COMPRESSING YOUR CLIP").font(Theme.Typography.cardTitle)
                     Text(isCompressing ? "\(Int(progress * 100))%" : "Original: \(Int(take.fileSizeMB)) MB → Compressed: ~\(Int(targetSize)) MB")
-                        .font(Theme.Typography.bodyRegular).foregroundStyle(Theme.Colors.textSecondary)
-                    ProgressView(value: progress).tint(Theme.Colors.primaryPlum).opacity(isCompressing ? 1 : 0)
+                        .font(Theme.Typography.bodyRegular).monospacedDigit().foregroundStyle(Theme.Colors.textSecondary)
+                    ProgressView(value: progress).tint(Theme.Colors.accent).opacity(isCompressing ? 1 : 0)
                 }
                 Spacer()
                 Button { compress() } label: { Text(completed ? "Save Compressed File" : "Compress Audition Clip").primaryCapsuleButton() }
@@ -441,20 +442,98 @@ private struct MailPackageComposer: UIViewControllerRepresentable {
 }
 
 private struct DeliveryCelebrationView: View {
-    let audition: Audition; let done: () -> Void
+    let audition: Audition
+    let done: () -> Void
+
+    private let charcoal = Theme.Colors.textPrimary
+    private let forestGreen = Theme.Colors.successGreen
+
     var body: some View {
-        ZStack {
-            LinearGradient(colors: [Theme.Colors.primaryPlum, Theme.Colors.plumDark], startPoint: .top, endPoint: .bottom).ignoresSafeArea()
-            VStack(spacing: 22) {
-                Image(systemName: "movieclapper.fill").font(.system(size: 84)).foregroundStyle(.white)
-                Text("It’s with casting.").font(.system(size: 30, weight: .bold)).foregroundStyle(.white)
-                Text(subtitle).font(Theme.Typography.bodyRegular).foregroundStyle(.white.opacity(0.8)).multilineTextAlignment(.center)
-                Text("Break a leg.").font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
-                Button("Done", action: done).padding(.horizontal, 30).padding(.vertical, 12).background(.white).foregroundStyle(Theme.Colors.primaryPlum).clipShape(Capsule())
-            }.padding(28)
+        GeometryReader { geo in
+            ZStack {
+                Theme.Colors.canvasBackground.ignoresSafeArea()
+
+                // Top-right curved filmstrip
+                Image("filmstripTopRight")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: geo.size.width * 0.42)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .ignoresSafeArea(edges: .top)
+                    .allowsHitTesting(false)
+
+                // Bottom-right curved filmstrip
+                Image("filmstripBottomRight")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: geo.size.width * 0.48)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .ignoresSafeArea(edges: .bottom)
+                    .allowsHitTesting(false)
+
+                VStack(alignment: .leading, spacing: 0) {
+                    // Top-left circular close button
+                    Button(action: done) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 18, weight: .regular))
+                            .foregroundStyle(charcoal)
+                            .frame(width: 48, height: 48)
+                            .background(Theme.Colors.cardSurface)
+                            .clipShape(Circle())
+                            .overlay(
+                                Circle()
+                                    .stroke(Theme.Colors.controlBorder.opacity(0.55), lineWidth: 1)
+                            )
+                            .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+                    }
+                    .padding(.top, 4)
+
+                    Spacer()
+
+                    // Clapperboard + sparkles illustration
+                    Image("clapperboardCelebration")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: geo.size.width * 0.78)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 26)
+
+                    // Headline & inline status text
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("It’s with casting.")
+                            .font(.system(size: 34, weight: .bold))
+                            .foregroundStyle(charcoal)
+
+                        (
+                            Text(earlyLeadText)
+                                .font(.system(size: 21, weight: .bold))
+                                .foregroundColor(forestGreen)
+                            + Text("  Break a leg.")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(charcoal.opacity(0.8))
+                        )
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer()
+                    Spacer()
+                }
+                .padding(.horizontal, 24)
+            }
         }
     }
-    private var subtitle: String { audition.daysUntilDeadline >= 0 ? "Sent with \(audition.daysUntilDeadline) day\(audition.daysUntilDeadline == 1 ? "" : "s") to spare." : "Sent — your deadline has passed, but your package is on its way." }
+
+    private var earlyLeadText: String {
+        if audition.daysUntilDeadline > 1 {
+            return "\(audition.daysUntilDeadline) days early."
+        } else if audition.daysUntilDeadline == 1 {
+            return "One day early."
+        } else if audition.daysUntilDeadline == 0 {
+            return "Twelve hours early."
+        } else {
+            return "Package sent."
+        }
+    }
 }
 
 private extension String { var nonEmpty: String? { isEmpty ? nil : self } }

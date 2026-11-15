@@ -133,7 +133,7 @@ struct AuditionPackageHubView: View {
                                 Text("Export Package")
                             }
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color.white)
+                            .foregroundStyle(Theme.Colors.onAction)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
                             .background(Theme.Colors.primaryPlum)
@@ -159,7 +159,7 @@ struct AuditionPackageHubView: View {
                     Spacer()
                 }
                 .padding(14)
-                .background(Color.white)
+                .background(Theme.Colors.cardSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .shadow(color: Color.black.opacity(0.12), radius: 10, x: 0, y: 4)
                 .padding(.horizontal, 16)
@@ -179,8 +179,6 @@ struct AuditionPackageHubView: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Theme.Colors.textSecondary)
                         .frame(width: 32, height: 32)
-                        .background(Theme.Colors.lavenderSurface)
-                        .clipShape(Circle())
                 }
             }
 
@@ -202,8 +200,6 @@ struct AuditionPackageHubView: View {
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(Theme.Colors.textSecondary)
                         .frame(width: 32, height: 32)
-                        .background(Theme.Colors.lavenderSurface)
-                        .clipShape(Circle())
                 }
             }
         }
@@ -262,7 +258,8 @@ struct AuditionPackageHubView: View {
                     audition: audition,
                     rawVideoURL: URL(fileURLWithPath: take.filePath),
                     totalDurationSeconds: take.durationSeconds,
-                    isSlate: true
+                    isSlate: true,
+                    qualityMetrics: PreTakeQualityMetrics()
                 ) { approvedTake in
                     activeReviewTarget = nil
                     audition.slateTakes.append(approvedTake)
@@ -284,7 +281,8 @@ struct AuditionPackageHubView: View {
                     audition: audition,
                     rawVideoURL: URL(fileURLWithPath: take.filePath),
                     totalDurationSeconds: take.durationSeconds,
-                    isSlate: false
+                    isSlate: false,
+                    qualityMetrics: PreTakeQualityMetrics()
                 ) { approvedTake in
                     activeReviewTarget = nil
                     audition.auditionTakes.append(approvedTake)
@@ -354,28 +352,41 @@ struct AuditionPackageHubView: View {
     // MARK: - Header Section
 
     private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        ZStack(alignment: .bottomLeading) {
+            Image(headerArtwork)
+                .resizable()
+                .scaledToFill()
+                .frame(height: 178)
+                .overlay(LinearGradient(colors: [.clear, Theme.Colors.plumDark.opacity(0.92)], startPoint: .top, endPoint: .bottom))
+            VStack(alignment: .leading, spacing: 6) {
             // Eyebrow: "\(productionType.uppercased()) • AUDITIONING FOR \(roleName.uppercased())"
             Text("\(audition.production.rawValue.uppercased()) • AUDITIONING FOR \(audition.roleName.uppercased())")
                 .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(Theme.Colors.primaryPlum)
+                .foregroundStyle(.white.opacity(0.82))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
 
             // Large bold project title
             Text(audition.projectName)
-                .font(.system(size: 28, weight: .bold))
-                .foregroundStyle(Theme.Colors.textPrimary)
+                .font(.title2.bold())
+                .foregroundStyle(.white)
                 .lineLimit(2)
                 .minimumScaleFactor(0.85)
 
             // Clean deadline line: "18 h left • Due 21 Nov, 10:00 AM"
             Text(cleanDeadlineString)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Theme.Colors.textSecondary)
+                .font(.footnote)
+                .monospacedDigit()
+                .foregroundStyle(.white.opacity(0.78))
+            }
+            .padding(20)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.14), lineWidth: 1))
     }
+
+    private var headerArtwork: String { audition.production == .theater ? Theme.Artwork.dramaBanner : Theme.Artwork.auditionBanner }
 
     private var cleanDeadlineString: String {
         let diff = audition.deadline.timeIntervalSince(Date.now)
@@ -414,7 +425,7 @@ struct AuditionPackageHubView: View {
 
                 Text("\(audition.packageReadyCount) of 3 ready")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(audition.packageReadyCount == 3 ? Theme.Colors.successGreen : Theme.Colors.primaryPlum)
+                    .foregroundStyle(audition.packageReadyCount == 3 ? Theme.Colors.successGreen : Theme.Colors.accent)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
                     .background(audition.packageReadyCount == 3 ? Theme.Colors.successGreen.opacity(0.12) : Theme.Colors.lavenderSurface)
@@ -496,7 +507,7 @@ struct AuditionPackageHubView: View {
 
                 Text(completedStatusText(deliverable))
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.Colors.primaryPlum)
+                    .foregroundStyle(Theme.Colors.accent)
             }
 
             Spacer()
@@ -505,14 +516,14 @@ struct AuditionPackageHubView: View {
                 triggerReview(for: deliverable)
             }
             .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(Theme.Colors.primaryPlum)
+            .foregroundStyle(Theme.Colors.accent)
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
             .background(Theme.Colors.lavenderSurface)
             .clipShape(Capsule())
         }
         .padding(14)
-        .background(Color.white)
+        .background(Theme.Colors.cardSurface)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 2)
     }
@@ -542,12 +553,12 @@ struct AuditionPackageHubView: View {
             HStack {
                 Text("UP NEXT • PIECE \(deliverable.stepNumber) OF 3")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Theme.Colors.primaryPlum)
+                    .foregroundStyle(Theme.Colors.accent)
 
                 Spacer()
 
                 Text("≈ 2 min")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(Theme.Colors.textSecondary)
             }
 
@@ -569,7 +580,7 @@ struct AuditionPackageHubView: View {
                 } label: {
                     Text(focusPrimaryButtonTitle(deliverable))
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(Theme.Colors.onAction)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
                         .background(Theme.Colors.primaryPlum)
@@ -581,7 +592,7 @@ struct AuditionPackageHubView: View {
                 } label: {
                     Text("Import from Photos")
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.Colors.primaryPlum)
+                        .foregroundStyle(Theme.Colors.accent)
                         .padding(.vertical, 12)
                         .padding(.horizontal, 14)
                         .background(Theme.Colors.lavenderSurface)
@@ -589,9 +600,10 @@ struct AuditionPackageHubView: View {
                 }
             }
         }
-        .padding(18)
-        .background(Color.white)
-        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .padding(20)
+        .background(Theme.Colors.cardSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Color.primary.opacity(0.06), lineWidth: 1))
         .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
     }
 
@@ -633,7 +645,7 @@ struct AuditionPackageHubView: View {
 
                     Image(systemName: deliverable.icon)
                         .font(.system(size: 14))
-                        .foregroundStyle(Theme.Colors.primaryPlum)
+                        .foregroundStyle(Theme.Colors.accent)
                 }
 
                 Text(deliverableTitle(deliverable))
@@ -642,7 +654,7 @@ struct AuditionPackageHubView: View {
 
                 Spacer()
 
-                Text("Not started")
+                Text(deliverable == .headshots ? "Not captured" : "Not recorded")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.Colors.textSecondary)
 
@@ -651,7 +663,7 @@ struct AuditionPackageHubView: View {
                     .foregroundStyle(Theme.Colors.textSecondary.opacity(0.5))
             }
             .padding(14)
-            .background(Color.white)
+            .background(Theme.Colors.cardSurface)
             .clipShape(RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
@@ -675,7 +687,7 @@ struct AuditionPackageHubView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(20)
-        .background(Color.white)
+        .background(Theme.Colors.cardSurface)
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
@@ -785,7 +797,7 @@ struct AuditionPackageHubView: View {
             VStack(spacing: 24) {
                 Image(systemName: "shippingbox.fill")
                     .font(.system(size: 54))
-                    .foregroundStyle(Theme.Colors.primaryPlum)
+                    .foregroundStyle(Theme.Colors.accent)
                     .padding(.top, 24)
 
                 VStack(spacing: 6) {

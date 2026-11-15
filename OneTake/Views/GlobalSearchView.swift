@@ -55,7 +55,7 @@ struct GlobalSearchView: View {
                                             Spacer()
 
                                             Text(audition.status.rawValue)
-                                                .statusBadge(color: audition.status == .sent ? Theme.Colors.successGreen : Theme.Colors.primaryPlum)
+                                                .statusBadge(color: audition.status == .sent ? Theme.Colors.successGreen : Theme.Colors.accent)
                                         }
 
                                         HStack(spacing: 8) {
@@ -98,7 +98,7 @@ struct GlobalSearchView: View {
                                             Spacer()
 
                                             Text(script.language.rawValue)
-                                                .statusBadge(color: Theme.Colors.primaryPlum)
+                                                .statusBadge(color: Theme.Colors.accent)
                                         }
 
                                         if let snippet = matchingSnippet(in: script.rawText, for: appState.globalSearchQuery) {
@@ -154,7 +154,7 @@ struct AuditionDetailPlaceholderView: View {
                         Spacer()
 
                         Text(audition.status.rawValue)
-                            .statusBadge(color: audition.status == .sent ? Theme.Colors.successGreen : Theme.Colors.primaryPlum)
+                            .statusBadge(color: audition.status == .sent ? Theme.Colors.successGreen : Theme.Colors.accent)
                     }
 
                     Text("Role: \(audition.roleName) (\(audition.production.rawValue))")
@@ -215,7 +215,7 @@ struct ScriptDetailPlaceholderView: View {
                     Spacer()
 
                     Text(script.language.rawValue)
-                        .statusBadge(color: Theme.Colors.primaryPlum)
+                        .statusBadge(color: Theme.Colors.accent)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {

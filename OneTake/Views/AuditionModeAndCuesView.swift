@@ -3,6 +3,10 @@ import PhotosUI
 import AVFoundation
 import SwiftData
 
+private struct AuditionRecorderRoute: Identifiable {
+    let id = UUID()
+}
+
 struct ScriptDisplayLine: Identifiable {
     let id: Int
     let text: String
@@ -34,7 +38,8 @@ struct AuditionModeAndCuesView: View {
     @State private var cueLines: [CueLine] = []
     @State private var showingCueRecorder = false
     @State private var showingBriefing = false
-    @State private var showingTeleprompter = false
+    @State private var shouldOpenRecorderAfterBriefing = false
+    @State private var auditionRecorderRoute: AuditionRecorderRoute?
 
     private var hasScript: Bool {
         guard let script = audition.scriptText?.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
@@ -63,7 +68,7 @@ struct AuditionModeAndCuesView: View {
                         } label: {
                             Text(hasScript ? "Continue" : "Continue to Record")
                                 .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Color.white)
+                                .foregroundStyle(Theme.Colors.onAction)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 14)
                                 .background(Theme.Colors.primaryPlum)
@@ -71,7 +76,7 @@ struct AuditionModeAndCuesView: View {
                         }
                         .padding(.bottom, 24)
                     }
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, Theme.Layout.screenHPadding)
                 }
             }
             .navigationTitle(hasScript ? "Add Cue Lines" : "Audition Take")
@@ -98,26 +103,28 @@ struct AuditionModeAndCuesView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showingBriefing) {
+            .sheet(isPresented: $showingBriefing, onDismiss: {
+                guard shouldOpenRecorderAfterBriefing else { return }
+                shouldOpenRecorderAfterBriefing = false
+                auditionRecorderRoute = AuditionRecorderRoute()
+            }) {
                 TalkToOneTakeBriefingView(
                     audition: audition,
                     isSlate: false,
                     scriptPreview: teleprompterScriptLines.joined(separator: "\n")
                 ) { _ in
+                    shouldOpenRecorderAfterBriefing = true
                     showingBriefing = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        showingTeleprompter = true
-                    }
                 }
             }
-            .fullScreenCover(isPresented: $showingTeleprompter) {
+            .fullScreenCover(item: $auditionRecorderRoute) { _ in
                 TeleprompterRecorderView(
                     audition: audition,
                     modeTitle: "Audition Take",
                     scriptLines: teleprompterScriptLines,
                     isSlate: false
                 ) { savedTake in
-                    showingTeleprompter = false
+                    auditionRecorderRoute = nil
                     audition.auditionTakes.append(savedTake)
                     audition.selectedAuditionTakeID = savedTake.id
                     for idx in audition.requirements.indices {
@@ -140,7 +147,7 @@ struct AuditionModeAndCuesView: View {
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(hasScript ? "Add Cue Lines" : "Audition Take")
-                .font(.system(size: 24, weight: .bold))
+                .font(.title2.bold())
                 .foregroundStyle(Theme.Colors.textPrimary)
 
             if !hasScript {
@@ -172,7 +179,7 @@ struct AuditionModeAndCuesView: View {
                 VStack(spacing: 12) {
                     Image(systemName: "doc.text")
                         .font(.system(size: 32))
-                        .foregroundStyle(Theme.Colors.primaryPlum.opacity(0.6))
+                        .foregroundStyle(Theme.Colors.accent.opacity(0.75))
                     Text("No Script Available")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(Theme.Colors.textPrimary)
@@ -182,13 +189,12 @@ struct AuditionModeAndCuesView: View {
                         .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 32)
-                .padding(.horizontal, 16)
-                .background(Color.white)
-                .clipShape(RoundedRectangle(cornerRadius: 18))
+                .padding(20)
+                .background(Theme.Colors.cardSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 18)
-                        .stroke(Theme.Colors.primaryPlum.opacity(0.3), lineWidth: 1.5)
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                 )
                 .shadow(color: Color.black.opacity(0.04), radius: 8, x: 0, y: 2)
             } else {
@@ -197,13 +203,13 @@ struct AuditionModeAndCuesView: View {
                         scriptLineRow(index: index)
                     }
                 }
-                .padding(14)
+                .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.white)
-                .clipShape(RoundedRectangle(cornerRadius: 18))
+                .background(Theme.Colors.cardSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 18)
-                        .stroke(Theme.Colors.primaryPlum.opacity(0.3), lineWidth: 1.5)
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                 )
                 .shadow(color: Color.black.opacity(0.04), radius: 8, x: 0, y: 2)
             }
@@ -231,14 +237,15 @@ struct AuditionModeAndCuesView: View {
                 if isDialogueDetected && !line.speaker.isEmpty {
                     Text(line.speaker.uppercased())
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(isActive ? Color(red: 173/255, green: 20/255, blue: 87/255) : Theme.Colors.textSecondary)
+                        .foregroundStyle(isActive ? Theme.Colors.accent : Theme.Colors.textSecondary)
                         .padding(.top, 2)
                         .frame(width: 58, alignment: .leading)
                 }
 
                 // Line Text
                 Text(line.text)
-                    .font(.system(size: 14, weight: isActive ? .semibold : .regular))
+                    .font(.system(size: 19, weight: isActive ? .semibold : .regular))
+                    .italic(line.text.trimmingCharacters(in: .whitespaces).hasPrefix("("))
                     .foregroundStyle(Theme.Colors.textPrimary)
                     .lineSpacing(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -248,10 +255,11 @@ struct AuditionModeAndCuesView: View {
                     if isActive {
                         Text("CUE")
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(Color(red: 173/255, green: 20/255, blue: 87/255))
+                            .foregroundStyle(Theme.Colors.accent)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
-                            .background(Color.white.opacity(0.8))
+                            .background(Theme.Colors.accent.opacity(0.16))
+                            .overlay(Capsule().stroke(Theme.Colors.accent.opacity(0.5), lineWidth: 1))
                             .clipShape(Capsule())
                     } else {
                         Text("REMOVED")
@@ -265,10 +273,11 @@ struct AuditionModeAndCuesView: View {
                 } else if isActive {
                     Text("ADDED")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Color(red: 173/255, green: 20/255, blue: 87/255))
+                        .foregroundStyle(Theme.Colors.accent)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(Color.white.opacity(0.8))
+                        .background(Theme.Colors.accent.opacity(0.16))
+                        .overlay(Capsule().stroke(Theme.Colors.accent.opacity(0.5), lineWidth: 1))
                         .clipShape(Capsule())
                 }
             }
@@ -276,10 +285,10 @@ struct AuditionModeAndCuesView: View {
             .padding(.vertical, 10)
             .background(
                 isActive
-                    ? Color(red: 252/255, green: 228/255, blue: 236/255) // Soft rose/pink (#FCE4EC)
-                    : Color.white
+                    ? Theme.Colors.accent.opacity(0.12)
+                    : Theme.Colors.cardSurface
             )
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

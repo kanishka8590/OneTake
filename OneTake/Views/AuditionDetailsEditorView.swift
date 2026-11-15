@@ -92,7 +92,7 @@ struct AuditionDetailsEditorView: View {
                                 HStack {
                                     Image(systemName: "tag.fill")
                                         .font(.system(size: 16))
-                                        .foregroundStyle(Theme.Colors.primaryPlum)
+                                        .foregroundStyle(Theme.Colors.accent)
                                         .frame(width: 28)
 
                                     Text("Production Type")
@@ -107,7 +107,7 @@ struct AuditionDetailsEditorView: View {
                                         }
                                     }
                                     .pickerStyle(.menu)
-                                    .tint(Theme.Colors.primaryPlum)
+                                    .tint(Theme.Colors.accent)
                                 }
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 12)
@@ -158,7 +158,7 @@ struct AuditionDetailsEditorView: View {
                                 } label: {
                                     Text("Edit")
                                         .font(Theme.Typography.captionBadge)
-                                        .foregroundStyle(Theme.Colors.primaryPlum)
+                                        .foregroundStyle(Theme.Colors.accent)
                                 }
                             }
                             .padding(.horizontal, 4)
@@ -205,7 +205,7 @@ struct AuditionDetailsEditorView: View {
                                     } label: {
                                         Text("Change Sides")
                                             .font(Theme.Typography.captionBadge)
-                                            .foregroundStyle(Theme.Colors.primaryPlum)
+                                            .foregroundStyle(Theme.Colors.accent)
                                     }
                                 }
                             }
@@ -342,7 +342,7 @@ struct AuditionDetailsEditorView: View {
         HStack(spacing: 14) {
             Image(systemName: isEditingExisting ? "pencil.circle.fill" : "sparkles")
                 .font(.system(size: 24))
-                .foregroundStyle(Theme.Colors.primaryPlum)
+                .foregroundStyle(Theme.Colors.accent)
                 .frame(width: 48, height: 48)
                 .background(Theme.Colors.lavenderSurface)
                 .clipShape(Circle())
@@ -350,7 +350,7 @@ struct AuditionDetailsEditorView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(isEditingExisting ? "Edit Saved Audition" : "Extracted from Notice")
                     .font(Theme.Typography.captionBadge)
-                    .foregroundStyle(Theme.Colors.primaryPlum)
+                    .foregroundStyle(Theme.Colors.accent)
 
                 Text(isEditingExisting ? "Update casting call info, requirements, or script sides." : "Verify & customize your breakdown before starting.")
                     .font(Theme.Typography.bodyRegular)
@@ -369,7 +369,7 @@ struct AuditionDetailsEditorView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Image(systemName: "doc.text.fill")
-                        .foregroundStyle(Theme.Colors.primaryPlum)
+                        .foregroundStyle(Theme.Colors.accent)
                         .font(.system(size: 16))
 
                     Text("Add Script Sides (Optional)")
@@ -424,7 +424,7 @@ struct AuditionDetailsEditorView: View {
 
                     Image(systemName: systemImage)
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Theme.Colors.primaryPlum)
+                        .foregroundStyle(Theme.Colors.accent)
                 }
 
                 Text(title)
@@ -442,7 +442,7 @@ struct AuditionDetailsEditorView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Image(systemName: "doc.text.fill")
-                    .foregroundStyle(Theme.Colors.primaryPlum)
+                    .foregroundStyle(Theme.Colors.accent)
                     .font(.system(size: 18))
 
                 Text(scriptFileName ?? "Sides Attached")
@@ -454,7 +454,7 @@ struct AuditionDetailsEditorView: View {
 
                 if !cueLines.isEmpty {
                     Text("\(cueLines.count) Cues")
-                        .statusBadge(color: Theme.Colors.primaryPlum)
+                        .statusBadge(color: Theme.Colors.accent)
                 }
             }
 
@@ -471,7 +471,7 @@ struct AuditionDetailsEditorView: View {
                 } label: {
                     Label("Change Sides", systemImage: "arrow.triangle.2.circlepath")
                         .font(Theme.Typography.captionBadge)
-                        .foregroundStyle(Theme.Colors.primaryPlum)
+                        .foregroundStyle(Theme.Colors.accent)
                 }
 
                 Spacer()
@@ -499,7 +499,7 @@ struct AuditionDetailsEditorView: View {
             HStack(spacing: 12) {
                 Image(systemName: icon)
                     .font(.system(size: 16))
-                    .foregroundStyle(Theme.Colors.primaryPlum)
+                    .foregroundStyle(Theme.Colors.accent)
                     .frame(width: 28)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -797,7 +797,7 @@ struct AuditionDetailsEditorView: View {
                             newRequirementTitle = ""
                         } label: {
                             Image(systemName: "plus.circle.fill")
-                                .foregroundStyle(Theme.Colors.primaryPlum)
+                                .foregroundStyle(Theme.Colors.accent)
                         }
                     }
                 }
@@ -874,10 +874,12 @@ struct AuditionDetailsEditorView: View {
                     .foregroundStyle(Theme.Colors.textSecondary)
 
                 TextEditor(text: $pastedScriptBuffer)
+                    .foregroundStyle(Theme.Colors.textPrimary)
                     .padding(8)
-                    .background(Theme.Colors.cardSurface)
+                    .scrollContentBackground(.hidden)
+                    .background(Theme.Colors.controlSurface)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.black.opacity(0.1), lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.Colors.controlBorder, lineWidth: 1))
 
                 Spacer()
             }

@@ -24,7 +24,7 @@ enum MockData {
     // MARK: - Auditions
 
     static var sampleAuditions: [Audition] {
-        [heerRanjha, theLastSummer, northbound]
+        [heerRanjha, theLastSummer]
     }
 
     static var heerRanjha: Audition {
@@ -38,7 +38,7 @@ enum MockData {
         a.recipientEmail = "casting@dharmaproductions.com"
         a.statusRaw = AuditionStatus.active.rawValue
         a.requirements = [
-            SubmissionRequirement(title: "Self-tape: 2 scenes (max 3 min each)", isCompleted: false),
+            SubmissionRequirement(title: "Self-tape", isCompleted: false),
             SubmissionRequirement(title: "Headshot: 4×5 theatrical", isCompleted: true),
             SubmissionRequirement(title: "Slate with name, height, and agency", isCompleted: false),
             SubmissionRequirement(title: "Submit to casting@dharmaproductions.com", isCompleted: false)
@@ -52,7 +52,7 @@ enum MockData {
 
         HEER
         (beat)
-        You think love is that simple? You run and the world just... lets you go?
+        You think love is that simple? You run and the world just... lets you go? I love you but I can't betray my family. We'll have to convince them anyhow. And I know, together we will.
         """
         a.scriptFileName = "Heer_Ranjha_Sides.pdf"
         a.validationRules = ValidationRules(
@@ -93,14 +93,13 @@ enum MockData {
         ]
         a.scriptText = """
         MEERA
-        You know what the worst part about leaving is? It's not the goodbye. It's knowing that everything will keep going without you.
+        Everything is just...ending. I just feel like everything is gonna be over. I'm done at the paper. Soon I'm gonna be done at Yale, and it's just like I'm standing on this cliff, looking out into this huge, foggy...ike, a huge
 
         ANYA
-        That's kind of the point, Meera. The world doesn't stop.
+        you mean abyss?
 
         MEERA
-        (softly)
-        I know. I just wish it would. Even for a second.
+        foggy abyss, and, in my whole life, there's never been an abyss. It's been abyssless. I've always known exactly what is in front of me, and I've always known exactly where I'm going, and now...I don't know what's out there. A ton of fog, and I hate not knowing what is out there. I mean, what's going to happen to my career and my relationship with Logan and the rest of my life?
         """
         a.scriptFileName = "TheLastSummer_Ep101_Meera.pdf"
         a.validationRules = ValidationRules()
@@ -108,42 +107,19 @@ enum MockData {
             CueLine(
                 orderIndex: 0,
                 speaker: "ANYA",
-                cueText: "That's kind of the point, Meera. The world doesn't stop.",
-                precedingActorLine: "You know what the worst part about leaving is? It's not the goodbye. It's knowing that everything will keep going without you."
+                cueText: "you mean abyss?",
+                precedingActorLine: "Everything is just...ending. I just feel like everything is gonna be over. I'm done at the paper. Soon I'm gonna be done at Yale, and it's just like I'm standing on this cliff, looking out into this huge, foggy...ike, a huge"
             )
         ]
         a.createdAt = Calendar.current.date(byAdding: .day, value: -2, to: Date()) ?? Date()
         return a
     }
 
-    static var northbound: Audition {
-        let a = Audition()
-        a.projectName = "Northbound"
-        a.productionType = ProductionType.shortFilm.rawValue
-        a.roleName = "Zara"
-        a.roleDescription = "A truck driver's daughter making a solo journey through the Himalayas."
-        a.deadline = Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date()
-        a.reminderOffsetMinutes = 30
-        a.recipientEmail = "submissions@northboundfilm.in"
-        a.statusRaw = AuditionStatus.sent.rawValue
-        a.sentDate = Calendar.current.date(byAdding: .day, value: -2, to: Date())
-        a.requirements = [
-            SubmissionRequirement(title: "Self-tape: 1 scene", isCompleted: true),
-            SubmissionRequirement(title: "Headshot", isCompleted: true),
-            SubmissionRequirement(title: "Slate video", isCompleted: true)
-        ]
-        a.scriptText = """
-        ZARA
-        The pass is closed. They told me three times at Manali. But my father's rig is stuck at Rohtang, and no one else is going up there.
-        """
-        a.createdAt = Calendar.current.date(byAdding: .day, value: -10, to: Date()) ?? Date()
-        return a
-    }
 
     // MARK: - Practice Scripts
 
     static var sampleScripts: [PracticeScript] {
-        [noahAndAllie, naina, tigerTalk]
+        [noahAndAllie, naina]
     }
 
     static var noahAndAllie: PracticeScript {
@@ -152,14 +128,14 @@ enum MockData {
         s.languageRaw = ScriptLanguage.english.rawValue
         s.rawText = """
         ALLIE
-        Why didn't you write me? Why? It wasn't over for me. I waited for you for seven years!
+        We first met at Luke’s, during a crazy lunch rush. You came rushing in, desperate for coffee, interrupting me while I was serving a customer. You wouldn't stop talking, so I finally told you to sit down, shut up, and wait your turn. Then you asked for my birthday, looked up my horoscope, and handed me a piece of paper that said, “You will meet an annoying woman. Give her coffee, and she'll go away.” You told me to keep it in my wallet because one day it would bring me luck.
 
         NOAH
-        I wrote you 365 letters. I wrote you every day for a year.
+        And you actually kept it? In your wallet? For eight years?
 
         ALLIE
         (stunned)
-        You wrote me?
+        Eight years
 
         NOAH
         Yes. It wasn't over. It still isn't over.
@@ -168,17 +144,22 @@ enum MockData {
             CueLine(
                 orderIndex: 0,
                 speaker: "NOAH",
-                cueText: "I wrote you 365 letters. I wrote you every day for a year.",
-                precedingActorLine: "Why didn't you write me? Why? It wasn't over for me. I waited for you for seven years!"
-            ),
-            CueLine(
-                orderIndex: 1,
-                speaker: "NOAH",
-                cueText: "Yes. It wasn't over. It still isn't over.",
-                precedingActorLine: "You wrote me?"
+                cueText: "And you actually kept it? In your wallet? For eight years?",
+                precedingActorLine: "We first met at Luke’s, during a crazy lunch rush. You came rushing in, desperate for coffee, interrupting me while I was serving a customer. You wouldn't stop talking, so I finally told you to sit down, shut up, and wait your turn. Then you asked for my birthday, looked up my horoscope, and handed me a piece of paper that said, “You will meet an annoying woman. Give her coffee, and she'll go away.” You told me to keep it in my wallet because one day it would bring me luck."
             )
         ]
-        s.lastPracticedAt = Calendar.current.date(byAdding: .hour, value: -3, to: Date())
+        s.lastPracticedAt = Calendar.current.date(byAdding: .day, value: -1, to: Date())
+
+        let sampleSession = PracticeSpeechDeliveryAnalyzer.makeSession(
+            script: s,
+            transcript: "We first met at Luke's during a crazy lunch rush. You came rushing in desperate for coffee interrupting me while I was serving a customer. You would not stop talking so I finally told you to sit down and wait your turn. Then you asked for my birthday looked up my horoscope and handed me a piece of paper that said You will meet an annoying woman. Give her coffee and she will go away. You told me to keep it in my wallet because one day it would bring me luck. Eight years.",
+            words: [],
+            clueRequestedRanges: [],
+            duration: 34,
+            help: .gaps,
+            audioURL: nil
+        )
+        s.sessions = [sampleSession]
         return s
     }
 
@@ -188,51 +169,25 @@ enum MockData {
         s.languageRaw = ScriptLanguage.hindi.rawValue
         s.rawText = """
         NAINA
-        Main tumse pyaar karti hoon, Bunny. Bahut zyada. Par main apne aap se bhi pyaar karti hoon. Aur tumne mujhe wo karne nahi diya.
+        Tum samajhte kyun nahi ki agar main ek minute aur ruki to...
 
         BUNNY
-        Naina, please...
+        to kya Naina?
 
         NAINA
-        (firm)
-        Nahi. Ab nahi. Tum jao. Jahan jaana hai jao. Main yahan hoon. Apni jagah.
+        To mujhe tumse pyaar hojaayega, firse. Aur tumhe nahi hoga, firse. Isliye bunny behtar yahi hoga ki hum ek dusre se jitnaa dur reh sake utnaa dur rahein.
         """
         s.cueLines = [
             CueLine(
                 orderIndex: 0,
                 speaker: "BUNNY",
-                cueText: "Naina, please...",
-                precedingActorLine: "Main tumse pyaar karti hoon, Bunny. Bahut zyada. Par main apne aap se bhi pyaar karti hoon."
+                cueText: "to kya Naina?",
+                precedingActorLine: "Tum samajhte kyun nahi ki agar main ek minute aur ruki to..."
             )
         ]
         return s
     }
 
-    static var tigerTalk: PracticeScript {
-        let s = PracticeScript()
-        s.title = "Tiger Talk"
-        s.languageRaw = ScriptLanguage.english.rawValue
-        s.rawText = """
-        PRIYA
-        Did you know tigers can't purr? They can only purr when they exhale. So every breath out is... contentment.
-
-        JAI
-        That's not true at all.
-
-        PRIYA
-        (grinning)
-        I know. But it sounded poetic, didn't it?
-        """
-        s.cueLines = [
-            CueLine(
-                orderIndex: 0,
-                speaker: "JAI",
-                cueText: "That's not true at all.",
-                precedingActorLine: "Did you know tigers can't purr? They can only purr when they exhale. So every breath out is... contentment."
-            )
-        ]
-        return s
-    }
 
     // MARK: - Sample AppState (for previews)
 

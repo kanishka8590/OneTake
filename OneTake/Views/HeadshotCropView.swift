@@ -90,7 +90,7 @@ struct HeadshotCropView: View {
                             Text("Auto-Align Face & Eye Line")
                         }
                         .font(Theme.Typography.captionBadge)
-                        .foregroundStyle(Theme.Colors.primaryPlum)
+                        .foregroundStyle(Theme.Colors.accent)
                     }
 
                     Spacer()

@@ -61,7 +61,7 @@ struct PracticeASceneSheet: View {
 }
 
 /// The practice entry point intentionally reuses the Audition tab's script-card
-/// selection treatment: the same speaker labels, pink selected rows, and cue
+/// selection treatment: the same speaker labels, purple selected rows, and cue
 /// badges, but its Continue action stops before CueRecorderView.
 struct PracticeAuditionCueSelectionView: View {
     @Environment(\.dismiss) private var dismiss
@@ -85,8 +85,42 @@ struct PracticeAuditionCueSelectionView: View {
         }
     }
     private var header: some View { VStack(alignment: .leading, spacing: 6) { Text("Add Cue Lines").font(.system(size: 24, weight: .bold)); Text(isDialogueDetected ? "Tap each scene partner line to mark it as a cue. Every unmarked line is treated as the actor's line." : "Tap any line another speaker reads to make it a cue.").font(.system(size: 14)).foregroundStyle(Theme.Colors.textSecondary) }.padding(.top, 12).padding(.horizontal, 4) }
-    private var scriptCard: some View { VStack(alignment: .leading, spacing: 10) { ForEach(scriptLines.indices, id: \.self) { index in lineRow(index) } }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(.white).clipShape(RoundedRectangle(cornerRadius: 18)).overlay(RoundedRectangle(cornerRadius: 18).stroke(Theme.Colors.primaryPlum.opacity(0.3), lineWidth: 1.5)) }
-    private func lineRow(_ index: Int) -> some View { let line = scriptLines[index]; let active = line.isCurrentlyActiveCue; let original = line.isAutoDetectedCue; return Button { withAnimation(.easeInOut(duration: 0.18)) { if original { scriptLines[index].isUserRemovedCue.toggle() } else { scriptLines[index].isUserAddedCue.toggle() } } } label: { HStack(alignment: .top, spacing: 10) { if isDialogueDetected && !line.speaker.isEmpty { Text(line.speaker.uppercased()).font(.system(size: 11, weight: .bold)).foregroundStyle(active ? Color(red: 173/255, green: 20/255, blue: 87/255) : Theme.Colors.textSecondary).padding(.top, 2).frame(width: 58, alignment: .leading) }; Text(line.text).font(.system(size: 14, weight: active ? .semibold : .regular)).foregroundStyle(Theme.Colors.textPrimary).lineSpacing(3).frame(maxWidth: .infinity, alignment: .leading); if active { Text(original ? "CUE" : "ADDED").font(.system(size: 10, weight: .bold)).foregroundStyle(Color(red: 173/255, green: 20/255, blue: 87/255)).padding(.horizontal, 7).padding(.vertical, 3).background(.white.opacity(0.8)).clipShape(Capsule()) } }.padding(.horizontal, 12).padding(.vertical, 10).background(active ? Color(red: 252/255, green: 228/255, blue: 236/255) : .white).clipShape(RoundedRectangle(cornerRadius: 12)).contentShape(Rectangle()) }.buttonStyle(.plain) }
+    private var scriptCard: some View { VStack(alignment: .leading, spacing: 10) { ForEach(scriptLines.indices, id: \.self) { index in lineRow(index) } }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(Theme.Colors.surfaceElevated).clipShape(RoundedRectangle(cornerRadius: 18)).overlay(RoundedRectangle(cornerRadius: 18).stroke(Theme.Colors.accent.opacity(0.42), lineWidth: 1.5)) }
+    private func lineRow(_ index: Int) -> some View {
+        let line = scriptLines[index]
+        let active = line.isCurrentlyActiveCue
+        let original = line.isAutoDetectedCue
+        return Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                if original { scriptLines[index].isUserRemovedCue.toggle() }
+                else { scriptLines[index].isUserAddedCue.toggle() }
+            }
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                if isDialogueDetected && !line.speaker.isEmpty {
+                    Text(line.speaker.uppercased())
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(active ? Theme.Colors.accent : Theme.Colors.textSecondary)
+                        .frame(width: 58, alignment: .leading)
+                }
+                Text(line.text)
+                    .font(.system(size: 19, weight: active ? .semibold : .regular))
+                    .italic(line.text.trimmingCharacters(in: .whitespaces).hasPrefix("("))
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                    .lineSpacing(7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if active {
+                    Text(original ? "CUE" : "ADDED")
+                        .studioPill(Theme.Colors.accent)
+                }
+            }
+            .padding(14)
+            .background(active ? Theme.Colors.accent.opacity(0.16) : Theme.Colors.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
     private func parseAndInitializeScript() { let paragraphs = scriptText.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }; var speakers: [String] = []; scriptLines = paragraphs.enumerated().map { index, paragraph in var speaker = ""; var text = paragraph; if let colon = paragraph.firstIndex(of: ":") { let candidate = String(paragraph[..<colon]).trimmingCharacters(in: .whitespaces); if candidate.count <= 25 && !candidate.contains(" ") { speaker = candidate; text = String(paragraph[paragraph.index(after: colon)...]).trimmingCharacters(in: .whitespaces); if !speakers.contains(candidate.uppercased()) { speakers.append(candidate.uppercased()) } } }; let existing = initialCues.contains { $0.cueText.trimmingCharacters(in: .whitespacesAndNewlines) == text.trimmingCharacters(in: .whitespacesAndNewlines) }; let autoCue = !existing && speakers.count > 1 && speaker.uppercased() != speakers.first; return ScriptDisplayLine(id: index, text: text.isEmpty ? paragraph : text, speaker: speaker, isAutoDetectedCue: existing || autoCue) }; isDialogueDetected = speakers.count >= 2 }
     private func makeCues() -> [CueLine] { var cues: [CueLine] = []; for (index, line) in scriptLines.enumerated() where line.isCurrentlyActiveCue { let previous = index > 0 && !scriptLines[index - 1].isCurrentlyActiveCue ? scriptLines[index - 1].text : ""; cues.append(CueLine(orderIndex: cues.count, speaker: line.speaker.isEmpty ? "READER" : line.speaker, cueText: line.text, precedingActorLine: previous, isAutoDetected: false)) }; return cues }
 }
@@ -102,7 +136,15 @@ struct MemoriseView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                Text("Level \(level) of 3 — \(level == 1 ? "READ" : level == 2 ? "RECALL" : "RECONSTRUCT")").font(Theme.Typography.sectionHeader).foregroundStyle(Theme.Colors.primaryPlum)
+                Text("Level \(level) of 3 — \(level == 1 ? "READ" : level == 2 ? "RECALL" : "RECONSTRUCT")").font(Theme.Typography.sectionHeader).foregroundStyle(Theme.Colors.accent)
+                if level > 1 {
+                    Label("Tap any blank to reveal", systemImage: "hand.tap.fill")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Theme.Colors.accent)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(.regularMaterial, in: Capsule())
+                }
                 ScriptPracticeCard(model: PracticeScriptModel(script: script), mode: level, revealedTokenIDs: $revealedTokens, clueTokenIDs: .constant([]), recordRevealAsClue: false, onClueTokenRequested: { _ in })
                 Button { if level < 3 { level += 1 } else { test = true } } label: { Text(level < 3 ? "Continue" : "Test Yourself").primaryCapsuleButton() }
             }.padding(16)
@@ -128,29 +170,37 @@ private struct ScriptPracticeCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(model.lines) { line in
-                if line.isHeader { Text(line.text).font(.system(size: 13, weight: .bold)).frame(maxWidth: .infinity).foregroundStyle(Theme.Colors.primaryPlum) }
-                else if model.cueLineIDs.contains(line.id) { cueLine(line).id(line.id) }
+                if line.isHeader { Text(line.text).font(.system(size: 13, weight: .bold)).frame(maxWidth: .infinity).foregroundStyle(Theme.Colors.accent) }
+                // Cue lines are always visible: they are the actor's prompt,
+                // never material to memorise or mask in any practice mode.
+                else if line.isCue || model.cueLineIDs.contains(line.id) { cueLine(line).id(line.id) }
                 else if mode != 0 { actorLine(line).id(line.id) }
             }
-        }.padding(18).cardStyle()
+        }.padding(20).cardStyle()
     }
     private func cueLine(_ line: PracticeLine) -> some View {
         HStack(alignment: .top, spacing: 7) {
-            Text("CUE").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.Colors.primaryPlum)
-            Text(line.text).font(Theme.Typography.bodyRegular).foregroundStyle(Theme.Colors.primaryPlum)
-        }.padding(9).frame(maxWidth: .infinity, alignment: .leading).background(Theme.Colors.lavenderSurface).clipShape(RoundedRectangle(cornerRadius: 10))
+            Text("CUE").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.Colors.accent).studioPill(Theme.Colors.accent)
+            Text(line.text).font(.system(size: 19)).foregroundStyle(Theme.Colors.textPrimary).lineSpacing(7)
+        }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Theme.Colors.accent.opacity(0.16)).overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.Colors.accent.opacity(0.5), lineWidth: 1)).clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
     private func actorLine(_ line: PracticeLine) -> some View {
         let tokens = model.tokens.filter { $0.lineID == line.id }
         return FlowLayout(spacing: 4) {
             ForEach(Array(tokens.enumerated()), id: \.element.id) { index, token in
                 Button { reveal(token) } label: {
-                    Text(display(token, position: index, count: tokens.count)).font(Theme.Typography.bodyRegular).fontWeight(revealedTokenIDs.contains(token.id) ? .bold : .regular).foregroundStyle(Theme.Colors.textPrimary)
+                    Text(display(token, position: index, count: tokens.count))
+                        .font(.system(size: 19))
+                        .fontWeight(revealedTokenIDs.contains(token.id) ? .bold : .regular)
+                        .italic(line.text.trimmingCharacters(in: .whitespaces).hasPrefix("("))
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                        .contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityLabel(revealedTokenIDs.contains(token.id) || mode == 1 ? token.word : "Hidden word")
             }
         }
     }
     private func reveal(_ token: PracticeToken) { guard mode > 1 else { return }; revealedTokenIDs.insert(token.id); if recordRevealAsClue { clueTokenIDs.insert(token.id); onClueTokenRequested(token.id) } }
+    private func isMasked(_ token: PracticeToken, position: Int, count: Int) -> Bool { mode > 1 && !revealedTokenIDs.contains(token.id) && (mode == 3 || shouldMask(position, count: count)) }
     private func display(_ token: PracticeToken, position: Int, count: Int) -> String {
         guard mode > 1, !revealedTokenIDs.contains(token.id) else { return token.word }
         if mode == 2, !shouldMask(position, count: count) { return token.word }
@@ -209,8 +259,10 @@ struct SayItAloudView: View {
                 .frame(maxHeight: .infinity)
                 .onChange(of: clueTracker.currentActorLineIndex) { _, _ in if let id = nextActorLine?.id { withAnimation(.easeInOut(duration: 0.5)) { proxy.scrollTo(id, anchor: .center) } } }
             }
-            Button { requestNextSentence() } label: { Label("Need a clue?", systemImage: "lightbulb.fill").secondaryLavenderButton() }
-            if let hintLineID, let line = model.actorLines.first(where: { $0.id == hintLineID }) { Text("Next sentence: \"\(line.text)\"").font(.caption).foregroundStyle(Theme.Colors.primaryPlum).frame(maxWidth: .infinity, alignment: .leading) }
+            if help != .fullScript {
+                Button { requestNextSentence() } label: { Label("Need a clue?", systemImage: "lightbulb.fill").secondaryLavenderButton() }
+                if let hintLineID, let line = model.actorLines.first(where: { $0.id == hintLineID }) { Text("Next sentence: \"\(line.text)\"").font(.caption).foregroundStyle(Theme.Colors.accent).frame(maxWidth: .infinity, alignment: .leading) }
+            }
             ZStack { Circle().fill(Theme.Colors.primaryPlum.opacity(0.16)).frame(width: 148, height: 148); Circle().fill(Theme.Colors.primaryPlum.opacity(0.28)).frame(width: 112, height: 112); Button { toggleStart() } label: { Image(systemName: recorder.isRecording ? "mic.fill" : "mic.fill").font(.system(size: 42)).foregroundStyle(.white).frame(width: 82, height: 82).background(Theme.Colors.primaryPlum).clipShape(Circle()) }.accessibilityLabel(didStart ? "Recording microphone" : "Start recording") }
             WaveformBars(level: recorder.audioLevel).frame(height: 28)
             Text(recorder.transcript.isEmpty ? recorder.statusText : recorder.transcript).font(.caption).foregroundStyle(Theme.Colors.textSecondary).lineLimit(2)
@@ -231,44 +283,340 @@ struct SayItAloudView: View {
     }
 }
 
-private struct WaveformBars: View { let level: CGFloat; var body: some View { HStack(spacing: 4) { ForEach(0..<12, id: \.self) { index in RoundedRectangle(cornerRadius: 2).fill(Theme.Colors.primaryPlum).frame(width: 4, height: max(6, 8 + CGFloat((index % 4) + 1) * level * 22)) } }.animation(.easeInOut(duration: 0.15), value: level) } }
+private struct WaveformBars: View {
+    let level: CGFloat
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<12, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Theme.Colors.primaryPlum)
+                    .frame(width: 4, height: max(6, 8 + CGFloat((index % 4) + 1) * level * 22))
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: level)
+    }
+}
 
 // MARK: - Review and playback
 
 struct PracticeReviewView: View {
     let script: PracticeScript; let session: PracticeSession; let appState: AppState
+    let isSavedReview: Bool
     @Environment(\.dismiss) private var dismiss
     @State private var playback = PracticeAudioPlayback()
     @State private var saveConfirmation = false
+
+    private static let forgotBlue = Theme.Colors.annotationBlue
+
+    init(script: PracticeScript, session: PracticeSession, appState: AppState, isSavedReview: Bool = false) {
+        self.script = script
+        self.session = session
+        self.appState = appState
+        self.isSavedReview = isSavedReview
+    }
+
+    private var scriptModel: PracticeScriptModel {
+        PracticeScriptModel(script: script)
+    }
+
+    private var inlineAnnotations: [DeliveryAnnotation] {
+        session.annotations.filter { $0.kind == .skipped || $0.kind == .forgot || $0.kind == .hesitated }
+    }
+
+    private var notInScriptAnnotations: [DeliveryAnnotation] {
+        session.annotations.filter { $0.kind == .notInScript }
+    }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Practice \(session.sessionNumber)").font(Theme.Typography.screenTitle)
+            VStack(spacing: 16) {
                 playbackPanel
-                TimelineMarkers(session: session)
-                Text("\(Int(session.durationSeconds))s total · Skipped \(session.skippedCount) · Forgot \(session.forgotCount) · Hesitated \(session.hesitatedCount)").font(.caption).foregroundStyle(Theme.Colors.textSecondary)
-                ForEach(session.annotations) { annotation in Text(annotation.text).padding(12).frame(maxWidth: .infinity, alignment: .leading).background(color(annotation.kind).opacity(0.14)).clipShape(RoundedRectangle(cornerRadius: 12)).overlay(alignment: .topTrailing) { Text(annotationLabel(annotation.kind)).font(.system(size: 9, weight: .bold)).foregroundStyle(color(annotation.kind)).padding(8) } }
-                HStack { Button("Retry") { dismiss() }.secondaryLavenderButton(); Button("Save") { save() }.primaryCapsuleButton() }
-            }.padding(16)
-        }.background(Theme.Colors.canvasBackground).navigationTitle("Your delivery").navigationBarTitleDisplayMode(.inline)
+                highlightedScriptCard
+                if !isSavedReview {
+                    HStack(spacing: 12) {
+                        Button("Retake") { dismiss() }
+                            .secondaryLavenderButton()
+                        Button("Save") { save() }
+                            .primaryCapsuleButton()
+                    }
+                    .padding(.top, 4)
+                }
+            }
+            .padding(16)
+        }
+        .background(Theme.Colors.canvasBackground)
+        .navigationTitle("Your delivery")
+        .navigationBarTitleDisplayMode(.inline)
         .onAppear { playback.load(url: session.audioFilePath.map(URL.init(fileURLWithPath:))) }
         .onDisappear { playback.stop() }
         .alert("Practice saved", isPresented: $saveConfirmation) { Button("Done") { dismiss() } }
     }
+
+    // MARK: Playback & Timeline Legend
+
     private var playbackPanel: some View {
-        VStack(spacing: 8) {
-            HStack { Button { playback.toggle() } label: { Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill").frame(width: 42, height: 42).background(Theme.Colors.lavenderSurface).clipShape(Circle()) }; Text(playback.available ? "Listen to your take" : "No audio recording available").font(Theme.Typography.bodyRegular); Spacer(); Text("\(Int(playback.currentTime))s").font(.caption).foregroundStyle(Theme.Colors.textSecondary) }
-            Slider(value: Binding(get: { playback.currentTime }, set: { playback.seek($0) }), in: 0...max(1, playback.duration)).tint(Theme.Colors.primaryPlum).disabled(!playback.available)
-        }.padding(14).cardStyle()
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Button { playback.toggle() } label: {
+                    Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(Theme.Colors.primaryPlum)
+                        .clipShape(Circle())
+                }
+                .disabled(!playback.available)
+
+                TimelineScrubber(
+                    currentTime: playback.currentTime,
+                    duration: max(1, playback.available ? playback.duration : session.durationSeconds),
+                    annotations: session.annotations,
+                    isInteractive: playback.available,
+                    onSeek: { playback.seek($0) }
+                )
+
+                Text(formatDuration(playback.available ? playback.duration : session.durationSeconds))
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.Colors.accent)
+            }
+
+            HStack(spacing: 28) {
+                VStack(alignment: .leading, spacing: 8) {
+                    legendItem(color: Theme.Colors.studioYellow, title: "Skipped")
+                    legendItem(color: Self.forgotBlue, title: "Forgot")
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    legendItem(color: Theme.Colors.studioOrange, title: "Hesitated")
+                    legendItem(color: Theme.Colors.studioGreen, title: "Not in Script")
+                }
+                Spacer()
+            }
+            .padding(.leading, 4)
+        }
+        .padding(16)
+        .cardStyle()
     }
-    private func save() { if !script.sessions.contains(where: { $0.id == session.id }) { script.sessions.append(session); script.lastPracticedAt = .now; appState.saveChanges() }; saveConfirmation = true }
-    private func color(_ kind: AnnotationKind) -> Color { switch kind { case .skipped: .orange; case .forgot: .red; case .hesitated: .purple; case .notInScript: .green; default: Theme.Colors.textSecondary } }
-    private func annotationLabel(_ kind: AnnotationKind) -> String { kind == .notInScript ? "NOT IN THE SCRIPT" : kind.rawValue.uppercased() }
+
+    private func legendItem(color: Color, title: String) -> some View {
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                .fill(color)
+                .frame(width: 5, height: 14)
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Theme.Colors.textPrimary)
+        }
+    }
+
+    // MARK: Unified Inline Script Card
+
+    private var highlightedScriptCard: some View {
+        let lines = scriptModel.lines
+        let lastActorLineID = lines.last(where: { !$0.isHeader && !scriptModel.cueLineIDs.contains($0.id) })?.id
+
+        return VStack(spacing: 14) {
+            ForEach(lines) { line in
+                if line.isHeader {
+                    Text(line.text.uppercased())
+                        .font(.system(size: 13, weight: .bold))
+                        .tracking(0.5)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, line.id == lines.first?.id ? 0 : 4)
+                } else if scriptModel.cueLineIDs.contains(line.id) {
+                    cueBanner(for: line)
+                } else {
+                    Text(highlightedAttributedText(for: line.text))
+                        .font(.system(size: 16, design: .monospaced))
+                        .lineSpacing(6)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+
+                    if line.id == lastActorLineID {
+                        ForEach(notInScriptAnnotations) { extra in
+                            notInScriptCallout(extra.text)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity)
+        .background(Theme.Colors.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Theme.Colors.accent.opacity(0.45), lineWidth: 1.5)
+        )
+    }
+
+    private func cueBanner(for line: PracticeLine) -> some View {
+        let matchedCue = script.cueLines.first {
+            $0.cueText.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(line.text.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+        }
+        let speaker = (matchedCue?.speaker ?? "CUE").uppercased()
+
+        return VStack(spacing: 4) {
+            ZStack {
+                Text(speaker)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                HStack {
+                    Spacer()
+                    Text("CUE")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Theme.Colors.studioPink)
+                }
+            }
+
+            Text(line.text)
+                .font(.system(size: 15, design: .monospaced))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Theme.Colors.textPrimary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(Theme.Colors.studioPink.opacity(0.22))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func notInScriptCallout(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("NOT IN THE SCRIPT")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Theme.Colors.textPrimary.opacity(0.75))
+
+            Text(text)
+                .font(.system(size: 15, design: .monospaced))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Theme.Colors.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(Theme.Colors.studioGreen.opacity(0.35))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func highlightedAttributedText(for lineText: String) -> AttributedString {
+        var attributed = AttributedString(lineText)
+        let lowerLine = lineText.lowercased()
+
+        for annotation in inlineAnnotations {
+            let needle = annotation.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !needle.isEmpty else { continue }
+
+            if let stringRange = lowerLine.range(of: needle.lowercased()),
+               let attrRange = Range(stringRange, in: attributed) {
+                attributed[attrRange].backgroundColor = highlightColor(annotation.kind)
+            }
+        }
+        return attributed
+    }
+
+    private func highlightColor(_ kind: AnnotationKind) -> Color {
+        switch kind {
+        case .skipped:
+            return Theme.Colors.studioYellow.opacity(0.65)
+        case .forgot:
+            return Self.forgotBlue.opacity(0.55)
+        case .hesitated:
+            return Theme.Colors.studioOrange.opacity(0.65)
+        case .notInScript:
+            return Theme.Colors.studioGreen.opacity(0.55)
+        default:
+            return .clear
+        }
+    }
+
+    private func formatDuration(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        let mins = total / 60
+        let secs = total % 60
+        return String(format: "%d:%02d", mins, secs)
+    }
+
+    private func save() {
+        if !script.sessions.contains(where: { $0.id == session.id }) {
+            script.sessions.append(session)
+            script.lastPracticedAt = .now
+            appState.saveChanges()
+        }
+        saveConfirmation = true
+    }
 }
 
-private struct TimelineMarkers: View { let session: PracticeSession; var body: some View { GeometryReader { proxy in ZStack(alignment: .leading) { Capsule().fill(Theme.Colors.lavenderSurface).frame(height: 10); HStack(spacing: 2) { ForEach(Array(session.annotations.enumerated()), id: \.offset) { _, annotation in Rectangle().fill(color(annotation.kind)).frame(width: max(5, proxy.size.width / CGFloat(max(1, session.annotations.count)) - 2), height: 10) } } } }.frame(height: 10).accessibilityLabel("Annotated delivery timeline") }; private func color(_ kind: AnnotationKind) -> Color { switch kind { case .skipped: .orange; case .forgot: .red; case .hesitated: .purple; case .notInScript: .green; default: .clear } } }
+private struct TimelineScrubber: View {
+    let currentTime: Double
+    let duration: Double
+    let annotations: [DeliveryAnnotation]
+    let isInteractive: Bool
+    let onSeek: (Double) -> Void
 
-struct PracticeHistoryView: View { let scripts: [PracticeScript]; let appState: AppState; @Environment(\.dismiss) private var dismiss; var body: some View { NavigationStack { List { ForEach(scripts) { script in Section(script.title) { ForEach(script.sessions.sorted { $0.sessionNumber > $1.sessionNumber }) { session in NavigationLink("Practice \(session.sessionNumber) · \(session.date.formatted(date: .abbreviated, time: .omitted))") { PracticeReviewView(script: script, session: session, appState: appState) } } } } }.navigationTitle("Practice history").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } } } } }
+    private static let forgotBlue = Theme.Colors.annotationBlue
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = max(1, proxy.size.width)
+            let progress = min(1, max(0, currentTime / max(0.1, duration)))
+            let visibleMarkers = annotations.filter { color($0.kind) != .clear }
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Theme.Colors.lavenderSurface)
+                    .frame(height: 5)
+
+                Capsule()
+                    .fill(Theme.Colors.primaryPlum.opacity(0.6))
+                    .frame(width: width * progress, height: 5)
+
+                ForEach(Array(visibleMarkers.enumerated()), id: \.offset) { index, annotation in
+                    let fraction = CGFloat(index + 1) / CGFloat(visibleMarkers.count + 1)
+                    RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                        .fill(color(annotation.kind))
+                        .frame(width: 5, height: 14)
+                        .offset(x: width * fraction - 2.5)
+                }
+
+                if isInteractive {
+                    Circle()
+                        .fill(Theme.Colors.primaryPlum)
+                        .frame(width: 12, height: 12)
+                        .offset(x: width * progress - 6)
+                }
+            }
+            .frame(height: 18)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        guard isInteractive else { return }
+                        let ratio = min(1, max(0, value.location.x / width))
+                        onSeek(Double(ratio) * duration)
+                    }
+            )
+        }
+        .frame(height: 18)
+        .accessibilityLabel("Annotated delivery timeline")
+    }
+
+    private func color(_ kind: AnnotationKind) -> Color {
+        switch kind {
+        case .skipped: return Theme.Colors.studioYellow
+        case .forgot: return Self.forgotBlue
+        case .hesitated: return Theme.Colors.studioOrange
+        case .notInScript: return Theme.Colors.studioGreen
+        default: return .clear
+        }
+    }
+}
+
+struct PracticeHistoryView: View { let scripts: [PracticeScript]; let appState: AppState; @Environment(\.dismiss) private var dismiss; var body: some View { NavigationStack { List { ForEach(scripts) { script in Section(script.title) { ForEach(script.sessions.sorted { $0.sessionNumber > $1.sessionNumber }) { session in NavigationLink("Practice \(session.sessionNumber) · \(session.date.formatted(date: .abbreviated, time: .omitted))") { PracticeReviewView(script: script, session: session, appState: appState, isSavedReview: true) } } } } }.navigationTitle("Practice history").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } } } } }
 
 @Observable private final class PracticeAudioPlayback: NSObject, AVAudioPlayerDelegate {
     var currentTime = 0.0; var duration = 0.0; var isPlaying = false; var available = false

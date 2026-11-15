@@ -39,7 +39,7 @@ struct CueRecorderView: View {
                         HStack {
                             Text("\(recordedCount) of \(cueLines.count) Recorded")
                                 .font(Theme.Typography.captionBadge)
-                                .foregroundStyle(recordedCount == cueLines.count ? Theme.Colors.successGreen : Theme.Colors.primaryPlum)
+                                .foregroundStyle(recordedCount == cueLines.count ? Theme.Colors.successGreen : Theme.Colors.accent)
 
                             Spacer()
 
@@ -56,7 +56,7 @@ struct CueRecorderView: View {
                                     .frame(height: 6)
 
                                 Capsule()
-                                    .fill(recordedCount == cueLines.count ? Theme.Colors.successGreen : Theme.Colors.primaryPlum)
+                                    .fill(recordedCount == cueLines.count ? Theme.Colors.successGreen : Theme.Colors.accent)
                                     .frame(width: cueLines.isEmpty ? 0 : geo.size.width * CGFloat(recordedCount) / CGFloat(cueLines.count), height: 6)
                             }
                         }
@@ -71,7 +71,7 @@ struct CueRecorderView: View {
                             HStack {
                                 Text("Speaker: \(cue.speaker)")
                                     .font(Theme.Typography.captionBadge)
-                                    .foregroundStyle(Theme.Colors.primaryPlum)
+                                    .foregroundStyle(Theme.Colors.accent)
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 4)
                                     .background(Theme.Colors.lavenderSurface)
@@ -83,7 +83,7 @@ struct CueRecorderView: View {
                                     HStack(spacing: 4) {
                                         Image(systemName: "checkmark.circle.fill")
                                             .foregroundStyle(Theme.Colors.successGreen)
-                                        Text("Audio Ready (\(String(format: "%.1fs", cue.durationSeconds)))")
+                                        Text("Audio Ready (\(String(format: "%.1fs", cue.durationSeconds)))").monospacedDigit()
                                             .font(Theme.Typography.captionBadge)
                                             .foregroundStyle(Theme.Colors.successGreen)
                                     }
@@ -124,7 +124,7 @@ struct CueRecorderView: View {
                             HStack(spacing: 3) {
                                 ForEach(0..<24) { i in
                                     RoundedRectangle(cornerRadius: 2)
-                                        .fill(isRecording ? Theme.Colors.errorCrimson : (isPlaying ? Theme.Colors.primaryPlum : Theme.Colors.lavenderSurface))
+                                        .fill(isRecording ? Theme.Colors.errorCrimson : (isPlaying ? Theme.Colors.accent : Theme.Colors.lavenderSurface))
                                         .frame(width: 4, height: max(6, CGFloat(audioEngine.currentAudioLevel * 50.0) * sin(Double(i) * 0.3 + (isRecording ? Double(recordingDuration * 5) : 1.0))))
                                         .animation(.linear(duration: 0.05), value: audioEngine.currentAudioLevel)
                                 }
@@ -147,7 +147,7 @@ struct CueRecorderView: View {
                             } label: {
                                 Image(systemName: isPlaying ? "stop.circle.fill" : "play.circle.fill")
                                     .font(.system(size: 44))
-                                    .foregroundStyle(cue.audioFilePath != nil ? Theme.Colors.primaryPlum : Theme.Colors.textSecondary.opacity(0.4))
+                                    .foregroundStyle(cue.audioFilePath != nil ? Theme.Colors.accent : Theme.Colors.textSecondary.opacity(0.4))
                             }
                             .disabled(cue.audioFilePath == nil || isRecording)
 
@@ -197,7 +197,7 @@ struct CueRecorderView: View {
                                     Text("Previous Cue")
                                 }
                                 .font(Theme.Typography.captionBadge)
-                                .foregroundStyle(selectedIndex > 0 ? Theme.Colors.primaryPlum : Theme.Colors.textSecondary.opacity(0.4))
+                                .foregroundStyle(selectedIndex > 0 ? Theme.Colors.accent : Theme.Colors.textSecondary.opacity(0.4))
                             }
                             .disabled(selectedIndex == 0 || isRecording)
 
@@ -214,7 +214,7 @@ struct CueRecorderView: View {
                                     Image(systemName: "chevron.right")
                                 }
                                 .font(Theme.Typography.captionBadge)
-                                .foregroundStyle(selectedIndex < cueLines.count - 1 ? Theme.Colors.primaryPlum : Theme.Colors.textSecondary.opacity(0.4))
+                                .foregroundStyle(selectedIndex < cueLines.count - 1 ? Theme.Colors.accent : Theme.Colors.textSecondary.opacity(0.4))
                             }
                             .disabled(selectedIndex >= cueLines.count - 1 || isRecording)
                         }

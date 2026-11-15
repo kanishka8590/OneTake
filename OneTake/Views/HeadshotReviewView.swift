@@ -85,7 +85,7 @@ struct HeadshotReviewView: View {
                                     Text("Retake \(selectedAngle.rawValue)")
                                 }
                                 .font(Theme.Typography.captionBadge)
-                                .foregroundStyle(Theme.Colors.primaryPlum)
+                                .foregroundStyle(Theme.Colors.accent)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 8)
                                 .background(Theme.Colors.lavenderSurface)
@@ -413,12 +413,12 @@ struct HeadshotReviewView: View {
                 }
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(selectedAngle == angle ? Theme.Colors.primaryPlum : Color.clear, lineWidth: 2)
+                        .stroke(selectedAngle == angle ? Theme.Colors.accent : Color.clear, lineWidth: 2)
                 )
 
                 Text(title)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(selectedAngle == angle ? Theme.Colors.primaryPlum : Theme.Colors.textSecondary)
+                    .foregroundStyle(selectedAngle == angle ? Theme.Colors.accent : Theme.Colors.textSecondary)
             }
         }
         .buttonStyle(.plain)
@@ -619,6 +619,11 @@ private struct SingleAngleCameraSheet: View {
             ZStack {
                 Color.black.ignoresSafeArea()
 
+                if let session = guidanceService.captureSession {
+                    LiveCameraPreview(session: session)
+                        .ignoresSafeArea()
+                }
+
                 // Silhouette Guide
                 GeometryReader { geo in
                     let w = geo.size.width
@@ -673,6 +678,7 @@ private struct SingleAngleCameraSheet: View {
             }
             .onAppear {
                 guidanceService.startSession(for: targetAngle)
+                guidanceService.announceAngle(targetAngle)
             }
             .onDisappear {
                 guidanceService.stopSession()

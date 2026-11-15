@@ -2,6 +2,13 @@ import SwiftUI
 import AVFoundation
 import PhotosUI
 
+private struct TakeReviewRoute: Identifiable {
+    let id = UUID()
+    let videoURL: URL
+    let duration: Double
+    let qualityMetrics: PreTakeQualityMetrics
+}
+
 struct TeleprompterRecorderView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
@@ -25,9 +32,7 @@ struct TeleprompterRecorderView: View {
     @State private var cueTimingMode: CueTriggerMode = .afterMyLine
 
     // Post-recording review transition
-    @State private var rawVideoOutputURL: URL?
-    @State private var recordedDuration: Double = 0.0
-    @State private var showingTakeReview = false
+    @State private var takeReviewRoute: TakeReviewRoute?
 
     // Upfront "Choose from Photos"
     @State private var showingVideoPhotosPicker = false
@@ -69,7 +74,8 @@ struct TeleprompterRecorderView: View {
                     ZStack {
                         Color.black.opacity(0.45).ignoresSafeArea()
                         Text("\(recorderService.countdownRemaining)")
-                            .font(.system(size: 110, weight: .bold))
+                            .font(.system(size: 110, weight: .bold, design: .rounded))
+                            .monospacedDigit()
                             .foregroundStyle(Color.white)
                             .transition(.scale.combined(with: .opacity))
                     }
@@ -181,22 +187,20 @@ struct TeleprompterRecorderView: View {
                 selectedVideoItem = nil
                 loadImportedVideo(from: item)
             }
-            .sheet(isPresented: $showingTakeReview) {
-                if let url = rawVideoOutputURL {
-                    TakeReviewView(
-                        audition: audition,
-                        rawVideoURL: url,
-                        totalDurationSeconds: recordedDuration,
-                        isSlate: isSlate
-                    ) { approvedTake in
-                        showingTakeReview = false
-                        onTakeSaved(approvedTake)
-                        dismiss()
-                    } onRetake: {
-                        showingTakeReview = false
-                        scrollOffset = 0.0
-                        recorderService.startSession()
-                    }
+            .fullScreenCover(item: $takeReviewRoute) { route in
+                TakeReviewView(
+                    audition: audition,
+                    rawVideoURL: route.videoURL,
+                    totalDurationSeconds: route.duration,
+                    isSlate: isSlate,
+                    qualityMetrics: route.qualityMetrics
+                ) { approvedTake in
+                    takeReviewRoute = nil
+                    onTakeSaved(approvedTake)
+                } onRetake: {
+                    takeReviewRoute = nil
+                    scrollOffset = 0.0
+                    recorderService.startSession()
                 }
             }
         }
@@ -275,7 +279,7 @@ struct TeleprompterRecorderView: View {
                 HStack(spacing: 12) {
                     Text("0.5x").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
                     Slider(value: $scrollSpeed, in: 0.5...2.5, step: 0.1)
-                        .tint(Theme.Colors.primaryPlum)
+                        .tint(Theme.Colors.accent)
                     Text("2.5x").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
                 }
                 .padding(.horizontal, 12)
@@ -319,7 +323,7 @@ struct TeleprompterRecorderView: View {
 
     private func lineColor(for line: String) -> Color {
         if line.hasPrefix("[READER]") || line.hasPrefix("[CUE]") {
-            return Color(red: 0.75, green: 0.70, blue: 0.95)
+            return Theme.Colors.cameraTeleprompterHighlight
         }
         return Color.white
     }
@@ -466,9 +470,11 @@ struct TeleprompterRecorderView: View {
     private func startCountdownAndRecord() {
         recorderService.startCountdownAndRecord(countdownSeconds: selectedCountdownSeconds) { url, duration in
             if let outputURL = url {
-                self.rawVideoOutputURL = outputURL
-                self.recordedDuration = duration
-                self.showingTakeReview = true
+                self.takeReviewRoute = TakeReviewRoute(
+                    videoURL: outputURL,
+                    duration: duration,
+                    qualityMetrics: recorderService.qualityMetrics
+                )
             }
         }
     }
@@ -506,9 +512,11 @@ struct TeleprompterRecorderView: View {
                 let dur = (try? await asset.load(.duration).seconds) ?? 15.0
                 await MainActor.run {
                     stopAllOperations()
-                    self.rawVideoOutputURL = movie.url
-                    self.recordedDuration = dur
-                    self.showingTakeReview = true
+                    self.takeReviewRoute = TakeReviewRoute(
+                        videoURL: movie.url,
+                        duration: dur,
+                        qualityMetrics: PreTakeQualityMetrics()
+                    )
                 }
             }
         }

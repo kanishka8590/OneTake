@@ -2,6 +2,7 @@ import SwiftUI
 import AVFoundation
 
 struct TalkToOneTakeBriefingView: View {
+    @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
 
     let audition: Audition
@@ -43,7 +44,7 @@ struct TalkToOneTakeBriefingView: View {
                         headerAvatarSection
 
                         // In Slate mode: YOUR SLATE section
-                        if isSlate && !editableScript.isEmpty {
+                        if isSlate {
                             yourSlateSection
                         }
 
@@ -65,7 +66,7 @@ struct TalkToOneTakeBriefingView: View {
                                 Text("Start Recording")
                             }
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color.white)
+                            .foregroundStyle(Theme.Colors.onAction)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
                             .background(Theme.Colors.primaryPlum)
@@ -82,6 +83,7 @@ struct TalkToOneTakeBriefingView: View {
             .onAppear {
                 // Slate and audition both pass through this one white briefing.
                 VoiceAuthorizationService.shared.requestAccess()
+                populateSlateScriptIfNeeded()
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -105,7 +107,7 @@ struct TalkToOneTakeBriefingView: View {
 
                 Image(systemName: "waveform.circle.fill")
                     .font(.system(size: 32))
-                    .foregroundStyle(Theme.Colors.primaryPlum)
+                    .foregroundStyle(Theme.Colors.accent)
             }
 
             VStack(alignment: .leading, spacing: 3) {
@@ -140,18 +142,45 @@ struct TalkToOneTakeBriefingView: View {
             }
             .padding(.horizontal, 4)
 
-            TextEditor(text: $editableScript)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(Theme.Colors.textPrimary)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 130)
-                .padding(10)
-                .background(Color.white.opacity(0.75))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                TextEditor(text: $editableScript)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 130)
+                    .padding(10)
+                    .background(Theme.Colors.controlSurface)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.Colors.controlBorder, lineWidth: 1))
             .padding(16)
             .background(Theme.Colors.lavenderSurface.opacity(0.85))
             .clipShape(RoundedRectangle(cornerRadius: 16))
         }
+    }
+
+    /// Live navigation can construct this view before SlateProfileSetupView's
+    /// generated text has propagated through SwiftUI state. Build a useful,
+    /// editable script here as well so the teleprompter is never absent.
+    private func populateSlateScriptIfNeeded() {
+        guard isSlate, editableScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        let profile = appState.currentUser
+        let name = nonEmpty(profile?.name, fallback: "your name")
+        let height = nonEmpty(profile?.height, fallback: "your height")
+        let age = profile?.age ?? 0
+        let ageText = age > 0 ? "\(age)" : "your age"
+        let basedIn = nonEmpty(profile?.basedIn, fallback: "your city")
+        let representation = nonEmpty(profile?.representation, fallback: "self-represented")
+        let role = nonEmpty(audition.roleName, fallback: "this role")
+        let project = nonEmpty(audition.projectName, fallback: "this project")
+
+        let template = "Hi, my name is \(name). I am \(height) tall and \(ageText) years old. I am based in \(basedIn) and represented by \(representation). Today I am reading for the role of \(role) in \(project)."
+        editableScript = template
+        scriptEditBuffer = template
+    }
+
+    private func nonEmpty(_ value: String?, fallback: String) -> String {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? fallback : trimmed
     }
 
     // MARK: - Edit Script Sheet
@@ -165,9 +194,12 @@ struct TalkToOneTakeBriefingView: View {
 
                 TextEditor(text: $scriptEditBuffer)
                     .font(.system(size: 15))
+                    .foregroundStyle(Theme.Colors.textPrimary)
                     .padding(12)
-                    .background(Theme.Colors.lavenderSurface.opacity(0.5))
+                    .scrollContentBackground(.hidden)
+                    .background(Theme.Colors.controlSurface)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.Colors.controlBorder, lineWidth: 1))
                     .frame(minHeight: 180)
 
                 Spacer()
@@ -181,7 +213,7 @@ struct TalkToOneTakeBriefingView: View {
                 } label: {
                     Text("Save Changes")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(Theme.Colors.onAction)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(Theme.Colors.primaryPlum)
@@ -216,7 +248,7 @@ struct TalkToOneTakeBriefingView: View {
                 Divider().padding(.horizontal, 16)
                 voiceCommandRow(phrase: "\"How do I look?\"", actionDescription: "Checks framing and light")
             }
-            .background(Color.white)
+            .background(Theme.Colors.cardSurface)
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 2)
         }
@@ -226,7 +258,7 @@ struct TalkToOneTakeBriefingView: View {
         HStack(spacing: 12) {
             Text(phrase)
                 .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(Theme.Colors.primaryPlum)
+                .foregroundStyle(Theme.Colors.accent)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
                 .background(Theme.Colors.lavenderSurface)
@@ -261,7 +293,7 @@ struct TalkToOneTakeBriefingView: View {
                     Spacer()
 
                     Toggle("", isOn: $framingTipsOutLoud)
-                        .tint(Theme.Colors.primaryPlum)
+                        .tint(Theme.Colors.accent)
                         .labelsHidden()
                 }
                 .padding(.horizontal, 16)
@@ -277,13 +309,13 @@ struct TalkToOneTakeBriefingView: View {
                     Spacer()
 
                     Toggle("", isOn: $countdownOutLoud)
-                        .tint(Theme.Colors.primaryPlum)
+                        .tint(Theme.Colors.accent)
                         .labelsHidden()
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
             }
-            .background(Color.white)
+            .background(Theme.Colors.cardSurface)
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 2)
         }

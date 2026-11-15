@@ -8,15 +8,19 @@ import Speech
 // MARK: - Quality Indicators
 
 nonisolated struct PreTakeQualityMetrics: Sendable {
-    var lightStatus: String = "Good" // "Good", "Too Dark", "Uneven"
-    var isLightPassed: Bool = true
-    var backgroundStatus: String = "Clean"
-    var isBackgroundPassed: Bool = true
+    var lightStatus: String = "Not checked"
+    var isLightPassed: Bool = false
+    var isLightingEvaluated: Bool = false
+    var backgroundStatus: String = "Not checked"
+    var isBackgroundPassed: Bool = false
+    var isBackgroundEvaluated: Bool = false
     var ratioString: String = "16:9"
     var isRatioPassed: Bool = true
-    var isAlignmentPassed: Bool = true
-    var phoneHeightStatus: String = "Eye Level"
-    var isPhoneHeightPassed: Bool = true
+    var isAlignmentPassed: Bool = false
+    var isFramingEvaluated: Bool = false
+    var phoneHeightStatus: String = "Not checked"
+    var isPhoneHeightPassed: Bool = false
+    var isPhoneHeightEvaluated: Bool = false
 
     var allPassed: Bool {
         isLightPassed && isBackgroundPassed && isRatioPassed && isAlignmentPassed && isPhoneHeightPassed
@@ -140,6 +144,7 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
             let isVertical = abs(abs(pitchDeg) - 90.0) < 14.0 || abs(pitchDeg) < 14.0
             self.qualityMetrics.isPhoneHeightPassed = isVertical
             self.qualityMetrics.phoneHeightStatus = isVertical ? "Eye Level" : "Tilt Adjust"
+            self.qualityMetrics.isPhoneHeightEvaluated = true
         }
     }
 
@@ -162,6 +167,10 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         qualityMetrics.phoneHeightStatus = simulatedEyeLevel ? "Eye Level" : "Tilt Adjust"
         qualityMetrics.isBackgroundPassed = simulatedPlainBackground
         qualityMetrics.backgroundStatus = simulatedPlainBackground ? "Clean" : "Cluttered"
+        qualityMetrics.isLightingEvaluated = true
+        qualityMetrics.isBackgroundEvaluated = true
+        qualityMetrics.isFramingEvaluated = true
+        qualityMetrics.isPhoneHeightEvaluated = true
     }
 
     func stopSession() {
@@ -724,6 +733,7 @@ extension TeleprompterRecorderService: AVCaptureVideoDataOutputSampleBufferDeleg
             guard let self = self, let results = req.results as? [VNFaceObservation], let face = results.first else {
                 DispatchQueue.main.async {
                     self?.qualityMetrics.isAlignmentPassed = false
+                    self?.qualityMetrics.isFramingEvaluated = true
                 }
                 return
             }
@@ -733,6 +743,7 @@ extension TeleprompterRecorderService: AVCaptureVideoDataOutputSampleBufferDeleg
             let centered = (midX >= 0.30 && midX <= 0.70) && (midY >= 0.25 && midY <= 0.75)
             DispatchQueue.main.async {
                 self.qualityMetrics.isAlignmentPassed = centered
+                self.qualityMetrics.isFramingEvaluated = true
             }
         }
 
@@ -743,8 +754,10 @@ extension TeleprompterRecorderService: AVCaptureVideoDataOutputSampleBufferDeleg
             DispatchQueue.main.async {
                 self.qualityMetrics.isBackgroundPassed = isPlain
                 self.qualityMetrics.backgroundStatus = isPlain ? "Clean" : "Cluttered"
+                self.qualityMetrics.isBackgroundEvaluated = true
                 self.qualityMetrics.isLightPassed = isLightOk
                 self.qualityMetrics.lightStatus = lumStatus
+                self.qualityMetrics.isLightingEvaluated = true
             }
         }
         segRequest.qualityLevel = .fast

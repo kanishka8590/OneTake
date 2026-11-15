@@ -2,6 +2,11 @@ import SwiftUI
 import PhotosUI
 import AVFoundation
 
+private struct SlateRecorderRoute: Identifiable {
+    let id = UUID()
+    let script: String
+}
+
 struct SlateProfileSetupView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
@@ -13,6 +18,7 @@ struct SlateProfileSetupView: View {
     @State private var height: String = ""
     @State private var age: String = ""
     @State private var basedIn: String = ""
+    @State private var representation: String = ""
     @State private var previousWorkTags: [String] = []
     @State private var newWorkTag: String = ""
     @State private var generatedSlateScript: String = ""
@@ -23,7 +29,8 @@ struct SlateProfileSetupView: View {
 
     // Flow navigation
     @State private var showingBriefing = false
-    @State private var showingTeleprompter = false
+    @State private var pendingSlateScript: String?
+    @State private var slateRecorderRoute: SlateRecorderRoute?
     @State private var returnToBriefingAfterRecorder = false
     @State private var finalSlateScriptToRecord = ""
 
@@ -32,6 +39,7 @@ struct SlateProfileSetupView: View {
         case height = "Height"
         case age = "Age"
         case basedIn = "Based in"
+        case representation = "Representation"
         case previousWork = "Previous Work"
 
         var id: String { rawValue }
@@ -95,13 +103,20 @@ struct SlateProfileSetupView: View {
                                 Divider().padding(.horizontal, 16)
 
                                 slatePreviewRow(
-                                    value: previousWorkTags.isEmpty ? "Leave blank if none" : previousWorkTags.joined(separator: ", "),
+                                    value: representation.isEmpty ? "Self-represented" : representation,
+                                    label: "representation",
+                                    field: .representation
+                                )
+                                Divider().padding(.horizontal, 16)
+
+                                slatePreviewRow(
+                                    value: previousWorkTags.isEmpty ? "Previous Experience" : previousWorkTags.joined(separator: ", "),
                                     label: "Add",
                                     field: .previousWork,
                                     isDimmedValue: previousWorkTags.isEmpty
                                 )
                             }
-                            .background(Color.white)
+                            .background(Theme.Colors.cardSurface)
                             .clipShape(RoundedRectangle(cornerRadius: 18))
                             .shadow(color: Color.black.opacity(0.04), radius: 8, x: 0, y: 2)
                         }
@@ -116,7 +131,7 @@ struct SlateProfileSetupView: View {
                         } label: {
                             Text("Continue")
                                 .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Color.white)
+                                .foregroundStyle(Theme.Colors.onAction)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 14)
                                 .background(Theme.Colors.primaryPlum)
@@ -140,33 +155,35 @@ struct SlateProfileSetupView: View {
             .sheet(item: $editingField) { field in
                 editFieldSheet(for: field)
             }
-            .sheet(isPresented: $showingBriefing) {
+            .sheet(isPresented: $showingBriefing, onDismiss: {
+                guard let script = pendingSlateScript else { return }
+                pendingSlateScript = nil
+                slateRecorderRoute = SlateRecorderRoute(script: script)
+            }) {
                 TalkToOneTakeBriefingView(
                     audition: audition,
                     isSlate: true,
                     scriptPreview: finalSlateScriptToRecord
                 ) { updatedScript in
-                    showingBriefing = false
                     finalSlateScriptToRecord = updatedScript
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        showingTeleprompter = true
-                    }
+                    pendingSlateScript = updatedScript
+                    showingBriefing = false
                 }
             }
-            .fullScreenCover(isPresented: $showingTeleprompter, onDismiss: {
+            .fullScreenCover(item: $slateRecorderRoute, onDismiss: {
                 if returnToBriefingAfterRecorder {
                     returnToBriefingAfterRecorder = false
                     showingBriefing = true
                 }
-            }) {
+            }) { route in
                 TeleprompterRecorderView(
                     audition: audition,
                     modeTitle: "Slate Video",
-                    scriptLines: [finalSlateScriptToRecord],
+                    scriptLines: [route.script],
                     isSlate: true,
                     onTakeSaved: { savedTake in
                         returnToBriefingAfterRecorder = false
-                        showingTeleprompter = false
+                        slateRecorderRoute = nil
                         audition.slateTakes.append(savedTake)
                         audition.selectedSlateTakeID = savedTake.id
                         if let idx = audition.requirements.firstIndex(where: { $0.title.lowercased().contains("slate") }) {
@@ -226,6 +243,7 @@ struct SlateProfileSetupView: View {
         case .height: return height
         case .age: return age
         case .basedIn: return basedIn
+        case .representation: return representation
         case .previousWork: return previousWorkTags.joined(separator: ", ")
         }
     }
@@ -241,9 +259,11 @@ struct SlateProfileSetupView: View {
 
                 TextField(field.rawValue, text: $editBuffer)
                     .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(Theme.Colors.textPrimary)
                     .padding(14)
-                    .background(Theme.Colors.lavenderSurface.opacity(0.6))
+                    .background(Theme.Colors.controlSurface)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.Colors.controlBorder, lineWidth: 1))
 
                 Spacer()
 
@@ -253,7 +273,7 @@ struct SlateProfileSetupView: View {
                 } label: {
                     Text("Save")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(Theme.Colors.onAction)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(Theme.Colors.primaryPlum)
@@ -282,6 +302,8 @@ struct SlateProfileSetupView: View {
             age = trimmed
         case .basedIn:
             basedIn = trimmed
+        case .representation:
+            representation = trimmed
         case .previousWork:
             if trimmed.isEmpty {
                 previousWorkTags = []
@@ -300,12 +322,14 @@ struct SlateProfileSetupView: View {
             height = user.height
             age = user.age > 0 ? "\(user.age)" : ""
             basedIn = user.basedIn
+            representation = user.representation
             previousWorkTags = user.previousWork
         } else {
             actorName = "Alex Morgan"
             height = "5'8\""
             age = "25"
             basedIn = "Mumbai"
+            representation = "Self-represented"
         }
         updateGeneratedScript()
     }
@@ -324,6 +348,9 @@ struct SlateProfileSetupView: View {
         if !basedIn.isEmpty {
             parts.append("I am based in \(basedIn).")
         }
+        if !representation.isEmpty {
+            parts.append("I am represented by \(representation).")
+        }
 
         let role = audition.roleName.isEmpty ? "this role" : audition.roleName
         let project = audition.projectName.isEmpty ? "your project" : audition.projectName
@@ -334,7 +361,7 @@ struct SlateProfileSetupView: View {
             parts.append("Recently, you may have seen my work in \(creds).")
         }
 
-        parts.append("Thank you for your time, and here is my audition.")
+        parts.append("I am available for the shooting dates of this project.")
         generatedSlateScript = parts.joined(separator: " ")
     }
 }

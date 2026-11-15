@@ -29,7 +29,7 @@ struct CastingCallParsingView: View {
                     // Radar pulse animation
                     ZStack {
                         Circle()
-                            .stroke(Theme.Colors.primaryPlum.opacity(0.15), lineWidth: 2)
+                            .stroke(Theme.Colors.accent.opacity(0.25), lineWidth: 2)
                             .frame(width: isPulsing ? 170 : 110, height: isPulsing ? 170 : 110)
                             .scaleEffect(isPulsing ? 1.15 : 0.95)
                             .opacity(isPulsing ? 0.3 : 0.8)
@@ -40,7 +40,7 @@ struct CastingCallParsingView: View {
 
                         Image(systemName: "doc.text.magnifyingglass")
                             .font(.system(size: 42))
-                            .foregroundStyle(Theme.Colors.primaryPlum)
+                            .foregroundStyle(Theme.Colors.accent)
                     }
                     .animation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true), value: isPulsing)
 
@@ -57,7 +57,7 @@ struct CastingCallParsingView: View {
                         if !sourceTitle.isEmpty {
                             Text(sourceTitle)
                                 .font(Theme.Typography.captionBadge)
-                                .foregroundStyle(Theme.Colors.primaryPlum)
+                                .foregroundStyle(Theme.Colors.accent)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 4)
                                 .background(Theme.Colors.lavenderTint)
@@ -70,7 +70,7 @@ struct CastingCallParsingView: View {
                     HStack(spacing: 6) {
                         ForEach(0..<statusMessages.count, id: \.self) { idx in
                             Capsule()
-                                .fill(idx <= progressStep ? Theme.Colors.primaryPlum : Theme.Colors.lavenderSurface)
+                                .fill(idx <= progressStep ? Theme.Colors.accent : Theme.Colors.lavenderSurface)
                                 .frame(width: idx == progressStep ? 24 : 12, height: 6)
                                 .animation(.spring(), value: progressStep)
                         }

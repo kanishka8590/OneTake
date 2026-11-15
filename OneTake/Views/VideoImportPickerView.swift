@@ -22,7 +22,7 @@ struct VideoImportPickerView: View {
                 VStack(spacing: 24) {
                     Image(systemName: "video.badge.plus")
                         .font(.system(size: 54))
-                        .foregroundStyle(Theme.Colors.primaryPlum)
+                        .foregroundStyle(Theme.Colors.accent)
                         .padding(.top, 36)
 
                     VStack(spacing: 8) {

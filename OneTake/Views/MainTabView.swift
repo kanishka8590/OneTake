@@ -23,7 +23,7 @@ struct MainTabView: View {
 
             PracticeHubView(appState: appState)
                 .tabItem {
-                    Label("Practice", systemImage: "text.book.closed")
+                    Label("Practice", systemImage: "theatermasks.fill")
                 }
                 .tag(AppTab.practice)
 
@@ -33,7 +33,7 @@ struct MainTabView: View {
                 }
                 .tag(AppTab.profile)
         }
-        .tint(Theme.Colors.primaryPlum)
+        .tint(Theme.Colors.accent)
         .searchable(
             text: Bindable(appState).globalSearchQuery,
             prompt: "Search auditions & script sides"

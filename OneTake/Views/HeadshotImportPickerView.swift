@@ -124,7 +124,7 @@ struct HeadshotImportPickerView: View {
                 } else {
                     Image(systemName: "photo.badge.plus")
                         .font(.system(size: 22))
-                        .foregroundStyle(Theme.Colors.primaryPlum)
+                        .foregroundStyle(Theme.Colors.accent)
                 }
             }
 
@@ -143,7 +143,7 @@ struct HeadshotImportPickerView: View {
             PhotosPicker(selection: item, matching: .images) {
                 Text(image == nil ? "Choose" : "Change")
                     .font(Theme.Typography.captionBadge)
-                    .foregroundStyle(Theme.Colors.primaryPlum)
+                    .foregroundStyle(Theme.Colors.accent)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .background(Theme.Colors.lavenderTint)

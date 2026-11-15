@@ -109,6 +109,10 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     private let speechDebounceInterval: TimeInterval = 4.0
     @ObservationIgnored private var pendingPhotoCompletion: ((UIImage?) -> Void)?
     private var isAnalyzingFrame = false
+    private var countdownToken: UUID?
+    private var isCountdownInProgress = false
+    private var isCountdownSpeechActive = false
+    private var poseAnnouncementToken: UUID?
     @ObservationIgnored private lazy var voiceCommandController: LiveVoiceCommandController = { [weak self] in
         LiveVoiceCommandController(
             mode: .headshots,
@@ -148,26 +152,35 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
             let isVertical = abs(abs(pitchDeg) - 90.0) < 14.0 || abs(pitchDeg) < 14.0
             self.feedback.pitchDegrees = pitchDeg
             self.feedback.isEyeLevel = isVertical
+            self.cancelCountdownIfAlignmentLost()
         }
     }
 
     // MARK: - Session Lifecycle
 
     func startSession(for angle: HeadshotAngle) {
+        let needsInitialVoiceSetup = !isSessionRunning
         self.targetAngle = angle
+        self.poseAnnouncementToken = nil
         self.isCapturing = false
         self.countdownRemaining = 0
+        self.countdownToken = nil
+        self.isCountdownInProgress = false
+        self.isCountdownSpeechActive = false
+        self.pendingPhotoCompletion = nil
+        self.feedback = GuidanceFeedback()
         self.currentZoomFactor = 1.0
 
         #if targetEnvironment(simulator)
         configureSimulatorDefaults(for: angle)
-        if !isSessionRunning {
+        if needsInitialVoiceSetup {
             isSessionRunning = true
             setupVoiceTrigger()
         }
         #else
-        if !isSessionRunning {
-            isSessionRunning = true
+        isSessionRunning = true
+        prepareCameraSession()
+        if needsInitialVoiceSetup {
             setupVoiceTrigger()
         }
         #endif
@@ -179,6 +192,11 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         captureSession?.stopRunning()
         #endif
         stopVoiceTrigger()
+        poseAnnouncementToken = nil
+        countdownToken = nil
+        isCountdownInProgress = false
+        isCountdownSpeechActive = false
+        pendingPhotoCompletion = nil
         isCapturing = false
         countdownRemaining = 0
     }
@@ -246,44 +264,83 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
     func startCountdown(seconds: Int = 3, completion: @escaping (UIImage?) -> Void) {
         guard !isCapturing else { return }
-        isCapturing = true
-        countdownRemaining = seconds
-        pendingPhotoCompletion = completion
 
-        speakCountdown(seconds: seconds)
+        // Do not begin a capture sequence from an already-invalid frame. Live analysis
+        // will keep providing the adjustment prompt until the subject is aligned.
+        guard feedback.allChecksPassed else {
+            speakCurrentPoseGuidanceIfNeeded()
+            return
+        }
+
+        isCapturing = true
+        // Keep the visual counter hidden while a current guidance phrase finishes.
+        // The first visible tick is the first spoken number.
+        countdownRemaining = 0
+        pendingPhotoCompletion = completion
+        isCountdownInProgress = true
+        isCountdownSpeechActive = false
+
+        let token = UUID()
+        countdownToken = token
+
+        speakCountdown(seconds: seconds, token: token)
     }
 
-    private func speakCountdown(seconds: Int) {
+    private func speakCountdown(seconds: Int, token: UUID) {
+        guard isCapturing, isCountdownInProgress, countdownToken == token else { return }
+
+        // A countdown must never cut off a coaching phrase. This applies to the
+        // first number and every subsequent tick.
+        guard !speechSynthesizer.isSpeaking else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.speakCountdown(seconds: seconds, token: token)
+            }
+            return
+        }
+
+        guard feedback.allChecksPassed else {
+            cancelCountdownAndResumePoseGuidance()
+            return
+        }
+
         guard seconds > 0 else {
-            speak("Hold steady!", forceSpeak: true)
-            capturePhotoNow()
+            capturePhotoNow(token: token)
             return
         }
 
         countdownRemaining = seconds
+        isCountdownSpeechActive = true
         speak("\(seconds)", forceSpeak: true)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            guard let self = self, self.isCapturing else { return }
-            self.speakCountdown(seconds: seconds - 1)
+            self?.speakCountdown(seconds: seconds - 1, token: token)
         }
     }
 
-    private func capturePhotoNow() {
+    private func capturePhotoNow(token: UUID) {
+        guard isCapturing, countdownToken == token else { return }
+        guard feedback.allChecksPassed else {
+            cancelCountdownAndResumePoseGuidance()
+            return
+        }
+
+        // The countdown has reached zero. Cancel every pending countdown tick
+        // before handing control to the still-in-progress photo capture.
+        isCountdownInProgress = false
+        isCountdownSpeechActive = false
+        countdownRemaining = 0
+        countdownToken = nil
+
         #if targetEnvironment(simulator)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, self.isCapturing else { return }
             let simulatedPhoto = self.generateSimulatedHeadshot(angle: self.targetAngle)
-            self.isCapturing = false
-            self.countdownRemaining = 0
-            self.pendingPhotoCompletion?(simulatedPhoto)
+            self.completePhotoCapture(with: simulatedPhoto)
         }
         #else
         guard let photoOutput = self.photoOutput else {
             let fallback = generateSimulatedHeadshot(angle: targetAngle)
-            isCapturing = false
-            countdownRemaining = 0
-            pendingPhotoCompletion?(fallback)
+            completePhotoCapture(with: fallback)
             return
         }
 
@@ -292,7 +349,40 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         #endif
     }
 
+    private func completePhotoCapture(with image: UIImage?) {
+        isCapturing = false
+        countdownRemaining = 0
+        countdownToken = nil
+        isCountdownInProgress = false
+        isCountdownSpeechActive = false
+
+        let completion = pendingPhotoCompletion
+        pendingPhotoCompletion = nil
+        completion?(image)
+    }
+
     // MARK: - Camera Session Configuration (Device)
+
+    /// Camera preview must not depend on microphone/speech authorization. A user
+    /// can still take a headshot when hands-free commands are unavailable.
+    private func prepareCameraSession() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            setupCameraSession()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                guard granted else { return }
+                DispatchQueue.main.async {
+                    guard let self, self.isSessionRunning else { return }
+                    self.setupCameraSession()
+                }
+            }
+        case .denied, .restricted:
+            break
+        @unknown default:
+            break
+        }
+    }
 
     private func setupCameraSession() {
         if let existing = captureSession {
@@ -366,9 +456,6 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
             guard let self = self, self.isSessionRunning else { return }
             guard authorized else { self.voiceStatus = .failed; return }
             guard self.configureGuidanceAudioSession() else { self.voiceStatus = .failed; return }
-            #if !targetEnvironment(simulator)
-            self.setupCameraSession()
-            #endif
             self.startVoiceListening()
         }
     }
@@ -514,6 +601,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     }
 
     func triggerFramingFeedbackVoice() {
+        guard !isCapturing else { return }
         lastSpokenTime = Date()
         var adjustments: [String] = []
 
@@ -553,13 +641,41 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         speak(message, forceSpeak: true)
     }
 
+    /// Resets completed capture state, then announces the next pose without
+    /// interrupting the last countdown utterance.
+    func transitionToNextPose(_ angle: HeadshotAngle) {
+        startSession(for: angle)
+        announceAngle(angle, notBefore: Date().addingTimeInterval(0.4))
+    }
+
     func announceAngle(_ angle: HeadshotAngle) {
+        announceAngle(angle, notBefore: .distantPast)
+    }
+
+    private func announceAngle(_ angle: HeadshotAngle, notBefore: Date) {
+        guard !isCapturing else { return }
         let prompt: String
         switch angle {
         case .front: prompt = "Front headshot. Look straight at the camera."
         case .left: prompt = "Left profile. Turn your head slightly to your left."
         case .right: prompt = "Right profile. Turn your head slightly to your right."
         }
+
+        let token = UUID()
+        poseAnnouncementToken = token
+        speakPoseAnnouncementWhenReady(prompt, token: token, notBefore: notBefore)
+    }
+
+    private func speakPoseAnnouncementWhenReady(_ prompt: String, token: UUID, notBefore: Date) {
+        guard poseAnnouncementToken == token, !isCapturing else { return }
+        guard Date() >= notBefore, !speechSynthesizer.isSpeaking else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.speakPoseAnnouncementWhenReady(prompt, token: token, notBefore: notBefore)
+            }
+            return
+        }
+
+        poseAnnouncementToken = nil
         speak(prompt, forceSpeak: false)
     }
 
@@ -641,6 +757,60 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         speechSynthesizer.speak(utterance)
+    }
+
+    /// Called from live analysis and the view so a countdown cannot produce a
+    /// photo after the subject has moved out of the required framing.
+    func cancelCountdownIfAlignmentLost() {
+        guard isCountdownInProgress, !feedback.allChecksPassed else { return }
+        cancelCountdownAndResumePoseGuidance()
+    }
+
+    private func cancelCountdownAndResumePoseGuidance() {
+        guard isCountdownInProgress else { return }
+
+        let wasSpeakingCountdown = isCountdownSpeechActive
+        countdownToken = nil
+        isCountdownInProgress = false
+        isCountdownSpeechActive = false
+        isCapturing = false
+        countdownRemaining = 0
+        pendingPhotoCompletion = nil
+        lastSpokenTime = .distantPast
+
+        // If a countdown number is currently audible, remove it before returning
+        // to a pose prompt. If this was still waiting for the prior coaching phrase,
+        // the helper below waits for that phrase instead of interrupting it.
+        if wasSpeakingCountdown {
+            speechSynthesizer.stopSpeaking(at: .immediate)
+        }
+        speakCurrentPoseGuidanceIfNeeded()
+    }
+
+    private func speakCurrentPoseGuidanceIfNeeded() {
+        guard voiceGuidanceEnabled, !isCapturing, !isCountdownInProgress else { return }
+        guard !speechSynthesizer.isSpeaking else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.speakCurrentPoseGuidanceIfNeeded()
+            }
+            return
+        }
+
+        if !feedback.isFaceCentered {
+            speak("Center your face in the guide oval.", forceSpeak: false)
+        } else if !feedback.isAngleCorrect {
+            switch targetAngle {
+            case .front: speak("Turn your head to face front.", forceSpeak: false)
+            case .left: speak("Turn slightly to your left.", forceSpeak: false)
+            case .right: speak("Turn slightly to your right.", forceSpeak: false)
+            }
+        } else if feedback.lighting != .good {
+            speak("Adjust your lighting before capturing.", forceSpeak: false)
+        } else if !feedback.isEyeLevel {
+            speak("Hold your phone at eye level.", forceSpeak: false)
+        } else if feedback.background != .clean {
+            speak("Use a plain background behind you.", forceSpeak: false)
+        }
     }
 
     // MARK: - Single Image Evaluation
@@ -813,7 +983,9 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
 extension HeadshotGuidanceService: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        guard !isAnalyzingFrame, !isCapturing else { return }
+        // Continue checking alignment during the countdown. Guidance speech remains
+        // locked out by isCapturing, but a lost check must cancel the pending photo.
+        guard !isAnalyzingFrame, (!isCapturing || isCountdownInProgress) else { return }
         isAnalyzingFrame = true
         defer { isAnalyzingFrame = false }
 
@@ -826,6 +998,7 @@ extension HeadshotGuidanceService: AVCaptureVideoDataOutputSampleBufferDelegate 
                 DispatchQueue.main.async {
                     self?.feedback.isFaceCentered = false
                     self?.feedback.isAngleCorrect = false
+                    self?.cancelCountdownIfAlignmentLost()
                 }
                 return
             }
@@ -850,8 +1023,11 @@ extension HeadshotGuidanceService: AVCaptureVideoDataOutputSampleBufferDelegate 
                 self.feedback.currentYawDegrees = yawDeg
                 self.feedback.lighting = currentLighting
 
+                self.cancelCountdownIfAlignmentLost()
+                guard !self.isCountdownInProgress else { return }
+
                 if self.feedback.allChecksPassed {
-                    self.speakDebouncedWarning("Framing and lighting look great — hold steady")
+                    self.speakDebouncedWarning("Framing and lighting look great.")
                 } else if !centered {
                     self.speakDebouncedWarning("Center your face in the guide oval.")
                 } else if !anglePass {
@@ -880,6 +1056,7 @@ extension HeadshotGuidanceService: AVCaptureVideoDataOutputSampleBufferDelegate 
             let isPlain = self.evaluateBackgroundClutter(maskBuffer: result.pixelBuffer, frameBuffer: pixelBuffer)
             DispatchQueue.main.async {
                 self.feedback.background = isPlain ? .clean : .cluttered
+                self.cancelCountdownIfAlignmentLost()
             }
         }
         segRequest.qualityLevel = .fast
@@ -1032,14 +1209,11 @@ extension HeadshotGuidanceService: AVCaptureVideoDataOutputSampleBufferDelegate 
 
 extension HeadshotGuidanceService: AVCapturePhotoCaptureDelegate {
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-        isCapturing = false
-        countdownRemaining = 0
-
         guard error == nil, let data = photo.fileDataRepresentation(), let image = UIImage(data: data) else {
-            pendingPhotoCompletion?(nil)
+            completePhotoCapture(with: nil)
             return
         }
-        pendingPhotoCompletion?(image)
+        completePhotoCapture(with: image)
     }
 }
 
