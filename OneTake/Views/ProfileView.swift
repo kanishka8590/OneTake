@@ -56,7 +56,7 @@ struct ProfileView: View {
                     }
 
                     // Previous Work Section
-                    if !user.previousWork.isEmpty {
+                    if !appState.isDemoMode && !user.previousWork.isEmpty {
                         Section("Credits & Previous Work") {
                             ForEach(Array(user.previousWork.enumerated()), id: \.offset) { _, work in
                                 HStack(spacing: 8) {
@@ -135,6 +135,20 @@ struct ProfileView: View {
                                     Spacer()
                                 }
                             }
+                            .confirmationDialog(
+                                "Sign Out?",
+                                isPresented: $showingLogoutConfirmation,
+                                titleVisibility: .visible
+                            ) {
+                                Button("Sign Out", role: .destructive) {
+                                    withAnimation {
+                                        appState.logout()
+                                    }
+                                }
+                                Button("Cancel", role: .cancel) {}
+                            } message: {
+                                Text("Signing out keeps your local auditions, scripts, and profile on this device.")
+                            }
                         } else {
                             Button {
                                 showingSignIn = true
@@ -179,16 +193,6 @@ struct ProfileView: View {
             }
             .sheet(isPresented: $showingSignIn) {
                 AuthView(appState: appState)
-            }
-            .confirmationDialog("Sign Out?", isPresented: $showingLogoutConfirmation) {
-                Button("Sign Out", role: .destructive) {
-                    withAnimation {
-                        appState.logout()
-                    }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Signing out keeps your local auditions, scripts, and profile on this device.")
             }
         }
     }
@@ -354,7 +358,7 @@ struct EditProfileSheet: View {
                                 Label("Choose from Photos", systemImage: "photo.on.rectangle")
                             }
                         } label: {
-                            Text(stagedAvatarData == nil ? "Choose photo" : "Change photo")
+                            Text(stagedAvatarData == nil ? "Add Photo" : "Change Photo")
                                 .foregroundStyle(Theme.Colors.accent)
                         }
                         .menuIndicator(.hidden)
@@ -398,24 +402,26 @@ struct EditProfileSheet: View {
                     }
                 }
 
-                Section("Credits & Past Projects") {
-                    ForEach(creditItems) { item in
-                        Text(item.title)
-                    }
-                    .onDelete { indices in
-                        creditItems.remove(atOffsets: indices)
-                    }
-
-                    HStack {
-                        TextField("Add project (e.g. Film Title)", text: $newCredit)
-                        Button("Add") {
-                            let trimmed = newCredit.trimmingCharacters(in: .whitespaces)
-                            if !trimmed.isEmpty {
-                                creditItems.append(CreditItem(title: trimmed))
-                                newCredit = ""
-                            }
+                if !appState.isDemoMode {
+                    Section("Credits & Past Projects") {
+                        ForEach(creditItems) { item in
+                            Text(item.title)
                         }
-                        .disabled(newCredit.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .onDelete { indices in
+                            creditItems.remove(atOffsets: indices)
+                        }
+
+                        HStack {
+                            TextField("Add project (e.g. Film Title)", text: $newCredit)
+                            Button("Add") {
+                                let trimmed = newCredit.trimmingCharacters(in: .whitespaces)
+                                if !trimmed.isEmpty {
+                                    creditItems.append(CreditItem(title: trimmed))
+                                    newCredit = ""
+                                }
+                            }
+                            .disabled(newCredit.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
                     }
                 }
             }

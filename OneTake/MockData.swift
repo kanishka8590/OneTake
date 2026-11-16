@@ -31,11 +31,7 @@ enum MockData {
         user.age = 27
         user.basedIn = "Mumbai / New York"
         user.representation = "Bramwell Talent"
-        user.previousWork = [
-            "The Glass Menagerie (Stage)",
-            "Midnight Dispatch (Pilot)",
-            "Commercial Spot — Atlas Running"
-        ]
+        user.previousWork = []
         return user
     }
 
