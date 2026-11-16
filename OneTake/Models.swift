@@ -77,7 +77,7 @@ enum TeleprompterTextSize: String, Codable, Hashable, CaseIterable {
     case bigPrint = "Big Print"
 }
 
-enum VideoQuality: String, Codable, Hashable, CaseIterable {
+nonisolated enum VideoQuality: String, Codable, Hashable, CaseIterable, Sendable {
     case p720 = "720p"
     case p1080 = "1080p"
 }

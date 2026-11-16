@@ -13,6 +13,7 @@ struct TakeReviewView: View {
     /// case the review deliberately shows only validations we can verify.
     let qualityMetrics: PreTakeQualityMetrics
     var usedFrontCamera: Bool = true
+    var autoTrimSilence: Bool = false
     let onTakeApproved: (VideoTake) -> Void
     let onRetake: () -> Void
 
@@ -22,6 +23,8 @@ struct TakeReviewView: View {
     @State private var timeObserverToken: Any?
     @State private var trimStart: Double = 0.0
     @State private var trimEnd: Double = 0.0
+    @State private var didAutoTrimSilence: Bool = false
+    @State private var hasAppliedInitialAutoTrim: Bool = false
     @State private var isNoiseCleaned: Bool = false
     @State private var isExporting: Bool = false
     @State private var exportErrorMessage: String?
@@ -76,6 +79,20 @@ struct TakeReviewView: View {
                                 Text(String(format: "%.1fs - %.1fs (Duration: %.1fs)", trimStart, trimEnd, max(0.1, trimEnd - trimStart)))
                                     .font(Theme.Typography.captionBadge)
                                     .foregroundStyle(Theme.Colors.accent)
+                            }
+
+                            if didAutoTrimSilence {
+                                HStack(spacing: 5) {
+                                    Image(systemName: "waveform.path")
+                                        .font(.system(size: 11, weight: .semibold))
+                                    Text("Auto-trimmed silence")
+                                        .font(.system(size: 11, weight: .semibold))
+                                }
+                                .foregroundStyle(Theme.Colors.accent)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4)
+                                .background(Theme.Colors.lavenderSurface)
+                                .clipShape(Capsule())
                             }
 
                             VStack(spacing: 8) {
@@ -202,6 +219,9 @@ struct TakeReviewView: View {
                 isNoiseCleaned = appState.settings.noiseReductionDefault
                 setupPlayer()
             }
+            .task {
+                await applyAutoTrimSuggestionIfEnabled()
+            }
             .onDisappear {
                 teardownPlayer()
                 if !didApproveTake {
@@ -291,12 +311,37 @@ struct TakeReviewView: View {
         }
     }
 
+    private func applyAutoTrimSuggestionIfEnabled() async {
+        guard autoTrimSilence, !hasAppliedInitialAutoTrim else { return }
+        hasAppliedInitialAutoTrim = true
+
+        let url = rawVideoURL
+        let suggestion = await Task.detached(priority: .userInitiated) {
+            SilenceTrimmer.suggest(for: url)
+        }.value
+
+        guard let suggestion, !Task.isCancelled else { return }
+        let maxDuration = safeDuration
+        let minGap = minTrimGap
+        let clampedStart = max(0.0, min(suggestion.start, max(0.0, maxDuration - minGap)))
+        let clampedEnd = max(clampedStart + minGap, min(suggestion.end, maxDuration))
+        guard clampedEnd <= maxDuration, clampedEnd - clampedStart >= minGap else { return }
+
+        if trimStart == 0.0 && abs(trimEnd - maxDuration) < 0.001 {
+            trimStart = clampedStart
+            trimEnd = clampedEnd
+            didAutoTrimSilence = true
+            seekPlayer(to: clampedStart)
+        }
+    }
+
     private func finalizeAndSaveTake() {
         isExporting = true
         exportErrorMessage = nil
         player?.pause()
 
         let mirrorSetting = appState.settings.mirrorFrontCamera
+        let exportQuality = appState.settings.videoQuality
         let frontUsed = usedFrontCamera
         let start = trimStart
         let end = trimEnd
@@ -316,6 +361,7 @@ struct TakeReviewView: View {
                     startSeconds: start,
                     endSeconds: end,
                     applyAudioCleanup: cleanupAudio,
+                    quality: exportQuality,
                     destinationURL: destinationURL
                 )
 

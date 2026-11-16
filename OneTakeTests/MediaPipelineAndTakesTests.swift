@@ -312,4 +312,167 @@ final class MediaPipelineAndTakesTests: XCTestCase {
         XCTAssertGreaterThan(meta.fileSizeMB, 0.0)
         XCTAssertEqual(meta.aspectRatioString, "16:9")
     }
+
+    // MARK: - Settings Wiring & SilenceTrimmer Tests
+
+    func testSilenceTrimmerSuggestsBoundsForClipWithLeadingAndTrailingSilence() async throws {
+        let dir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let paddedURL = dir.appendingPathComponent("padded_take.wav")
+        try writeAudioWav(
+            to: paddedURL,
+            totalDuration: 3.0,
+            activeRange: 1.0...2.0
+        )
+
+        let suggestion = SilenceTrimmer.suggest(for: paddedURL)
+        let unwrapped = try XCTUnwrap(suggestion)
+        XCTAssertGreaterThan(unwrapped.start, 0.5)
+        XCTAssertLessThan(unwrapped.start, 1.0)
+        XCTAssertGreaterThan(unwrapped.end, 2.0)
+        XCTAssertLessThan(unwrapped.end, 2.5)
+        XCTAssertGreaterThan(unwrapped.removedLeading, 0.5)
+        XCTAssertGreaterThan(unwrapped.removedTrailing, 0.5)
+
+        let noSilenceURL = dir.appendingPathComponent("active_take.wav")
+        try writeAudioWav(
+            to: noSilenceURL,
+            totalDuration: 2.0,
+            activeRange: 0.0...2.0
+        )
+        XCTAssertNil(SilenceTrimmer.suggest(for: noSilenceURL))
+
+        // Verify container audio (AAC in .m4a/.mp4) also works via SilenceTrimmer
+        let m4aURL = dir.appendingPathComponent("padded_take.m4a")
+        try await convertWavToM4A(from: paddedURL, to: m4aURL)
+        let m4aSuggestion = try XCTUnwrap(SilenceTrimmer.suggest(for: m4aURL))
+        XCTAssertGreaterThan(m4aSuggestion.start, 0.5)
+        XCTAssertLessThan(m4aSuggestion.end, 2.5)
+    }
+
+    func testRecorderServiceSessionPresetAndClampedFrameRateAndApplyVideoSettings() {
+        XCTAssertEqual(TeleprompterRecorderService.sessionPreset(for: .p720), .hd1280x720)
+        XCTAssertEqual(TeleprompterRecorderService.sessionPreset(for: .p1080), .hd1920x1080)
+
+        XCTAssertEqual(TeleprompterRecorderService.clampedFrameRate(15), 30)
+        XCTAssertEqual(TeleprompterRecorderService.clampedFrameRate(30), 30)
+        XCTAssertEqual(TeleprompterRecorderService.clampedFrameRate(45), 30)
+        XCTAssertEqual(TeleprompterRecorderService.clampedFrameRate(60), 60)
+        XCTAssertEqual(TeleprompterRecorderService.clampedFrameRate(120), 60)
+
+        let service = TeleprompterRecorderService.shared
+        let prevQuality = service.preferredVideoQuality
+        let prevFPS = service.preferredFrameRate
+        defer {
+            service.applyVideoSettings(quality: prevQuality, frameRate: prevFPS)
+        }
+
+        service.applyVideoSettings(quality: .p720, frameRate: 120)
+        XCTAssertEqual(service.preferredVideoQuality, .p720)
+        XCTAssertEqual(service.preferredFrameRate, 60)
+
+        service.applyVideoSettings(quality: .p1080, frameRate: 24)
+        XCTAssertEqual(service.preferredVideoQuality, .p1080)
+        XCTAssertEqual(service.preferredFrameRate, 30)
+    }
+
+    func testVideoPostProcessingServiceQualityPresetSelectionAnd720pTrim() async throws {
+        XCTAssertEqual(VideoPostProcessingService.exportPreset(for: .p720), AVAssetExportPreset1280x720)
+        XCTAssertEqual(VideoPostProcessingService.exportPreset(for: .p1080), AVAssetExportPresetHighestQuality)
+
+        let dir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let sourceURL = dir.appendingPathComponent("source_1080.mp4")
+        let ok = await DemoMediaGenerator.writeQuickSimulatedClip(
+            to: sourceURL,
+            title: "720p Trim",
+            subtitle: "Quality Test",
+            durationSeconds: 2.0
+        )
+        XCTAssertTrue(ok)
+
+        let destURL = dir.appendingPathComponent("trimmed_720p.mp4")
+        let exportedURL = try await VideoPostProcessingService.shared.trimAndProcessVideo(
+            sourceURL: sourceURL,
+            startSeconds: 0.2,
+            endSeconds: 1.7,
+            applyAudioCleanup: false,
+            quality: .p720,
+            destinationURL: destURL
+        )
+        XCTAssertEqual(exportedURL.standardizedFileURL, destURL.standardizedFileURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destURL.path))
+    }
+
+    func testCuePartnerAudioEngineCueVolumeClampingAndPersistence() async throws {
+        let engine = CuePartnerAudioEngine.shared
+        let originalVolume = engine.cueVolume
+        defer {
+            engine.stopListening()
+            engine.cueVolume = originalVolume
+        }
+
+        engine.cueVolume = -0.4
+        XCTAssertEqual(engine.cueVolume, 0.0, accuracy: 0.0001)
+
+        engine.cueVolume = 1.75
+        XCTAssertEqual(engine.cueVolume, 1.0, accuracy: 0.0001)
+
+        engine.cueVolume = .nan
+        XCTAssertEqual(engine.cueVolume, 1.0, accuracy: 0.0001)
+
+        engine.cueVolume = 0.35
+        XCTAssertEqual(engine.cueVolume, 0.35, accuracy: 0.0001)
+
+        let cues = [
+            CueLine(orderIndex: 0, speaker: "READER", cueText: "Quiet cue line.", precedingActorLine: "My line.")
+        ]
+        engine.startAuditionScenePartner(
+            cues: cues,
+            mode: .afterMyLine,
+            responseDelay: 0.0,
+            cueVolume: 0.42
+        ) { _ in }
+        XCTAssertEqual(engine.cueVolume, 0.42, accuracy: 0.001)
+
+        engine.ingestLiveMicInput(rms: 0.1, transcript: "My line.", isFinal: true)
+        try await Task.sleep(for: .milliseconds(80))
+        let utterance = try XCTUnwrap(engine.activeUtterance)
+        XCTAssertEqual(utterance.volume, 0.42, accuracy: 0.001)
+    }
+
+    // MARK: - Helpers
+
+    private func writeAudioWav(
+        to url: URL,
+        totalDuration: Double,
+        activeRange: ClosedRange<Double>,
+        sampleRate: Double = 16_000
+    ) throws {
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
+        let totalFrames = AVAudioFrameCount(totalDuration * sampleRate)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: totalFrames))
+        buffer.frameLength = totalFrames
+        let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+
+        for i in 0..<Int(totalFrames) {
+            let t = Double(i) / sampleRate
+            if activeRange.contains(t) {
+                samples[i] = Float(sin(2.0 * .pi * 440.0 * t) * 0.4)
+            } else {
+                samples[i] = 0.0
+            }
+        }
+
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file.write(from: buffer)
+    }
+
+    private func convertWavToM4A(from sourceURL: URL, to destinationURL: URL) async throws {
+        let asset = AVURLAsset(url: sourceURL)
+        let exporter = try XCTUnwrap(AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A))
+        try await exporter.export(to: destinationURL, as: .m4a)
+    }
 }

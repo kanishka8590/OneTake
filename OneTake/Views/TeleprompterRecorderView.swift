@@ -166,6 +166,11 @@ struct TeleprompterRecorderView: View {
                 recorderService.countdownOutLoud = appState.settings.countdownOutLoud
                 recorderService.isDemoMode = appState.isDemoMode
                 recorderService.mirrorFrontCamera = appState.settings.mirrorFrontCamera
+                recorderService.applyVideoSettings(
+                    quality: appState.settings.videoQuality,
+                    frameRate: appState.settings.frameRate
+                )
+                cueEngine.cueVolume = Float(appState.settings.cueVolume)
 
                 recorderService.onVoiceActionTriggered = {
                     startCountdownAndRecord()
@@ -193,7 +198,8 @@ struct TeleprompterRecorderView: View {
                         cueEngine.startListening(
                             cues: audition.cueLines,
                             mode: cueTimingMode,
-                            responseDelay: appState.settings.cueDelaySeconds
+                            responseDelay: appState.settings.cueDelaySeconds,
+                            cueVolume: appState.settings.cueVolume
                         )
                     }
                 } else {
@@ -213,7 +219,8 @@ struct TeleprompterRecorderView: View {
                     totalDurationSeconds: route.duration,
                     isSlate: isSlate,
                     qualityMetrics: route.qualityMetrics,
-                    usedFrontCamera: route.usedFrontCamera
+                    usedFrontCamera: route.usedFrontCamera,
+                    autoTrimSilence: appState.settings.autoTrimSilence
                 ) { approvedTake in
                     didSaveApprovedTake = true
                     takeReviewRoute = nil

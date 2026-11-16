@@ -44,10 +44,13 @@ protocol TeleprompterRecorderServiceProtocol: AnyObject {
     var cameraErrorMessage: String? { get }
     var isDemoMode: Bool { get set }
     var mirrorFrontCamera: Bool { get set }
+    var preferredVideoQuality: VideoQuality { get }
+    var preferredFrameRate: Int { get }
     var onLiveMicData: ((_ rms: Float, _ transcript: String, _ isFinal: Bool) -> Void)? { get set }
 
     func startSession()
     func stopSession()
+    func applyVideoSettings(quality: VideoQuality, frameRate: Int)
     func cycleZoom()
     func flipCamera()
     func startCountdownAndRecord(countdownSeconds: Int, completion: @escaping (URL?, Double) -> Void)
@@ -73,6 +76,8 @@ nonisolated private final class RecorderStateBox: @unchecked Sendable {
     private var _isAnalyzingFrame = false
     private var _cameraPosition: AVCaptureDevice.Position = .front
     private var _mirrorFrontCamera = true
+    private var _preferredVideoQuality: VideoQuality = .p1080
+    private var _preferredFrameRate: Int = 30
     private var _lastMicDispatchTime: CFAbsoluteTime = 0
     private var _lastDispatchedRMS: Float = 0
     private var _activeTapSampleRate: Double = 0
@@ -138,6 +143,16 @@ nonisolated private final class RecorderStateBox: @unchecked Sendable {
     var mirrorFrontCamera: Bool {
         get { withLock { $0._mirrorFrontCamera } }
         set { withLock { $0._mirrorFrontCamera = newValue } }
+    }
+
+    var preferredVideoQuality: VideoQuality {
+        get { withLock { $0._preferredVideoQuality } }
+        set { withLock { $0._preferredVideoQuality = newValue } }
+    }
+
+    var preferredFrameRate: Int {
+        get { withLock { $0._preferredFrameRate } }
+        set { withLock { $0._preferredFrameRate = newValue } }
     }
 
     var hasMovieFileOutput: Bool {
@@ -214,6 +229,8 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     var cameraErrorMessage: String? = nil
     var isUsingFrontCamera: Bool = true
     var isDemoMode: Bool = false
+    var preferredVideoQuality: VideoQuality = .p1080
+    var preferredFrameRate: Int = 30
     var mirrorFrontCamera: Bool = true {
         didSet {
             stateBox.mirrorFrontCamera = mirrorFrontCamera
@@ -419,14 +436,114 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         }
     }
 
+    // MARK: - Video Quality & Frame Rate
+
+    nonisolated static func sessionPreset(for quality: VideoQuality) -> AVCaptureSession.Preset {
+        switch quality {
+        case .p720:
+            return .hd1280x720
+        case .p1080:
+            return .hd1920x1080
+        }
+    }
+
+    nonisolated static func clampedFrameRate(_ requested: Int) -> Int {
+        requested >= 60 ? 60 : 30
+    }
+
+    func applyVideoSettings(quality: VideoQuality, frameRate: Int) {
+        let clampedFPS = Self.clampedFrameRate(frameRate)
+        preferredVideoQuality = quality
+        preferredFrameRate = clampedFPS
+        stateBox.preferredVideoQuality = quality
+        stateBox.preferredFrameRate = clampedFPS
+
+        sessionQueue.async { [weak self] in
+            guard let self, let session = self.sessionCaptureSession else { return }
+            session.beginConfiguration()
+            self.applySessionVideoConfiguration(
+                to: session,
+                device: self.sessionVideoDevice,
+                quality: quality,
+                frameRate: clampedFPS
+            )
+            session.commitConfiguration()
+        }
+    }
+
+    nonisolated private func applySessionVideoConfiguration(
+        to session: AVCaptureSession,
+        device: AVCaptureDevice?,
+        quality: VideoQuality,
+        frameRate: Int
+    ) {
+        let preset = Self.sessionPreset(for: quality)
+        if session.canSetSessionPreset(preset) {
+            session.sessionPreset = preset
+        } else if session.canSetSessionPreset(.high) {
+            session.sessionPreset = .high
+        }
+        if let device {
+            configureFrameRate(frameRate, on: device)
+        }
+    }
+
+    nonisolated private func configureFrameRate(_ fps: Int, on device: AVCaptureDevice) {
+        let targetFPS = Double(Self.clampedFrameRate(fps))
+        let frameDuration = CMTime(value: 1, timescale: CMTimeScale(targetFPS))
+
+        let supportsTargetFPS: (AVCaptureDevice.Format) -> Bool = { format in
+            format.videoSupportedFrameRateRanges.contains {
+                $0.minFrameRate <= targetFPS && targetFPS <= $0.maxFrameRate
+            }
+        }
+
+        let bestFormat: AVCaptureDevice.Format? = supportsTargetFPS(device.activeFormat)
+            ? nil
+            : device.formats
+                .filter(supportsTargetFPS)
+                .max { lhs, rhs in
+                    let lhsDim = CMVideoFormatDescriptionGetDimensions(lhs.formatDescription)
+                    let rhsDim = CMVideoFormatDescriptionGetDimensions(rhs.formatDescription)
+                    return Int(lhsDim.width) * Int(lhsDim.height) < Int(rhsDim.width) * Int(rhsDim.height)
+                }
+
+        do {
+            try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
+            if let bestFormat {
+                device.activeFormat = bestFormat
+            }
+            if supportsTargetFPS(device.activeFormat) {
+                device.activeVideoMinFrameDuration = frameDuration
+                device.activeVideoMaxFrameDuration = frameDuration
+            }
+        } catch {
+            print("Frame rate configuration error: \(error)")
+        }
+    }
+
     private func setupCameraSession() {
         let mirrorFront = mirrorFrontCamera
+        let quality = preferredVideoQuality
+        let frameRate = Self.clampedFrameRate(preferredFrameRate)
         stateBox.mirrorFrontCamera = mirrorFront
+        stateBox.preferredVideoQuality = quality
+        stateBox.preferredFrameRate = frameRate
 
         sessionQueue.async { [weak self] in
             guard let self else { return }
 
             if let existing = self.sessionCaptureSession {
+                existing.beginConfiguration()
+                self.applySessionVideoConfiguration(
+                    to: existing,
+                    device: self.sessionVideoDevice,
+                    quality: self.stateBox.preferredVideoQuality,
+                    frameRate: self.stateBox.preferredFrameRate
+                )
+                existing.commitConfiguration()
+
                 if !existing.isRunning, self.stateBox.isSessionRunning {
                     existing.startRunning()
                 }
@@ -442,7 +559,12 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
 
             let session = AVCaptureSession()
             session.beginConfiguration()
-            session.sessionPreset = .high
+            let targetPreset = Self.sessionPreset(for: self.stateBox.preferredVideoQuality)
+            if session.canSetSessionPreset(targetPreset) {
+                session.sessionPreset = targetPreset
+            } else if session.canSetSessionPreset(.high) {
+                session.sessionPreset = .high
+            }
             session.automaticallyConfiguresApplicationAudioSession = false
 
             guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
@@ -497,6 +619,12 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
                     )
                 }
 
+                self.applySessionVideoConfiguration(
+                    to: session,
+                    device: camera,
+                    quality: self.stateBox.preferredVideoQuality,
+                    frameRate: self.stateBox.preferredFrameRate
+                )
                 session.commitConfiguration()
                 self.sessionCaptureSession = session
 
@@ -592,6 +720,13 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
                 } catch {
                     print("Flip camera zoom reset error: \(error)")
                 }
+
+                self.applySessionVideoConfiguration(
+                    to: session,
+                    device: newDevice,
+                    quality: self.stateBox.preferredVideoQuality,
+                    frameRate: self.stateBox.preferredFrameRate
+                )
             } else {
                 session.addInput(currentInput)
             }

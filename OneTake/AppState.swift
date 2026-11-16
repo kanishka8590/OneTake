@@ -99,6 +99,7 @@ final class AppState {
             }
 
             lastPersistenceError = nil
+            rescheduleReminders()
         } catch {
             lastPersistenceError = error.localizedDescription
             print("Failed to load data: \(error)")
@@ -132,6 +133,10 @@ final class AppState {
         audition.status = .sent
         audition.sentDate = .now
         saveAndReload()
+        AuditionReminderService.sendSubmissionConfirmationIfEnabled(
+            for: audition,
+            enabled: settings.notifySubmissions
+        )
     }
 
     func saveChanges() {
@@ -619,14 +624,20 @@ final class AppState {
             try modelContext?.save()
             lastPersistenceError = nil
             loadData()
-            AuditionReminderService.reschedule(
-                auditions: auditions,
-                enabled: settings.notifyAuditions
-            )
         } catch {
             lastPersistenceError = error.localizedDescription
             print("Failed to save: \(error)")
         }
+    }
+
+    private func rescheduleReminders() {
+        AuditionReminderService.reschedule(
+            auditions: auditions,
+            notifyAuditions: settings.notifyAuditions,
+            notifySubmissions: settings.notifySubmissions,
+            notifyPractice: settings.notifyPractice,
+            practiceScripts: practiceScripts
+        )
     }
 
     // MARK: - Logout

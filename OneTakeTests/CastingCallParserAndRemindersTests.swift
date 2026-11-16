@@ -338,6 +338,119 @@ final class CastingCallParserAndRemindersTests: XCTestCase {
         XCTAssertTrue(disabled.isEmpty)
     }
 
+    func testAuditionReminderServiceTogglesForAuditionsSubmissionsAndPractice() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 11, day: 16, hour: 7, minute: 0)))
+        let deadline = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 11, day: 16, hour: 17, minute: 0)))
+
+        let auditionWithSides = Audition(
+            projectName: "Horizon Pilot",
+            roleName: "Maya",
+            deadline: deadline,
+            reminderOffsetMinutes: 60,
+            statusRaw: AuditionStatus.active.rawValue,
+            scriptText: "MAYA: We leave at dawn."
+        )
+
+        // 1) Auditions only: schedules custom 4:00 PM deadline + 9:00 AM morning-of; omits submission & practice
+        let auditionsOnly = AuditionReminderService.plannedReminders(
+            for: [auditionWithSides],
+            notifyAuditions: true,
+            notifySubmissions: false,
+            notifyPractice: false,
+            practiceScripts: [],
+            now: now,
+            calendar: calendar
+        )
+        XCTAssertEqual(auditionsOnly.count, 2)
+        XCTAssertTrue(auditionsOnly.contains { $0.id == "\(AuditionReminderService.identifierPrefix)deadline.\(auditionWithSides.id.uuidString)" })
+        XCTAssertTrue(auditionsOnly.contains { $0.id == "\(AuditionReminderService.identifierPrefix)morning.\(auditionWithSides.id.uuidString)" })
+        XCTAssertFalse(auditionsOnly.contains { $0.id.hasPrefix(AuditionReminderService.submissionIdentifierPrefix) })
+        XCTAssertFalse(auditionsOnly.contains { $0.id == AuditionReminderService.practiceIdentifier })
+
+        // 2) Submissions enabled: adds 2-hour submission urgency reminder at 3:00 PM
+        let withSubmissions = AuditionReminderService.plannedReminders(
+            for: [auditionWithSides],
+            notifyAuditions: true,
+            notifySubmissions: true,
+            notifyPractice: false,
+            practiceScripts: [],
+            now: now,
+            calendar: calendar
+        )
+        let submissionReminders = withSubmissions.filter {
+            $0.id.hasPrefix(AuditionReminderService.submissionIdentifierPrefix)
+        }
+        XCTAssertEqual(submissionReminders.count, 1)
+        XCTAssertEqual(submissionReminders.first?.date, deadline.addingTimeInterval(-2 * 3600))
+        XCTAssertTrue(submissionReminders.first?.title.contains("2 hours left to submit") == true)
+
+        // 3) Submissions only (auditions off)
+        let submissionsOnly = AuditionReminderService.plannedReminders(
+            for: [auditionWithSides],
+            notifyAuditions: false,
+            notifySubmissions: true,
+            notifyPractice: false,
+            practiceScripts: [],
+            now: now,
+            calendar: calendar
+        )
+        XCTAssertEqual(submissionsOnly.count, 1)
+        XCTAssertTrue(submissionsOnly.first?.id.hasPrefix(AuditionReminderService.submissionIdentifierPrefix) == true)
+
+        // 4) Practice enabled with active sides -> daily 6:00 PM repeating reminder
+        let withPractice = AuditionReminderService.plannedReminders(
+            for: [auditionWithSides],
+            notifyAuditions: false,
+            notifySubmissions: false,
+            notifyPractice: true,
+            practiceScripts: [],
+            now: now,
+            calendar: calendar
+        )
+        XCTAssertEqual(withPractice.count, 1)
+        XCTAssertEqual(withPractice.first?.id, AuditionReminderService.practiceIdentifier)
+        XCTAssertEqual(withPractice.first?.title, "Run your lines")
+        XCTAssertEqual(withPractice.first?.repeatsDaily, true)
+        XCTAssertEqual(calendar.component(.hour, from: try XCTUnwrap(withPractice.first?.date)), 18)
+
+        // 5) Practice enabled with PracticeScript only (no active auditions)
+        let practiceScript = PracticeScript(title: "Hamlet Act III", rawText: "To be, or not to be.")
+        let scriptPractice = AuditionReminderService.plannedReminders(
+            for: [],
+            notifyAuditions: false,
+            notifySubmissions: false,
+            notifyPractice: true,
+            practiceScripts: [practiceScript],
+            now: now,
+            calendar: calendar
+        )
+        XCTAssertEqual(scriptPractice.count, 1)
+        XCTAssertEqual(scriptPractice.first?.id, AuditionReminderService.practiceIdentifier)
+        XCTAssertTrue(scriptPractice.first?.body.contains("Hamlet Act III") == true)
+
+        // 6) Practice enabled with no active sides and no practice scripts -> empty
+        let noSidesAudition = Audition(
+            projectName: "Silent Audition",
+            roleName: "Extra",
+            deadline: deadline,
+            statusRaw: AuditionStatus.active.rawValue,
+            scriptText: nil
+        )
+        let noPractice = AuditionReminderService.plannedReminders(
+            for: [noSidesAudition],
+            notifyAuditions: false,
+            notifySubmissions: false,
+            notifyPractice: true,
+            practiceScripts: [],
+            now: now,
+            calendar: calendar
+        )
+        XCTAssertTrue(noPractice.isEmpty)
+    }
+
     // MARK: - Test Helpers
 
     private func renderTestDocumentImage(lines: [String]) -> UIImage {

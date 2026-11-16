@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UserNotifications
 
 struct RecordingSettingsView: View {
@@ -76,6 +77,8 @@ struct RecordingSettingsView: View {
 
 struct NotificationPreferencesView: View {
     let appState: AppState
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var authorizationStatus: UNAuthorizationStatus = .notDetermined
     @State private var authorizationNote: String?
 
     var body: some View {
@@ -87,33 +90,85 @@ struct NotificationPreferencesView: View {
                     .tint(Theme.Colors.accent)
                 Toggle("Practice Reminders", isOn: Bindable(appState.settings).notifyPractice)
                     .tint(Theme.Colors.accent)
+
+                if authorizationStatus == .denied {
+                    Button {
+                        openIOSSettings()
+                    } label: {
+                        Label("Open iOS Settings", systemImage: "gearshape")
+                            .foregroundStyle(Theme.Colors.accent)
+                    }
+                }
+            } footer: {
+                Text(authorizationNote ?? "We only send the local reminders you choose.")
+            }
+
+            Section {
                 Toggle("Product Updates", isOn: Bindable(appState.settings).notifyProductUpdates)
                     .tint(Theme.Colors.accent)
             } footer: {
-                Text(authorizationNote ?? "We only send the reminders you choose.")
+                Text("OneTake runs locally on your device. Push product updates require opt-in server delivery, so this preference applies to local-only release announcements.")
             }
         }
         .navigationTitle("Notifications")
         .task {
-            await requestAuthorization()
+            await requestAuthorizationIfNeeded()
         }
-        .onChange(of: appState.settings.notifyAuditions) { _, isEnabled in
-            AuditionReminderService.reschedule(
-                auditions: appState.auditions,
-                enabled: isEnabled
-            )
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            Task {
+                await refreshAuthorizationStatus()
+            }
+        }
+        .onChange(of: appState.settings.notifyAuditions) { _, _ in
+            rescheduleReminders()
+        }
+        .onChange(of: appState.settings.notifySubmissions) { _, _ in
+            rescheduleReminders()
+        }
+        .onChange(of: appState.settings.notifyPractice) { _, _ in
+            rescheduleReminders()
         }
     }
 
-    private func requestAuthorization() async {
-        do {
-            let allowed = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
-            authorizationNote = allowed
-                ? "Notifications are enabled."
-                : "Notifications are off. You can change this in Settings."
-        } catch {
+    private func rescheduleReminders() {
+        AuditionReminderService.reschedule(
+            auditions: appState.auditions,
+            notifyAuditions: appState.settings.notifyAuditions,
+            notifySubmissions: appState.settings.notifySubmissions,
+            notifyPractice: appState.settings.notifyPractice,
+            practiceScripts: appState.practiceScripts
+        )
+    }
+
+    private func requestAuthorizationIfNeeded() async {
+        let initialStatus = await AuditionReminderService.authorizationStatus()
+        if initialStatus == .notDetermined {
+            _ = await AuditionReminderService.requestAuthorization()
+        }
+        await refreshAuthorizationStatus()
+    }
+
+    private func refreshAuthorizationStatus() async {
+        let status = await AuditionReminderService.authorizationStatus()
+        authorizationStatus = status
+        switch status {
+        case .authorized, .provisional, .ephemeral:
+            authorizationNote = "Local reminders are enabled for deadlines, submission cutoffs, and daily practice."
+            rescheduleReminders()
+        case .denied:
+            authorizationNote = "Notifications are turned off in iOS Settings. Enable notifications to receive deadline and submission reminders."
+        case .notDetermined:
+            authorizationNote = "We only send the local reminders you choose."
+        @unknown default:
             authorizationNote = "Notification permissions are unavailable."
         }
+    }
+
+    private func openIOSSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString),
+              UIApplication.shared.canOpenURL(url) else { return }
+        UIApplication.shared.open(url)
     }
 }
 

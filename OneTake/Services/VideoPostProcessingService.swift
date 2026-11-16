@@ -45,6 +45,7 @@ protocol VideoPostProcessingServiceProtocol: AnyObject {
         startSeconds: Double,
         endSeconds: Double,
         applyAudioCleanup: Bool,
+        quality: VideoQuality,
         destinationURL: URL
     ) async throws -> URL
 
@@ -53,6 +54,25 @@ protocol VideoPostProcessingServiceProtocol: AnyObject {
         targetSizeMB: Double,
         destinationURL: URL
     ) async throws -> URL
+}
+
+extension VideoPostProcessingServiceProtocol {
+    func trimAndProcessVideo(
+        sourceURL: URL,
+        startSeconds: Double,
+        endSeconds: Double,
+        applyAudioCleanup: Bool,
+        destinationURL: URL
+    ) async throws -> URL {
+        try await trimAndProcessVideo(
+            sourceURL: sourceURL,
+            startSeconds: startSeconds,
+            endSeconds: endSeconds,
+            applyAudioCleanup: applyAudioCleanup,
+            quality: .p1080,
+            destinationURL: destinationURL
+        )
+    }
 }
 
 // MARK: - VideoPostProcessingService Implementation
@@ -65,6 +85,15 @@ final class VideoPostProcessingService: NSObject, VideoPostProcessingServiceProt
     var exportProgress: Double = 0.0
     var isProcessing: Bool = false
 
+    nonisolated static func exportPreset(for quality: VideoQuality) -> String {
+        switch quality {
+        case .p720:
+            return AVAssetExportPreset1280x720
+        case .p1080:
+            return AVAssetExportPresetHighestQuality
+        }
+    }
+
     // MARK: - Combined Single-Pass Trim + Audio Cleanup
 
     func trimAndProcessVideo(
@@ -72,6 +101,7 @@ final class VideoPostProcessingService: NSObject, VideoPostProcessingServiceProt
         startSeconds: Double,
         endSeconds: Double,
         applyAudioCleanup: Bool,
+        quality: VideoQuality = .p1080,
         destinationURL: URL
     ) async throws -> URL {
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {
@@ -99,7 +129,9 @@ final class VideoPostProcessingService: NSObject, VideoPostProcessingServiceProt
             duration: CMTime(seconds: clampedEnd - clampedStart, preferredTimescale: 600)
         )
 
-        guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
+        let preferredPreset = Self.exportPreset(for: quality)
+        guard let exportSession = AVAssetExportSession(asset: asset, presetName: preferredPreset)
+            ?? AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
             throw VideoPostProcessingError.exportSessionCreationFailed("Could not create AVAssetExportSession.")
         }
 

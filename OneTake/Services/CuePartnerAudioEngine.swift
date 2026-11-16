@@ -11,6 +11,7 @@ protocol CuePartnerAudioEngineProtocol: AnyObject {
     var isListening: Bool { get }
     var currentAudioLevel: Float { get }
     var currentCueIndex: Int { get }
+    var cueVolume: Float { get set }
 
     func setupAudioSession()
     func requestRecordingPermission(_ completion: @escaping (Bool) -> Void)
@@ -18,16 +19,38 @@ protocol CuePartnerAudioEngineProtocol: AnyObject {
     func stopRecordingCue() -> (url: URL?, durationSeconds: Double)
     func playCue(at url: URL, completion: (() -> Void)?)
     func stopPlayback()
-    func startListening(cues: [CueLine], mode: CueTriggerMode, responseDelay: Double)
+    func startListening(cues: [CueLine], mode: CueTriggerMode, responseDelay: Double, cueVolume: Double?)
     func stopListening()
     func ingestLiveMicInput(rms: Float, transcript: String, isFinal: Bool)
     func startAuditionScenePartner(
         cues: [CueLine],
         mode: CueTriggerMode,
         responseDelay: Double,
+        cueVolume: Double?,
         onCueTriggered: @escaping (Int) -> Void
     )
     func stopAuditionScenePartner()
+}
+
+extension CuePartnerAudioEngineProtocol {
+    func startListening(cues: [CueLine], mode: CueTriggerMode, responseDelay: Double) {
+        startListening(cues: cues, mode: mode, responseDelay: responseDelay, cueVolume: nil)
+    }
+
+    func startAuditionScenePartner(
+        cues: [CueLine],
+        mode: CueTriggerMode,
+        responseDelay: Double,
+        onCueTriggered: @escaping (Int) -> Void
+    ) {
+        startAuditionScenePartner(
+            cues: cues,
+            mode: mode,
+            responseDelay: responseDelay,
+            cueVolume: nil,
+            onCueTriggered: onCueTriggered
+        )
+    }
 }
 
 // MARK: - Implementation
@@ -42,6 +65,21 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
     var isListening: Bool = false
     var currentAudioLevel: Float = 0.0
     var currentCueIndex: Int = 0
+    var cueVolume: Float = 1.0 {
+        didSet {
+            let clamped = Self.clampedVolume(cueVolume)
+            if cueVolume != clamped {
+                cueVolume = clamped
+            }
+            audioPlayer?.volume = clamped
+            activeCuePlayer?.volume = clamped
+        }
+    }
+
+    private static func clampedVolume(_ value: Float) -> Float {
+        guard value.isFinite else { return 1.0 }
+        return max(0.0, min(1.0, value))
+    }
 
     // Recording & Playback
     @ObservationIgnored private var audioRecorder: AVAudioRecorder?
@@ -207,17 +245,19 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
         isCuePlaying = true
         ignoreMicUntil = .distantFuture
         let generation = playbackGeneration
+        let targetVolume = cueVolume
         setupAudioSession()
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 let player = try AVAudioPlayer(contentsOf: url)
-                player.volume = 1.0
+                player.volume = targetVolume
                 player.prepareToPlay()
 
                 Task { @MainActor [weak self] in
                     guard let self, self.playbackGeneration == generation else { return }
                     player.delegate = self
+                    player.volume = self.cueVolume
                     self.audioPlayer = player
                     if !player.play() {
                         self.isCuePlaying = false
@@ -280,7 +320,15 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
 
     // MARK: - Start and Stop Listening
 
-    func startListening(cues: [CueLine], mode: CueTriggerMode = .afterMyLine, responseDelay: Double = 0) {
+    func startListening(
+        cues: [CueLine],
+        mode: CueTriggerMode = .afterMyLine,
+        responseDelay: Double = 0,
+        cueVolume: Double? = nil
+    ) {
+        if let cueVolume {
+            self.cueVolume = Float(cueVolume)
+        }
         stopPlayback()
         self.activeCues = cues.sorted { $0.orderIndex < $1.orderIndex }
         self.currentCueIndex = 0
@@ -316,10 +364,14 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
         cues: [CueLine],
         mode: CueTriggerMode = .afterMyLine,
         responseDelay: Double = 2.0,
+        cueVolume: Double? = nil,
         onCueTriggered: @escaping (Int) -> Void
     ) {
+        if let cueVolume {
+            self.cueVolume = Float(cueVolume)
+        }
         self.cueTriggerCallback = onCueTriggered
-        startListening(cues: cues, mode: mode, responseDelay: responseDelay)
+        startListening(cues: cues, mode: mode, responseDelay: responseDelay, cueVolume: cueVolume)
     }
 
     func stopAuditionScenePartner() {
@@ -383,15 +435,17 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
            FileManager.default.fileExists(atPath: audioURL.path) {
             // Avoid reconfiguring the active AVAudioSession category while TeleprompterRecorderService is recording.
             routeToSpeakerIfNoExternalOutput(AVAudioSession.sharedInstance())
+            let targetVolume = cueVolume
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 do {
                     let player = try AVAudioPlayer(contentsOf: audioURL)
-                    player.volume = 1.0
+                    player.volume = targetVolume
                     player.prepareToPlay()
 
                     Task { @MainActor [weak self] in
                         guard let self, self.playbackGeneration == generation else { return }
                         player.delegate = self
+                        player.volume = self.cueVolume
                         self.activeCuePlayer = player
                         self.pendingPlaybackCompletion = onDone
                         if !player.play() {
@@ -424,6 +478,7 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
         pendingPlaybackCompletion = completion
         let utterance = AVSpeechUtterance(string: trimmed)
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.volume = cueVolume
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         activeUtterance = utterance
         fallbackSynthesizer.speak(utterance)

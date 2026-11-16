@@ -797,7 +797,10 @@ struct AuditionDetailsEditorView: View {
             appState.saveChanges()
             AuditionReminderService.reschedule(
                 auditions: appState.auditions,
-                enabled: appState.settings.notifyAuditions
+                notifyAuditions: appState.settings.notifyAuditions,
+                notifySubmissions: appState.settings.notifySubmissions,
+                notifyPractice: appState.settings.notifyPractice,
+                practiceScripts: appState.practiceScripts
             )
             onSaved?(existing)
             dismiss()
@@ -820,7 +823,10 @@ struct AuditionDetailsEditorView: View {
             appState.addAudition(audition)
             AuditionReminderService.reschedule(
                 auditions: appState.auditions,
-                enabled: appState.settings.notifyAuditions
+                notifyAuditions: appState.settings.notifyAuditions,
+                notifySubmissions: appState.settings.notifySubmissions,
+                notifyPractice: appState.settings.notifyPractice,
+                practiceScripts: appState.practiceScripts
             )
             onSaved?(audition)
             dismiss()
