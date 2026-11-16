@@ -1,6 +1,6 @@
-import SwiftUI
-import SwiftData
 import PhotosUI
+import SwiftData
+import SwiftUI
 
 struct HeadshotReviewView: View {
     @Environment(AppState.self) private var appState
@@ -32,15 +32,20 @@ struct HeadshotReviewView: View {
     @State private var leftOffset: CGSize = .zero
     @State private var rightOffset: CGSize = .zero
 
+    // Measured framing container size from GeometryReader
+    @State private var cropContainerSize: CGSize = CGSize(width: 300, height: 375)
+
     // Gesture tracking
     @State private var pinchScale: CGFloat = 1.0
     @State private var dragTranslation: CGSize = .zero
 
-    // Retake states
+    // Retake & save states
     @State private var showingSingleRetakeCamera = false
     @State private var showingSingleRetakePicker = false
     @State private var singlePickerItem: PhotosPickerItem?
     @State private var isSaving = false
+    @State private var saveErrorMessage: String?
+    @State private var showingSaveError = false
 
     var body: some View {
         NavigationStack {
@@ -50,20 +55,16 @@ struct HeadshotReviewView: View {
 
                 ScrollView {
                     VStack(spacing: 18) {
-                        // Angle Selector Chips (Front -> Left -> Right)
                         angleSelectorChips
                             .padding(.top, 8)
                             .padding(.horizontal, 16)
 
-                        // Inline Aspect Ratio Chips: 4:5, 2:3, 1:1, Free
                         aspectRatioChipsBar
                             .padding(.horizontal, 16)
 
-                        // Interactive Pinch / Drag Crop Framing Box
                         cropFramingView
                             .padding(.horizontal, 20)
 
-                        // Retake single angle button
                         HStack {
                             Spacer()
 
@@ -94,13 +95,11 @@ struct HeadshotReviewView: View {
                         }
                         .padding(.horizontal, 24)
 
-                        // 3-Angle Summary Mini-Thumbnails
                         threeAngleMiniBar
                             .padding(.horizontal, 20)
 
                         Spacer(minLength: 20)
 
-                        // Working "Save Headshots" Primary Button
                         Button {
                             saveAllHeadshots()
                         } label: {
@@ -132,18 +131,21 @@ struct HeadshotReviewView: View {
             .onAppear {
                 loadInitialHeadshots()
             }
-            // Single Retake Camera Sheet
+            .alert("Unable to Save Headshots", isPresented: $showingSaveError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(saveErrorMessage ?? "An unexpected error occurred while saving.")
+            }
             .sheet(isPresented: $showingSingleRetakeCamera) {
                 HeadshotCaptureView(
                     audition: audition,
                     retakeAngle: selectedAngle,
                     onRetakeComplete: { captured in
                         showingSingleRetakeCamera = false
-                        updateImageForCurrentAngle(captured)
+                        updateImageForCurrentAngle(HeadshotCropMath.normalizedImage(captured))
                     }
                 )
             }
-            // Single Retake Photos Picker
             .photosPicker(
                 isPresented: $showingSingleRetakePicker,
                 selection: $singlePickerItem,
@@ -153,11 +155,13 @@ struct HeadshotReviewView: View {
                 guard let item = item else { return }
                 singlePickerItem = nil
                 Task {
-                    if let data = try? await item.loadTransferable(type: Data.self),
-                       let image = UIImage(data: data) {
-                        await MainActor.run {
-                            updateImageForCurrentAngle(image)
-                        }
+                    guard let data = try? await item.loadTransferable(type: Data.self) else { return }
+                    let downsampled = await Task.detached(priority: .userInitiated) {
+                        HeadshotCropMath.downsampledImage(from: data, maxPixelDimension: 2400)
+                    }.value
+                    guard let image = downsampled else { return }
+                    await MainActor.run {
+                        updateImageForCurrentAngle(image)
                     }
                 }
             }
@@ -199,16 +203,8 @@ struct HeadshotReviewView: View {
     }
 
     private var frameAspectRatio: CGFloat {
-        switch currentRatio {
-        case .ratio4x5: return 4.0 / 5.0
-        case .ratio2x3: return 2.0 / 3.0
-        case .ratio1x1: return 1.0
-        case .free:
-            if let img = currentImage {
-                return max(0.5, min(2.0, img.size.width / max(1.0, img.size.height)))
-            }
-            return 4.0 / 5.0
-        }
+        let raw = HeadshotCropMath.targetAspect(for: currentRatio, imageSize: currentImage?.size)
+        return max(0.5, min(2.0, raw))
     }
 
     private var savedReadyCount: Int {
@@ -275,6 +271,7 @@ struct HeadshotReviewView: View {
                 Button {
                     withAnimation {
                         setRatioForCurrentAngle(ratio)
+                        resetFramingForCurrentAngle()
                     }
                 } label: {
                     Text(ratio.rawValue)
@@ -300,15 +297,25 @@ struct HeadshotReviewView: View {
 
             if let img = currentImage {
                 GeometryReader { geo in
+                    let effectiveScale = max(1.0, min(3.5, currentScale * pinchScale))
+                    let proposedOffset = CGSize(
+                        width: currentOffset.width + dragTranslation.width,
+                        height: currentOffset.height + dragTranslation.height
+                    )
+                    let liveClampedOffset = HeadshotCropMath.clampedOffset(
+                        proposedOffset,
+                        imageSize: img.size,
+                        containerSize: geo.size,
+                        scale: effectiveScale
+                    )
+
                     Image(uiImage: img)
                         .resizable()
                         .scaledToFill()
                         .frame(width: geo.size.width, height: geo.size.height)
-                        .scaleEffect(max(1.0, currentScale * pinchScale))
-                        .offset(
-                            x: currentOffset.width + dragTranslation.width,
-                            y: currentOffset.height + dragTranslation.height
-                        )
+                        .scaleEffect(effectiveScale)
+                        .offset(x: liveClampedOffset.width, y: liveClampedOffset.height)
+                        .contentShape(Rectangle())
                         .gesture(
                             SimultaneousGesture(
                                 MagnificationGesture()
@@ -316,8 +323,15 @@ struct HeadshotReviewView: View {
                                         pinchScale = scale
                                     }
                                     .onEnded { scale in
-                                        let final = max(1.0, min(3.5, currentScale * scale))
-                                        setScaleForCurrentAngle(final)
+                                        let finalScale = max(1.0, min(3.5, currentScale * scale))
+                                        setScaleForCurrentAngle(finalScale)
+                                        let clamped = HeadshotCropMath.clampedOffset(
+                                            currentOffset,
+                                            imageSize: img.size,
+                                            containerSize: geo.size,
+                                            scale: finalScale
+                                        )
+                                        setOffsetForCurrentAngle(clamped)
                                         pinchScale = 1.0
                                     },
                                 DragGesture()
@@ -325,20 +339,31 @@ struct HeadshotReviewView: View {
                                         dragTranslation = val.translation
                                     }
                                     .onEnded { val in
-                                        let finalOffset = CGSize(
+                                        let rawOffset = CGSize(
                                             width: currentOffset.width + val.translation.width,
                                             height: currentOffset.height + val.translation.height
                                         )
-                                        setOffsetForCurrentAngle(finalOffset)
+                                        let clamped = HeadshotCropMath.clampedOffset(
+                                            rawOffset,
+                                            imageSize: img.size,
+                                            containerSize: geo.size,
+                                            scale: currentScale
+                                        )
+                                        setOffsetForCurrentAngle(clamped)
                                         dragTranslation = .zero
                                     }
                             )
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .onAppear {
+                            cropContainerSize = geo.size
+                        }
+                        .onChange(of: geo.size) { _, newSize in
+                            cropContainerSize = newSize
+                        }
                 }
                 .aspectRatio(frameAspectRatio, contentMode: .fit)
 
-                // Rule-of-thirds grid overlay
                 gridOverlay
                     .aspectRatio(frameAspectRatio, contentMode: .fit)
                     .allowsHitTesting(false)
@@ -364,13 +389,11 @@ struct HeadshotReviewView: View {
             let h = geo.size.height
 
             Path { path in
-                // Horizontal lines
                 path.move(to: CGPoint(x: 0, y: h / 3.0))
                 path.addLine(to: CGPoint(x: w, y: h / 3.0))
                 path.move(to: CGPoint(x: 0, y: 2.0 * h / 3.0))
                 path.addLine(to: CGPoint(x: w, y: 2.0 * h / 3.0))
 
-                // Vertical lines
                 path.move(to: CGPoint(x: w / 3.0, y: 0))
                 path.addLine(to: CGPoint(x: w / 3.0, y: h))
                 path.move(to: CGPoint(x: 2.0 * w / 3.0, y: 0))
@@ -460,10 +483,11 @@ struct HeadshotReviewView: View {
     }
 
     private func updateImageForCurrentAngle(_ image: UIImage) {
+        let normalized = HeadshotCropMath.normalizedImage(image)
         switch selectedAngle {
-        case .front: frontImage = image
-        case .left: leftImage = image
-        case .right: rightImage = image
+        case .front: frontImage = normalized
+        case .left: leftImage = normalized
+        case .right: rightImage = normalized
         }
         resetFramingForCurrentAngle()
     }
@@ -471,136 +495,128 @@ struct HeadshotReviewView: View {
     // MARK: - Load & Save Logic
 
     private func loadInitialHeadshots() {
-        if let f = initialFront { frontImage = f }
-        if let l = initialLeft { leftImage = l }
-        if let r = initialRight { rightImage = r }
+        let requiredRatio = audition.validationRules.requiredHeadshotRatio
+        frontRatio = requiredRatio
+        leftRatio = requiredRatio
+        rightRatio = requiredRatio
+
+        if let f = initialFront { frontImage = HeadshotCropMath.normalizedImage(f) }
+        if let l = initialLeft { leftImage = HeadshotCropMath.normalizedImage(l) }
+        if let r = initialRight { rightImage = HeadshotCropMath.normalizedImage(r) }
 
         let sourceAssets = !assets.isEmpty ? assets : audition.headshots
 
-        // Load existing saved audition headshots if inputs were nil
         if frontImage == nil, let asset = sourceAssets.first(where: { $0.angle == .front }) {
-            frontImage = UIImage(contentsOfFile: asset.originalFilePath) ?? UIImage(contentsOfFile: asset.croppedFilePath)
+            frontImage = loadResolvedImage(for: asset)
             frontRatio = asset.aspectRatio
         }
         if leftImage == nil, let asset = sourceAssets.first(where: { $0.angle == .left }) {
-            leftImage = UIImage(contentsOfFile: asset.originalFilePath) ?? UIImage(contentsOfFile: asset.croppedFilePath)
+            leftImage = loadResolvedImage(for: asset)
             leftRatio = asset.aspectRatio
         }
         if rightImage == nil, let asset = sourceAssets.first(where: { $0.angle == .right }) {
-            rightImage = UIImage(contentsOfFile: asset.originalFilePath) ?? UIImage(contentsOfFile: asset.croppedFilePath)
+            rightImage = loadResolvedImage(for: asset)
             rightRatio = asset.aspectRatio
         }
+    }
 
-        // Default ratio to audition's required ratio
-        let defaultRatio = audition.validationRules.requiredHeadshotRatio
-        if initialFront == nil && sourceAssets.isEmpty {
-            frontRatio = defaultRatio
-            leftRatio = defaultRatio
-            rightRatio = defaultRatio
+    private func loadResolvedImage(for asset: HeadshotAsset) -> UIImage? {
+        let origPath = MediaStorage.resolvePath(for: asset.originalFilePath)
+        if !origPath.isEmpty, let img = UIImage(contentsOfFile: origPath) {
+            return HeadshotCropMath.normalizedImage(img)
         }
+        let cropPath = MediaStorage.resolvePath(for: asset.croppedFilePath)
+        if !cropPath.isEmpty, let img = UIImage(contentsOfFile: cropPath) {
+            return HeadshotCropMath.normalizedImage(img)
+        }
+        return nil
     }
 
     private func saveAllHeadshots() {
         guard let front = frontImage, let left = leftImage, let right = rightImage else { return }
         isSaving = true
 
+        let auditionID = audition.id
+        let containerSize = cropContainerSize
+        let items: [(HeadshotAngle, UIImage, HeadshotAspectRatio, CGFloat, CGSize)] = [
+            (.front, front, frontRatio, frontScale, frontOffset),
+            (.left, left, leftRatio, leftScale, leftOffset),
+            (.right, right, rightRatio, rightScale, rightOffset)
+        ]
+
         Task {
-            let fm = FileManager.default
-            let docs = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            let headshotsDir = docs.appendingPathComponent("Headshots_\(audition.id)", isDirectory: true)
-            try? fm.createDirectory(at: headshotsDir, withIntermediateDirectories: true)
+            do {
+                var newAssets: [HeadshotAsset] = []
 
-            let items: [(HeadshotAngle, UIImage, HeadshotAspectRatio, CGFloat, CGSize)] = [
-                (.front, front, frontRatio, frontScale, frontOffset),
-                (.left, left, leftRatio, leftScale, leftOffset),
-                (.right, right, rightRatio, rightScale, rightOffset)
-            ]
+                for (angle, orig, ratio, scale, offset) in items {
+                    let evaluation = await HeadshotGuidanceService.shared.evaluateImage(orig, for: angle)
 
-            var newAssets: [HeadshotAsset] = []
+                    let (origRel, cropRel) = try await Task.detached(priority: .userInitiated) {
+                        let uprightOrig = HeadshotCropMath.normalizedImage(orig)
+                        let targetAspect = HeadshotCropMath.targetAspect(for: ratio, imageSize: uprightOrig.size)
+                        let targetContainer = CGSize(
+                            width: containerSize.width > 0 ? containerSize.width : 300,
+                            height: (containerSize.width > 0 ? containerSize.width : 300) / max(0.25, targetAspect)
+                        )
+                        let cropped = HeadshotCropMath.renderCroppedImage(
+                            uprightOrig,
+                            containerSize: targetContainer,
+                            targetAspect: targetAspect,
+                            scale: scale,
+                            offset: offset
+                        )
 
-            for (angle, orig, ratio, scale, offset) in items {
-                let origPath = headshotsDir.appendingPathComponent("\(angle.rawValue)_orig.jpg").path
-                let cropPath = headshotsDir.appendingPathComponent("\(angle.rawValue)_crop.jpg").path
+                        guard let origData = uprightOrig.jpegData(compressionQuality: 0.9),
+                              let cropData = cropped.jpegData(compressionQuality: 0.9) else {
+                            throw CocoaError(.fileWriteUnknown)
+                        }
 
-                // Render cropped version with scale & offset
-                let cropped = renderCroppedImage(original: orig, ratio: ratio, scale: scale, offset: offset)
+                        let origSaved = try MediaStorage.saveData(
+                            origData,
+                            relativePath: "Headshots_\(auditionID)/\(angle.rawValue)_orig.jpg"
+                        )
+                        let cropSaved = try MediaStorage.saveData(
+                            cropData,
+                            relativePath: "Headshots_\(auditionID)/\(angle.rawValue)_crop.jpg"
+                        )
+                        return (origSaved, cropSaved)
+                    }.value
 
-                if let origData = orig.jpegData(compressionQuality: 0.9) {
-                    try? origData.write(to: URL(fileURLWithPath: origPath))
+                    let asset = HeadshotAsset(
+                        angle: angle,
+                        originalFilePath: origRel,
+                        croppedFilePath: cropRel,
+                        aspectRatio: ratio,
+                        cropPreset: .theatrical,
+                        lightingPassed: evaluation.lighting == .good,
+                        backgroundPassed: evaluation.background == .clean,
+                        alignmentPassed: evaluation.isFaceCentered && evaluation.isAngleCorrect,
+                        eyeLevelPassed: evaluation.isEyeLevel,
+                        capturedAt: Date()
+                    )
+                    newAssets.append(asset)
                 }
-                if let cropData = cropped.jpegData(compressionQuality: 0.9) {
-                    try? cropData.write(to: URL(fileURLWithPath: cropPath))
-                }
 
-                let asset = HeadshotAsset(
-                    angle: angle,
-                    originalFilePath: origPath,
-                    croppedFilePath: cropPath,
-                    aspectRatio: ratio,
-                    cropPreset: .theatrical,
-                    lightingPassed: true,
-                    backgroundPassed: true,
-                    alignmentPassed: true,
-                    eyeLevelPassed: true,
-                    capturedAt: Date()
-                )
-                newAssets.append(asset)
-            }
-
-            await MainActor.run {
-                audition.headshots = newAssets
-
-                // Mark headshot requirement complete if present
-                for idx in audition.requirements.indices {
-                    if audition.requirements[idx].title.lowercased().contains("headshot") {
-                        audition.requirements[idx].isCompleted = true
+                await MainActor.run {
+                    audition.headshots = newAssets
+                    for idx in audition.requirements.indices {
+                        if audition.requirements[idx].title.lowercased().contains("headshot") {
+                            audition.requirements[idx].isCompleted = true
+                        }
                     }
-                }
 
-                try? appState.modelContext?.save()
-                appState.loadData()
-                isSaving = false
-                onSaved?()
-                dismiss()
+                    appState.saveChanges()
+                    isSaving = false
+                    onSaved?()
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    isSaving = false
+                    saveErrorMessage = "Could not save headshots to storage: \(error.localizedDescription)"
+                    showingSaveError = true
+                }
             }
         }
-    }
-
-    private func renderCroppedImage(original: UIImage, ratio: HeadshotAspectRatio, scale: CGFloat, offset: CGSize) -> UIImage {
-        let targetAspect: CGFloat
-        switch ratio {
-        case .ratio4x5: targetAspect = 4.0 / 5.0
-        case .ratio2x3: targetAspect = 2.0 / 3.0
-        case .ratio1x1: targetAspect = 1.0
-        case .free: targetAspect = original.size.width / max(1.0, original.size.height)
-        }
-
-        let origWidth = original.size.width
-        let origHeight = original.size.height
-
-        var cropWidth = origWidth / max(1.0, scale)
-        var cropHeight = cropWidth / targetAspect
-
-        if cropHeight > origHeight {
-            cropHeight = origHeight / max(1.0, scale)
-            cropWidth = cropHeight * targetAspect
-        }
-
-        let centerX = origWidth / 2.0 - (offset.width * (origWidth / 300.0))
-        let centerY = origHeight / 2.0 - (offset.height * (origHeight / 380.0))
-
-        let cropRect = CGRect(
-            x: max(0, min(origWidth - cropWidth, centerX - cropWidth / 2.0)),
-            y: max(0, min(origHeight - cropHeight, centerY - cropHeight / 2.0)),
-            width: min(origWidth, cropWidth),
-            height: min(origHeight, cropHeight)
-        )
-
-        UIGraphicsBeginImageContextWithOptions(cropRect.size, false, original.scale)
-        original.draw(at: CGPoint(x: -cropRect.origin.x, y: -cropRect.origin.y))
-        let result = UIGraphicsGetImageFromCurrentImageContext()
-        UIGraphicsEndImageContext()
-
-        return result ?? original
     }
 }

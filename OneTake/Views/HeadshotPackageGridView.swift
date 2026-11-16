@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct HeadshotPackageGridView: View {
+    @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
 
     let audition: Audition
@@ -16,6 +17,22 @@ struct HeadshotPackageGridView: View {
     let onSaveCompleted: () -> Void
 
     @State private var showingImportPicker = false
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+    @State private var showingErrorAlert = false
+
+    private var requiredRatio: HeadshotAspectRatio {
+        audition.validationRules.requiredHeadshotRatio
+    }
+
+    private var cardAspectRatio: CGFloat {
+        switch requiredRatio {
+        case .ratio4x5: return 4.0 / 5.0
+        case .ratio2x3: return 2.0 / 3.0
+        case .ratio1x1: return 1.0
+        case .free: return 4.0 / 5.0
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -25,7 +42,6 @@ struct HeadshotPackageGridView: View {
 
                 ScrollView {
                     VStack(spacing: 20) {
-                        // Header
                         VStack(spacing: 6) {
                             Text("3-Angle Headshot Package")
                                 .font(Theme.Typography.screenTitle)
@@ -39,7 +55,6 @@ struct HeadshotPackageGridView: View {
                         }
                         .padding(.top, 16)
 
-                        // 3-photo collage grid
                         HStack(spacing: 12) {
                             headshotCard(title: "Front", angle: .front, image: frontCropped)
                             headshotCard(title: "Left Profile", angle: .left, image: leftCropped)
@@ -47,11 +62,10 @@ struct HeadshotPackageGridView: View {
                         }
                         .padding(.horizontal, 16)
 
-                        // Ratio info banner
                         HStack(spacing: 8) {
                             Image(systemName: "aspectratio")
                                 .foregroundStyle(Theme.Colors.accent)
-                            Text("Standard Casting Format: \(audition.validationRules.requiredHeadshotRatio.rawValue) Theatrical Ratio")
+                            Text("Required Casting Format: \(requiredRatio.rawValue)")
                                 .font(Theme.Typography.captionBadge)
                                 .foregroundStyle(Theme.Colors.textSecondary)
                         }
@@ -60,7 +74,6 @@ struct HeadshotPackageGridView: View {
                         .background(Theme.Colors.lavenderSurface)
                         .clipShape(Capsule())
 
-                        // Import alternative
                         Button {
                             showingImportPicker = true
                         } label: {
@@ -75,16 +88,20 @@ struct HeadshotPackageGridView: View {
 
                         Spacer(minLength: 40)
 
-                        // Confirm & Save
                         Button {
                             savePackageToAudition()
                         } label: {
-                            Text("Save Headshots to Audition")
-                                .primaryCapsuleButton()
+                            if isSaving {
+                                ProgressView()
+                                    .tint(.white)
+                            } else {
+                                Text("Save Headshots to Audition")
+                            }
                         }
+                        .primaryCapsuleButton()
                         .padding(.horizontal, 24)
                         .padding(.bottom, 36)
-                        .disabled(frontCropped == nil || leftCropped == nil || rightCropped == nil)
+                        .disabled(isSaving || frontCropped == nil || leftCropped == nil || rightCropped == nil)
                     }
                 }
             }
@@ -94,6 +111,11 @@ struct HeadshotPackageGridView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }
+            }
+            .alert("Unable to Save Headshots", isPresented: $showingErrorAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "An unexpected error occurred while saving.")
             }
             .sheet(isPresented: $showingImportPicker) {
                 HeadshotImportPickerView(audition: audition) {
@@ -109,13 +131,14 @@ struct HeadshotPackageGridView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(Theme.Colors.lavenderTint)
-                    .aspectRatio(4.0 / 5.0, contentMode: .fit)
+                    .aspectRatio(cardAspectRatio, contentMode: .fit)
                     .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.Colors.accent.opacity(0.28), lineWidth: 1))
 
                 if let img = image {
                     Image(uiImage: img)
                         .resizable()
                         .scaledToFill()
+                        .aspectRatio(cardAspectRatio, contentMode: .fit)
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 } else {
                     VStack(spacing: 6) {
@@ -146,54 +169,91 @@ struct HeadshotPackageGridView: View {
 
     private func savePackageToAudition() {
         guard let front = frontCropped, let left = leftCropped, let right = rightCropped else { return }
+        isSaving = true
 
-        let fm = FileManager.default
-        let docs = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let headshotsDir = docs.appendingPathComponent("Headshots_\(audition.id)", isDirectory: true)
-        try? fm.createDirectory(at: headshotsDir, withIntermediateDirectories: true)
-
-        var newAssets: [HeadshotAsset] = []
-
+        let auditionID = audition.id
+        let ratio = requiredRatio
+        let existingHeadshots = audition.headshots
         let items: [(HeadshotAngle, UIImage, UIImage?)] = [
             (.front, front, frontOriginal),
             (.left, left, leftOriginal),
             (.right, right, rightOriginal)
         ]
 
-        for (angle, cropped, orig) in items {
-            let origPath = headshotsDir.appendingPathComponent("\(angle.rawValue)_orig.jpg").path
-            let cropPath = headshotsDir.appendingPathComponent("\(angle.rawValue)_crop.jpg").path
+        Task {
+            do {
+                var newAssets: [HeadshotAsset] = []
 
-            if let origData = (orig ?? cropped).jpegData(compressionQuality: 0.9) {
-                try? origData.write(to: URL(fileURLWithPath: origPath))
+                for (angle, cropped, orig) in items {
+                    let evaluationTarget = orig ?? cropped
+                    let evaluation = await HeadshotGuidanceService.shared.evaluateImage(evaluationTarget, for: angle)
+                    let existingOrigPath = existingHeadshots.first(where: { $0.angle == angle })?.originalFilePath
+
+                    let (origRel, cropRel) = try await Task.detached(priority: .userInitiated) {
+                        let uprightCrop = HeadshotCropMath.normalizedImage(cropped)
+                        guard let cropData = uprightCrop.jpegData(compressionQuality: 0.9) else {
+                            throw CocoaError(.fileWriteUnknown)
+                        }
+                        let savedCrop = try MediaStorage.saveData(
+                            cropData,
+                            relativePath: "Headshots_\(auditionID)/\(angle.rawValue)_crop.jpg"
+                        )
+
+                        let savedOrig: String
+                        if let orig {
+                            let uprightOrig = HeadshotCropMath.normalizedImage(orig)
+                            guard let origData = uprightOrig.jpegData(compressionQuality: 0.9) else {
+                                throw CocoaError(.fileWriteUnknown)
+                            }
+                            savedOrig = try MediaStorage.saveData(
+                                origData,
+                                relativePath: "Headshots_\(auditionID)/\(angle.rawValue)_orig.jpg"
+                            )
+                        } else if let existingOrigPath,
+                                  !existingOrigPath.isEmpty,
+                                  MediaStorage.fileExists(at: existingOrigPath) {
+                            savedOrig = MediaStorage.storedRelativePath(for: existingOrigPath)
+                        } else {
+                            savedOrig = savedCrop
+                        }
+
+                        return (savedOrig, savedCrop)
+                    }.value
+
+                    let asset = HeadshotAsset(
+                        angle: angle,
+                        originalFilePath: origRel,
+                        croppedFilePath: cropRel,
+                        aspectRatio: ratio,
+                        cropPreset: .theatrical,
+                        lightingPassed: evaluation.lighting == .good,
+                        backgroundPassed: evaluation.background == .clean,
+                        alignmentPassed: evaluation.isFaceCentered && evaluation.isAngleCorrect,
+                        eyeLevelPassed: evaluation.isEyeLevel,
+                        capturedAt: Date()
+                    )
+                    newAssets.append(asset)
+                }
+
+                await MainActor.run {
+                    audition.headshots = newAssets
+                    for idx in audition.requirements.indices {
+                        if audition.requirements[idx].title.lowercased().contains("headshot") {
+                            audition.requirements[idx].isCompleted = true
+                        }
+                    }
+                    appState.saveChanges()
+                    isSaving = false
+                    onSaveCompleted()
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    isSaving = false
+                    errorMessage = "Could not save headshot package: \(error.localizedDescription)"
+                    showingErrorAlert = true
+                }
             }
-            if let cropData = cropped.jpegData(compressionQuality: 0.9) {
-                try? cropData.write(to: URL(fileURLWithPath: cropPath))
-            }
-
-            let asset = HeadshotAsset(
-                angle: angle,
-                originalFilePath: origPath,
-                croppedFilePath: cropPath,
-                aspectRatio: audition.validationRules.requiredHeadshotRatio,
-                cropPreset: .theatrical,
-                lightingPassed: true,
-                backgroundPassed: true,
-                alignmentPassed: true,
-                eyeLevelPassed: true,
-                capturedAt: Date()
-            )
-            newAssets.append(asset)
         }
-
-        audition.headshots = newAssets
-
-        // Update requirements checklist
-        if let idx = audition.requirements.firstIndex(where: { $0.title.lowercased().contains("headshot") }) {
-            audition.requirements[idx].isCompleted = true
-        }
-
-        onSaveCompleted()
-        dismiss()
     }
 }

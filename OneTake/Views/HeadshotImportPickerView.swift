@@ -1,7 +1,8 @@
-import SwiftUI
 import PhotosUI
+import SwiftUI
 
 struct HeadshotImportPickerView: View {
+    @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
 
     let audition: Audition
@@ -16,6 +17,8 @@ struct HeadshotImportPickerView: View {
     @State private var rightImage: UIImage?
 
     @State private var isAutoCropping = false
+    @State private var errorMessage: String?
+    @State private var showingErrorAlert = false
 
     var isReadyToSave: Bool {
         frontImage != nil && leftImage != nil && rightImage != nil
@@ -42,7 +45,6 @@ struct HeadshotImportPickerView: View {
                         }
                         .padding(.top, 16)
 
-                        // 3 Slot Pickers
                         VStack(spacing: 14) {
                             slotRow(
                                 title: "Front Shot",
@@ -90,6 +92,11 @@ struct HeadshotImportPickerView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
+            }
+            .alert("Unable to Import Headshots", isPresented: $showingErrorAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "An unexpected error occurred while saving.")
             }
             .onChange(of: frontItem) { _, item in
                 loadImage(from: item) { self.frontImage = $0 }
@@ -157,10 +164,22 @@ struct HeadshotImportPickerView: View {
     private func loadImage(from item: PhotosPickerItem?, completion: @escaping (UIImage?) -> Void) {
         guard let item = item else { return }
         Task {
-            if let data = try? await item.loadTransferable(type: Data.self),
-               let img = UIImage(data: data) {
+            guard let data = try? await item.loadTransferable(type: Data.self) else {
                 await MainActor.run {
+                    errorMessage = "Could not load the selected photo."
+                    showingErrorAlert = true
+                }
+                return
+            }
+            let img = await Task.detached(priority: .userInitiated) {
+                HeadshotCropMath.downsampledImage(from: data, maxPixelDimension: 2400)
+            }.value
+            await MainActor.run {
+                if let img {
                     completion(img)
+                } else {
+                    errorMessage = "Unsupported image format."
+                    showingErrorAlert = true
                 }
             }
         }
@@ -170,54 +189,75 @@ struct HeadshotImportPickerView: View {
         guard let front = frontImage, let left = leftImage, let right = rightImage else { return }
         isAutoCropping = true
 
+        let auditionID = audition.id
+        let ratio = audition.validationRules.requiredHeadshotRatio
+
         Task {
-            let ratio = audition.validationRules.requiredHeadshotRatio
-            let frontCrop = await ImageFramer.autoCrop(image: front, aspectRatio: ratio)
-            let leftCrop = await ImageFramer.autoCrop(image: left, aspectRatio: ratio)
-            let rightCrop = await ImageFramer.autoCrop(image: right, aspectRatio: ratio)
+            do {
+                let items: [(HeadshotAngle, UIImage)] = [
+                    (.front, front),
+                    (.left, left),
+                    (.right, right)
+                ]
 
-            let fm = FileManager.default
-            let docs = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            let dir = docs.appendingPathComponent("Headshots_\(audition.id)", isDirectory: true)
-            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+                var assets: [HeadshotAsset] = []
 
-            var assets: [HeadshotAsset] = []
-            let items: [(HeadshotAngle, UIImage, UIImage)] = [
-                (.front, frontCrop, front),
-                (.left, leftCrop, left),
-                (.right, rightCrop, right)
-            ]
+                for (angle, orig) in items {
+                    let uprightOrig = await Task.detached(priority: .userInitiated) {
+                        HeadshotCropMath.normalizedImage(orig)
+                    }.value
+                    let cropped = await ImageFramer.autoCrop(image: uprightOrig, aspectRatio: ratio)
+                    let evaluation = await HeadshotGuidanceService.shared.evaluateImage(uprightOrig, for: angle)
 
-            for (angle, cropped, orig) in items {
-                let origPath = dir.appendingPathComponent("\(angle.rawValue)_orig.jpg").path
-                let cropPath = dir.appendingPathComponent("\(angle.rawValue)_crop.jpg").path
+                    let (origRel, cropRel) = try await Task.detached(priority: .userInitiated) {
+                        guard let d1 = uprightOrig.jpegData(compressionQuality: 0.9),
+                              let d2 = cropped.jpegData(compressionQuality: 0.9) else {
+                            throw CocoaError(.fileWriteUnknown)
+                        }
+                        let savedOrig = try MediaStorage.saveData(
+                            d1,
+                            relativePath: "Headshots_\(auditionID)/\(angle.rawValue)_orig.jpg"
+                        )
+                        let savedCrop = try MediaStorage.saveData(
+                            d2,
+                            relativePath: "Headshots_\(auditionID)/\(angle.rawValue)_crop.jpg"
+                        )
+                        return (savedOrig, savedCrop)
+                    }.value
 
-                if let d1 = orig.jpegData(compressionQuality: 0.9) { try? d1.write(to: URL(fileURLWithPath: origPath)) }
-                if let d2 = cropped.jpegData(compressionQuality: 0.9) { try? d2.write(to: URL(fileURLWithPath: cropPath)) }
-
-                let asset = HeadshotAsset(
-                    angle: angle,
-                    originalFilePath: origPath,
-                    croppedFilePath: cropPath,
-                    aspectRatio: ratio,
-                    cropPreset: .theatrical,
-                    lightingPassed: true,
-                    backgroundPassed: true,
-                    alignmentPassed: true,
-                    eyeLevelPassed: true,
-                    capturedAt: Date()
-                )
-                assets.append(asset)
-            }
-
-            await MainActor.run {
-                audition.headshots = assets
-                if let idx = audition.requirements.firstIndex(where: { $0.title.lowercased().contains("headshot") }) {
-                    audition.requirements[idx].isCompleted = true
+                    let asset = HeadshotAsset(
+                        angle: angle,
+                        originalFilePath: origRel,
+                        croppedFilePath: cropRel,
+                        aspectRatio: ratio,
+                        cropPreset: .theatrical,
+                        lightingPassed: evaluation.lighting == .good,
+                        backgroundPassed: evaluation.background == .clean,
+                        alignmentPassed: evaluation.isFaceCentered && evaluation.isAngleCorrect,
+                        eyeLevelPassed: evaluation.isEyeLevel,
+                        capturedAt: Date()
+                    )
+                    assets.append(asset)
                 }
-                isAutoCropping = false
-                onImportSaved()
-                dismiss()
+
+                await MainActor.run {
+                    audition.headshots = assets
+                    for idx in audition.requirements.indices {
+                        if audition.requirements[idx].title.lowercased().contains("headshot") {
+                            audition.requirements[idx].isCompleted = true
+                        }
+                    }
+                    appState.saveChanges()
+                    isAutoCropping = false
+                    onImportSaved()
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    isAutoCropping = false
+                    errorMessage = "Could not save imported headshots: \(error.localizedDescription)"
+                    showingErrorAlert = true
+                }
             }
         }
     }

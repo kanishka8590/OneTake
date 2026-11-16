@@ -11,7 +11,15 @@ struct HeadshotCropView: View {
     @State private var selectedPreset: HeadshotCropPreset = .theatrical
     @State private var croppedPreviewImage: UIImage?
     @State private var isProcessingCrop = false
+    @State private var isApplyingCrop = false
+    @State private var autoCropTask: Task<Void, Never>?
+
+    // Interactive pinch & pan fine-tuning over the auto-framed preview
     @State private var zoomScale: CGFloat = 1.0
+    @State private var panOffset: CGSize = .zero
+    @State private var pinchScale: CGFloat = 1.0
+    @State private var dragTranslation: CGSize = .zero
+    @State private var previewContainerSize: CGSize = CGSize(width: 280, height: 350)
 
     var body: some View {
         NavigationStack {
@@ -51,17 +59,82 @@ struct HeadshotCropView: View {
                             .padding(.horizontal, 24)
 
                         if let preview = croppedPreviewImage {
-                            Image(uiImage: preview)
-                                .resizable()
-                                .scaledToFit()
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                                .padding(.horizontal, 28)
-                        } else {
-                            ProgressView()
-                                .tint(.white)
+                            GeometryReader { geo in
+                                let effectiveScale = max(1.0, min(3.5, zoomScale * pinchScale))
+                                let proposedOffset = CGSize(
+                                    width: panOffset.width + dragTranslation.width,
+                                    height: panOffset.height + dragTranslation.height
+                                )
+                                let liveOffset = HeadshotCropMath.clampedOffset(
+                                    proposedOffset,
+                                    imageSize: preview.size,
+                                    containerSize: geo.size,
+                                    scale: effectiveScale
+                                )
+
+                                Image(uiImage: preview)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: geo.size.width, height: geo.size.height)
+                                    .scaleEffect(effectiveScale)
+                                    .offset(x: liveOffset.width, y: liveOffset.height)
+                                    .contentShape(Rectangle())
+                                    .gesture(
+                                        SimultaneousGesture(
+                                            MagnificationGesture()
+                                                .onChanged { value in
+                                                    pinchScale = value
+                                                }
+                                                .onEnded { value in
+                                                    let finalScale = max(1.0, min(3.5, zoomScale * value))
+                                                    zoomScale = finalScale
+                                                    panOffset = HeadshotCropMath.clampedOffset(
+                                                        panOffset,
+                                                        imageSize: preview.size,
+                                                        containerSize: geo.size,
+                                                        scale: finalScale
+                                                    )
+                                                    pinchScale = 1.0
+                                                },
+                                            DragGesture()
+                                                .onChanged { val in
+                                                    dragTranslation = val.translation
+                                                }
+                                                .onEnded { val in
+                                                    let raw = CGSize(
+                                                        width: panOffset.width + val.translation.width,
+                                                        height: panOffset.height + val.translation.height
+                                                    )
+                                                    panOffset = HeadshotCropMath.clampedOffset(
+                                                        raw,
+                                                        imageSize: preview.size,
+                                                        containerSize: geo.size,
+                                                        scale: zoomScale
+                                                    )
+                                                    dragTranslation = .zero
+                                                }
+                                        )
+                                    )
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    .onAppear {
+                                        previewContainerSize = geo.size
+                                    }
+                                    .onChange(of: geo.size) { _, newSize in
+                                        previewContainerSize = newSize
+                                    }
+                            }
+                            .aspectRatio(previewAspectRatio, contentMode: .fit)
+                            .padding(.horizontal, 28)
                         }
 
-                        // Rule-of-thirds grid overlay
+                        if isProcessingCrop || croppedPreviewImage == nil {
+                            ProgressView()
+                                .tint(.white)
+                                .padding(14)
+                                .background(Color.black.opacity(0.55))
+                                .clipShape(Circle())
+                        }
+
                         gridOverlay
                             .aspectRatio(previewAspectRatio, contentMode: .fit)
                             .padding(.horizontal, 24)
@@ -77,34 +150,56 @@ struct HeadshotCropView: View {
                     }
                     .pickerStyle(.segmented)
                     .padding(.horizontal, 24)
-                    .onChange(of: selectedRatio) { _, _ in
+                    .onChange(of: selectedRatio) { _, newRatio in
+                        if selectedPreset == .commercial && newRatio != .free {
+                            selectedPreset = .theatrical
+                        }
                         generateAutoCrop()
                     }
 
                     // Face-aware auto center button
-                    Button {
-                        generateAutoCrop()
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "face.smiling")
-                            Text("Auto-Align Face & Eye Line")
+                    HStack(spacing: 16) {
+                        Button {
+                            generateAutoCrop()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "face.smiling")
+                                Text("Auto-Align Face & Eye Line")
+                            }
+                            .font(Theme.Typography.captionBadge)
+                            .foregroundStyle(Theme.Colors.accent)
                         }
-                        .font(Theme.Typography.captionBadge)
-                        .foregroundStyle(Theme.Colors.accent)
+                        .disabled(isProcessingCrop)
+
+                        if zoomScale > 1.01 || panOffset != .zero {
+                            Button {
+                                withAnimation {
+                                    zoomScale = 1.0
+                                    panOffset = .zero
+                                }
+                            } label: {
+                                Text("Reset Pan/Zoom")
+                                    .font(Theme.Typography.captionBadge)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                            }
+                        }
                     }
 
                     Spacer()
 
                     // Confirm Crop
                     Button {
-                        if let finalImage = croppedPreviewImage {
-                            onCropConfirmed(finalImage, selectedRatio, selectedPreset)
-                            dismiss()
-                        }
+                        applyAndConfirmCrop()
                     } label: {
-                        Text("Apply Crop")
-                            .primaryCapsuleButton()
+                        if isApplyingCrop {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Text("Apply Crop")
+                        }
                     }
+                    .primaryCapsuleButton()
+                    .disabled(croppedPreviewImage == nil || isProcessingCrop || isApplyingCrop)
                     .padding(.horizontal, 24)
                     .padding(.bottom, 24)
                 }
@@ -113,23 +208,28 @@ struct HeadshotCropView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        autoCropTask?.cancel()
+                        dismiss()
+                    }
                 }
             }
             .onAppear {
                 selectedRatio = defaultRatio
+                selectedPreset = defaultPreset(for: defaultRatio)
                 generateAutoCrop()
+            }
+            .onDisappear {
+                autoCropTask?.cancel()
             }
         }
     }
 
     private var previewAspectRatio: CGFloat {
-        switch selectedRatio {
-        case .ratio4x5: return 4.0 / 5.0
-        case .ratio2x3: return 2.0 / 3.0
-        case .ratio1x1: return 1.0
-        case .free: return 4.0 / 5.0
-        }
+        let imageSize = croppedPreviewImage?.size ?? HeadshotCropMath.normalizedImage(originalImage).size
+        let presetForFree: HeadshotCropPreset? = (selectedRatio == .free && selectedPreset == .commercial) ? .commercial : nil
+        let raw = HeadshotCropMath.targetAspect(for: selectedRatio, preset: presetForFree, imageSize: imageSize)
+        return max(0.5, min(2.0, raw))
     }
 
     private var gridOverlay: some View {
@@ -138,13 +238,11 @@ struct HeadshotCropView: View {
                 let w = geo.size.width
                 let h = geo.size.height
 
-                // Vertical lines
                 path.move(to: CGPoint(x: w / 3.0, y: 0))
                 path.addLine(to: CGPoint(x: w / 3.0, y: h))
                 path.move(to: CGPoint(x: 2.0 * w / 3.0, y: 0))
                 path.addLine(to: CGPoint(x: 2.0 * w / 3.0, y: h))
 
-                // Horizontal lines
                 path.move(to: CGPoint(x: 0, y: h / 3.0))
                 path.addLine(to: CGPoint(x: w, y: h / 3.0))
                 path.move(to: CGPoint(x: 0, y: 2.0 * h / 3.0))
@@ -154,12 +252,24 @@ struct HeadshotCropView: View {
         }
     }
 
+    private func defaultPreset(for ratio: HeadshotAspectRatio) -> HeadshotCropPreset {
+        switch ratio {
+        case .ratio4x5: return .theatrical
+        case .ratio2x3: return .headAndShoulders
+        case .ratio1x1: return .square
+        case .free: return .cardSlotFit
+        }
+    }
+
     private func updateRatioForPreset(_ preset: HeadshotCropPreset) {
         switch preset {
-        case .theatrical, .cardSlotFit, .tightCloseUp:
+        case .theatrical, .tightCloseUp:
             selectedRatio = .ratio4x5
         case .commercial:
-            selectedRatio = .ratio4x5
+            // Commercial is 3:4; map to .free so ImageFramer uses the 3:4 preset ratio cleanly.
+            selectedRatio = .free
+        case .cardSlotFit:
+            selectedRatio = .free
         case .square:
             selectedRatio = .ratio1x1
         case .headAndShoulders:
@@ -168,16 +278,59 @@ struct HeadshotCropView: View {
     }
 
     private func generateAutoCrop() {
+        autoCropTask?.cancel()
         isProcessingCrop = true
-        Task {
+        zoomScale = 1.0
+        panOffset = .zero
+
+        let source = originalImage
+        let ratio = selectedRatio
+        let preset = selectedPreset
+
+        autoCropTask = Task {
             let cropped = await ImageFramer.autoCrop(
-                image: originalImage,
-                aspectRatio: selectedRatio,
-                preset: selectedPreset
+                image: source,
+                aspectRatio: ratio,
+                preset: preset
             )
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 self.croppedPreviewImage = cropped
                 self.isProcessingCrop = false
+            }
+        }
+    }
+
+    private func applyAndConfirmCrop() {
+        guard let preview = croppedPreviewImage else { return }
+        if zoomScale <= 1.001 && panOffset == .zero {
+            onCropConfirmed(preview, selectedRatio, selectedPreset)
+            dismiss()
+            return
+        }
+
+        isApplyingCrop = true
+        let aspect = previewAspectRatio
+        let container = previewContainerSize
+        let scale = zoomScale
+        let offset = panOffset
+        let ratio = selectedRatio
+        let preset = selectedPreset
+
+        Task {
+            let finalImage = await Task.detached(priority: .userInitiated) {
+                HeadshotCropMath.renderCroppedImage(
+                    preview,
+                    containerSize: container,
+                    targetAspect: aspect,
+                    scale: scale,
+                    offset: offset
+                )
+            }.value
+            await MainActor.run {
+                isApplyingCrop = false
+                onCropConfirmed(finalImage, ratio, preset)
+                dismiss()
             }
         }
     }

@@ -1,13 +1,31 @@
-import Foundation
-import UIKit
 import AVFoundation
-import Vision
+import CoreImage
 import CoreMotion
+import Foundation
+import ImageIO
 import Speech
+import UIKit
+import Vision
+
+// MARK: - Orientation Helper
+
+nonisolated private func cgImagePropertyOrientation(for uiOrientation: UIImage.Orientation) -> CGImagePropertyOrientation {
+    switch uiOrientation {
+    case .up: return .up
+    case .down: return .down
+    case .left: return .left
+    case .right: return .right
+    case .upMirrored: return .upMirrored
+    case .downMirrored: return .downMirrored
+    case .leftMirrored: return .leftMirrored
+    case .rightMirrored: return .rightMirrored
+    @unknown default: return .up
+    }
+}
 
 // MARK: - Enums & Status Models
 
-enum LightingStatus: String, CaseIterable, Sendable {
+nonisolated enum LightingStatus: String, CaseIterable, Sendable {
     case good = "Good"
     case tooDark = "Too Dark"
     case uneven = "Uneven"
@@ -22,10 +40,9 @@ enum LightingStatus: String, CaseIterable, Sendable {
     }
 }
 
-enum BackgroundStatus: String, CaseIterable, Sendable {
+nonisolated enum BackgroundStatus: String, CaseIterable, Sendable {
     case clean = "Clean Background"
     case cluttered = "Cluttered"
-    case uneven = "Uneven Backdrop"
 }
 
 nonisolated struct GuidanceFeedback: Sendable {
@@ -43,25 +60,137 @@ nonisolated struct GuidanceFeedback: Sendable {
     }
 }
 
+nonisolated struct AngleEvaluationResult: Equatable, Sendable {
+    let isCorrect: Bool
+    let resolvedYawDegrees: Double
+}
+
 // MARK: - Protocol
 
 protocol HeadshotGuidanceServiceProtocol: AnyObject {
     var feedback: GuidanceFeedback { get }
-    var currentZoomFactor: CGFloat { get }
     var isCapturing: Bool { get }
     var countdownRemaining: Int { get }
     var voiceGuidanceEnabled: Bool { get set }
     var isVoiceListening: Bool { get }
     var voiceStatus: LiveSpeechStatus { get }
+    var cameraPermissionDenied: Bool { get }
+    var cameraErrorMessage: String? { get }
+    var shutterStatusMessage: String? { get }
+    var isFrontCamera: Bool { get }
 
-    func startSession(for angle: HeadshotAngle)
+    func startSession(for angle: HeadshotAngle, isDemoMode: Bool)
     func stopSession()
-    func cycleZoom()
     func flipCamera()
     func startCountdown(seconds: Int, completion: @escaping (UIImage?) -> Void)
     func evaluateImage(_ image: UIImage, for angle: HeadshotAngle) async -> GuidanceFeedback
     func triggerFramingFeedbackVoice()
     @MainActor func handleRecognizedTranscript(_ transcript: String, isFinal: Bool)
+}
+
+extension HeadshotGuidanceServiceProtocol {
+    func startSession(for angle: HeadshotAngle) {
+        startSession(for: angle, isDemoMode: false)
+    }
+}
+
+// MARK: - Thread-Safe Cross-Queue State Box
+
+nonisolated private final class GuidanceStateBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _isCapturing = false
+    private var _isCountdownInProgress = false
+    private var _isSessionRunning = false
+    private var _targetAngle: HeadshotAngle = .front
+    private var _isFrontCamera = true
+    private var _cameraPosition: AVCaptureDevice.Position = .front
+    private var _isDemoMode = false
+    private var _activeRecognitionTaskID: UUID?
+    private var _isRestartingRecognition = false
+    private var _isAudioTapInstalled = false
+    private var _recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var _lastFrameAnalyzedAt: Date = .distantPast
+    private var _isAnalyzingFrame = false
+
+    func withLock<T>(_ body: (GuidanceStateBox) -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body(self)
+    }
+
+    var isCapturing: Bool {
+        get { withLock { $0._isCapturing } }
+        set { withLock { $0._isCapturing = newValue } }
+    }
+
+    var isCountdownInProgress: Bool {
+        get { withLock { $0._isCountdownInProgress } }
+        set { withLock { $0._isCountdownInProgress = newValue } }
+    }
+
+    var isSessionRunning: Bool {
+        get { withLock { $0._isSessionRunning } }
+        set { withLock { $0._isSessionRunning = newValue } }
+    }
+
+    var targetAngle: HeadshotAngle {
+        get { withLock { $0._targetAngle } }
+        set { withLock { $0._targetAngle = newValue } }
+    }
+
+    var isFrontCamera: Bool {
+        get { withLock { $0._isFrontCamera } }
+        set { withLock { $0._isFrontCamera = newValue } }
+    }
+
+    var cameraPosition: AVCaptureDevice.Position {
+        get { withLock { $0._cameraPosition } }
+        set { withLock { $0._cameraPosition = newValue } }
+    }
+
+    var isDemoMode: Bool {
+        get { withLock { $0._isDemoMode } }
+        set { withLock { $0._isDemoMode = newValue } }
+    }
+
+    var activeRecognitionTaskID: UUID? {
+        get { withLock { $0._activeRecognitionTaskID } }
+        set { withLock { $0._activeRecognitionTaskID = newValue } }
+    }
+
+    var isRestartingRecognition: Bool {
+        get { withLock { $0._isRestartingRecognition } }
+        set { withLock { $0._isRestartingRecognition = newValue } }
+    }
+
+    var isAudioTapInstalled: Bool {
+        get { withLock { $0._isAudioTapInstalled } }
+        set { withLock { $0._isAudioTapInstalled = newValue } }
+    }
+
+    var recognitionRequest: SFSpeechAudioBufferRecognitionRequest? {
+        get { withLock { $0._recognitionRequest } }
+        set { withLock { $0._recognitionRequest = newValue } }
+    }
+
+    func tryBeginFrameAnalysis(minInterval: TimeInterval = 0.16) -> Bool {
+        withLock { box in
+            guard box._isSessionRunning else { return false }
+            guard !box._isAnalyzingFrame else { return false }
+            guard !box._isCapturing || box._isCountdownInProgress else { return false }
+            let now = Date()
+            guard now.timeIntervalSince(box._lastFrameAnalyzedAt) >= minInterval else { return false }
+            box._isAnalyzingFrame = true
+            box._lastFrameAnalyzedAt = now
+            return true
+        }
+    }
+
+    func endFrameAnalysis() {
+        withLock { box in
+            box._isAnalyzingFrame = false
+        }
+    }
 }
 
 // MARK: - HeadshotGuidanceService Implementation
@@ -70,49 +199,58 @@ protocol HeadshotGuidanceServiceProtocol: AnyObject {
 final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, SFSpeechRecognizerDelegate, @unchecked Sendable {
     static let shared = HeadshotGuidanceService()
 
+    nonisolated static let unevenLightingThreshold: Double = 0.30
+    nonisolated static let frameAnalysisInterval: TimeInterval = 0.16
+
     var feedback: GuidanceFeedback = GuidanceFeedback()
-    var currentZoomFactor: CGFloat = 1.0
     var isCapturing: Bool = false
     var countdownRemaining: Int = 0
     var voiceGuidanceEnabled: Bool = true
     var isVoiceListening: Bool = false
     var voiceStatus: LiveSpeechStatus = .idle
+    var cameraPermissionDenied: Bool = false
+    var cameraErrorMessage: String? = nil
+    var shutterStatusMessage: String? = nil
+    var isFrontCamera: Bool = true
 
     @ObservationIgnored var onShutterTriggered: (() -> Void)?
 
     // State tracking
     private(set) var isSessionRunning: Bool = false
-    private var lastCommandTriggerTime: Date = .distantPast
-    private var isRestartingRecognition: Bool = false
-    private var taskRestartTimer: Timer?
-    private var activeRecognitionTaskID: UUID?
-    private var isAudioTapInstalled: Bool = false
+    private(set) var captureSession: AVCaptureSession?
+    @ObservationIgnored private let stateBox = GuidanceStateBox()
+    @ObservationIgnored private let sessionQueue = DispatchQueue(label: "com.onetake.headshot.session")
+    @ObservationIgnored private let visionQueue = DispatchQueue(label: "com.onetake.headshot.vision")
+    @ObservationIgnored private var taskRestartTimer: Timer?
+    @ObservationIgnored private var recognitionRestartWorkItem: DispatchWorkItem?
     @ObservationIgnored private var audioSessionObservers: [NSObjectProtocol] = []
 
-    // Capture Session
-    private(set) var captureSession: AVCaptureSession?
-    private var videoDevice: AVCaptureDevice?
-    private var photoOutput: AVCapturePhotoOutput?
-    private var videoDataOutput: AVCaptureVideoDataOutput?
+    // Capture Session (sessionQueue-owned references)
+    @ObservationIgnored nonisolated(unsafe) private var sessionCaptureSession: AVCaptureSession?
+    @ObservationIgnored nonisolated(unsafe) private var sessionVideoDevice: AVCaptureDevice?
+    @ObservationIgnored nonisolated(unsafe) private var sessionPhotoOutput: AVCapturePhotoOutput?
+    @ObservationIgnored nonisolated(unsafe) private var sessionVideoDataOutput: AVCaptureVideoDataOutput?
+    @ObservationIgnored private weak var previewLayer: AVCaptureVideoPreviewLayer?
 
     // Subsystems
-    private let motionManager = CMMotionManager()
-    private let speechSynthesizer = AVSpeechSynthesizer()
-    private var speechRecognizer: SFSpeechRecognizer?
-    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-    private var recognitionTask: SFSpeechRecognitionTask?
-    private let audioEngine = AVAudioEngine()
+    @ObservationIgnored private let motionManager = CMMotionManager()
+    @ObservationIgnored private let speechSynthesizer = AVSpeechSynthesizer()
+    @ObservationIgnored private var speechRecognizer: SFSpeechRecognizer?
+    @ObservationIgnored private var recognitionTask: SFSpeechRecognitionTask?
+    @ObservationIgnored private let audioEngine = AVAudioEngine()
 
     // State & Debouncing
-    private var targetAngle: HeadshotAngle = .front
-    private var lastSpokenTime: Date = .distantPast
-    private let speechDebounceInterval: TimeInterval = 4.0
+    @ObservationIgnored private var targetAngle: HeadshotAngle = .front
+    @ObservationIgnored private var isDemoMode: Bool = false
+    @ObservationIgnored private var lastSpokenTime: Date = .distantPast
+    @ObservationIgnored private let speechDebounceInterval: TimeInterval = 4.0
     @ObservationIgnored private var pendingPhotoCompletion: ((UIImage?) -> Void)?
-    private var isAnalyzingFrame = false
-    private var countdownToken: UUID?
-    private var isCountdownInProgress = false
-    private var isCountdownSpeechActive = false
-    private var poseAnnouncementToken: UUID?
+    @ObservationIgnored private var countdownToken: UUID?
+    @ObservationIgnored private var isCountdownInProgress = false
+    @ObservationIgnored private var isCountdownSpeechActive = false
+    @ObservationIgnored private var countdownTask: Task<Void, Never>?
+    @ObservationIgnored private var shutterStatusClearTask: Task<Void, Never>?
+    @ObservationIgnored private var poseAnnouncementToken: UUID?
     @ObservationIgnored private lazy var voiceCommandController: LiveVoiceCommandController = { [weak self] in
         LiveVoiceCommandController(
             mode: .headshots,
@@ -128,7 +266,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         )
     }()
 
-    // Simulator test controls
+    // Simulator test controls (used only in Demo Mode)
     var simulatedCentered: Bool = true
     var simulatedLighting: LightingStatus = .good
     var simulatedYaw: Double = 0.0
@@ -137,67 +275,182 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
     override init() {
         super.init()
-        setupMotion()
         observeAudioSessionChanges()
+    }
+
+    deinit {
+        for observer in audioSessionObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    // MARK: - Pure Testable Guidance Evaluators
+
+    nonisolated static func isEyeLevelPitch(degrees: Double) -> Bool {
+        abs(abs(degrees) - 90.0) < 14.0
+    }
+
+    nonisolated static func evaluateYawAngle(
+        targetAngle: HeadshotAngle,
+        visionYawDegrees: Double?,
+        posePrediction: HeadshotPosePrediction?
+    ) -> AngleEvaluationResult {
+        switch targetAngle {
+        case .front:
+            if let yaw = visionYawDegrees {
+                return AngleEvaluationResult(isCorrect: abs(yaw) <= 18.0, resolvedYawDegrees: yaw)
+            }
+            if let prediction = posePrediction, prediction.pose == .front, prediction.confidence >= 0.45 {
+                return AngleEvaluationResult(isCorrect: true, resolvedYawDegrees: prediction.yawDegrees)
+            }
+            return AngleEvaluationResult(isCorrect: false, resolvedYawDegrees: posePrediction?.yawDegrees ?? 0.0)
+
+        case .left:
+            if let yaw = visionYawDegrees, yaw >= 28.0 && yaw <= 88.0 {
+                return AngleEvaluationResult(isCorrect: true, resolvedYawDegrees: yaw)
+            }
+            if let prediction = posePrediction, prediction.pose == .leftProfile, prediction.confidence >= 0.50 {
+                return AngleEvaluationResult(isCorrect: true, resolvedYawDegrees: prediction.yawDegrees)
+            }
+            return AngleEvaluationResult(
+                isCorrect: false,
+                resolvedYawDegrees: visionYawDegrees ?? posePrediction?.yawDegrees ?? 0.0
+            )
+
+        case .right:
+            if let yaw = visionYawDegrees, yaw <= -28.0 && yaw >= -88.0 {
+                return AngleEvaluationResult(isCorrect: true, resolvedYawDegrees: yaw)
+            }
+            if let prediction = posePrediction, prediction.pose == .rightProfile, prediction.confidence >= 0.50 {
+                return AngleEvaluationResult(isCorrect: true, resolvedYawDegrees: prediction.yawDegrees)
+            }
+            return AngleEvaluationResult(
+                isCorrect: false,
+                resolvedYawDegrees: visionYawDegrees ?? posePrediction?.yawDegrees ?? 0.0
+            )
+        }
+    }
+
+    nonisolated static func evaluateAngle(
+        _ targetAngle: HeadshotAngle,
+        visionYawDegrees: Double?,
+        posePrediction: HeadshotPosePrediction? = nil
+    ) -> AngleEvaluationResult {
+        evaluateYawAngle(
+            targetAngle: targetAngle,
+            visionYawDegrees: visionYawDegrees,
+            posePrediction: posePrediction
+        )
     }
 
     // MARK: - Motion Setup
 
-    private func setupMotion() {
-        guard motionManager.isDeviceMotionAvailable else { return }
+    private func startMotionUpdates() {
+        guard motionManager.isDeviceMotionAvailable, !motionManager.isDeviceMotionActive else { return }
         motionManager.deviceMotionUpdateInterval = 0.2
         motionManager.startDeviceMotionUpdates(to: .main) { [weak self] motion, _ in
-            guard let self = self, let motion = motion else { return }
+            guard let self, let motion else { return }
             let pitchDeg = motion.attitude.pitch * 180.0 / .pi
-            let isVertical = abs(abs(pitchDeg) - 90.0) < 14.0 || abs(pitchDeg) < 14.0
+            let isVertical = Self.isEyeLevelPitch(degrees: pitchDeg)
             self.feedback.pitchDegrees = pitchDeg
             self.feedback.isEyeLevel = isVertical
             self.cancelCountdownIfAlignmentLost()
         }
     }
 
+    private func stopMotionUpdates() {
+        if motionManager.isDeviceMotionActive {
+            motionManager.stopDeviceMotionUpdates()
+        }
+    }
+
     // MARK: - Session Lifecycle
 
-    func startSession(for angle: HeadshotAngle) {
+    func attachPreviewLayer(_ layer: AVCaptureVideoPreviewLayer) {
+        self.previewLayer = layer
+        applyPreviewLayerConfiguration(for: stateBox.cameraPosition)
+    }
+
+    private func applyPreviewLayerConfiguration(for position: AVCaptureDevice.Position) {
+        guard let conn = previewLayer?.connection else { return }
+        if conn.isVideoRotationAngleSupported(90) {
+            conn.videoRotationAngle = 90
+        }
+        if conn.isVideoMirroringSupported {
+            conn.automaticallyAdjustsVideoMirroring = false
+            conn.isVideoMirrored = (position == .front)
+        }
+    }
+
+    func startSession(for angle: HeadshotAngle, isDemoMode: Bool = false) {
         let needsInitialVoiceSetup = !isSessionRunning
         self.targetAngle = angle
+        self.isDemoMode = isDemoMode
+        self.stateBox.targetAngle = angle
+        self.stateBox.isDemoMode = isDemoMode
+
         self.poseAnnouncementToken = nil
-        self.isCapturing = false
+        self.countdownTask?.cancel()
+        self.countdownTask = nil
+        self.shutterStatusClearTask?.cancel()
+        self.shutterStatusClearTask = nil
+        self.shutterStatusMessage = nil
+        self.cameraErrorMessage = nil
+
+        self.setCapturingState(false)
         self.countdownRemaining = 0
         self.countdownToken = nil
-        self.isCountdownInProgress = false
+        self.setCountdownInProgressState(false)
         self.isCountdownSpeechActive = false
         self.pendingPhotoCompletion = nil
         self.feedback = GuidanceFeedback()
-        self.currentZoomFactor = 1.0
+
+        self.isSessionRunning = true
+        self.stateBox.isSessionRunning = true
+        self.startMotionUpdates()
 
         #if targetEnvironment(simulator)
-        configureSimulatorDefaults(for: angle)
-        if needsInitialVoiceSetup {
-            isSessionRunning = true
-            setupVoiceTrigger()
+        if isDemoMode {
+            configureSimulatorDefaults(for: angle)
+        } else {
+            feedback.isFaceCentered = false
+            feedback.isAngleCorrect = false
+            cameraErrorMessage = "Live camera is unavailable in the iOS Simulator. Enable Demo Mode in Profile or test on a physical device."
+        }
+        if needsInitialVoiceSetup, isVoiceAuthorizedInSystem {
+            setupVoiceTriggerIfAuthorized()
         }
         #else
-        isSessionRunning = true
         prepareCameraSession()
-        if needsInitialVoiceSetup {
-            setupVoiceTrigger()
+        if needsInitialVoiceSetup, isVoiceAuthorizedInSystem {
+            setupVoiceTriggerIfAuthorized()
         }
         #endif
     }
 
     func stopSession() {
         isSessionRunning = false
+        stateBox.isSessionRunning = false
+        stopMotionUpdates()
+
         #if !targetEnvironment(simulator)
-        captureSession?.stopRunning()
+        sessionQueue.async { [weak self] in
+            self?.sessionCaptureSession?.stopRunning()
+        }
         #endif
+
         stopVoiceTrigger()
         poseAnnouncementToken = nil
+        countdownTask?.cancel()
+        countdownTask = nil
+        shutterStatusClearTask?.cancel()
+        shutterStatusClearTask = nil
+        shutterStatusMessage = nil
         countdownToken = nil
-        isCountdownInProgress = false
+        setCountdownInProgressState(false)
         isCountdownSpeechActive = false
         pendingPhotoCompletion = nil
-        isCapturing = false
+        setCapturingState(false)
         countdownRemaining = 0
     }
 
@@ -215,48 +468,57 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         feedback.currentYawDegrees = simulatedYaw
     }
 
-    // MARK: - Zoom Stepping
-
-    func cycleZoom() {
-        guard !isCapturing else { return }
-        if currentZoomFactor < 1.4 {
-            setZoom(1.5)
-        } else if currentZoomFactor < 1.9 {
-            setZoom(2.0)
-        } else {
-            setZoom(1.0)
-        }
+    private func setCapturingState(_ capturing: Bool) {
+        isCapturing = capturing
+        stateBox.isCapturing = capturing
     }
+
+    private func setCountdownInProgressState(_ inProgress: Bool) {
+        isCountdownInProgress = inProgress
+        stateBox.isCountdownInProgress = inProgress
+    }
+
+    // MARK: - Camera Flip
 
     func flipCamera() {
-        guard !isCapturing, let session = captureSession else { return }
-        session.beginConfiguration()
-        guard let currentInput = session.inputs.first(where: { ($0 as? AVCaptureDeviceInput)?.device.hasMediaType(.video) == true }) as? AVCaptureDeviceInput else {
-            session.commitConfiguration()
-            return
-        }
-        session.removeInput(currentInput)
-        let newPosition: AVCaptureDevice.Position = (currentInput.device.position == .front) ? .back : .front
-        if let newDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: newPosition),
-           let newInput = try? AVCaptureDeviceInput(device: newDevice),
-           session.canAddInput(newInput) {
-            session.addInput(newInput)
-            self.videoDevice = newDevice
-        } else {
-            session.addInput(currentInput)
-        }
-        session.commitConfiguration()
-    }
+        guard !isCapturing else { return }
+        sessionQueue.async { [weak self] in
+            guard let self, let session = self.sessionCaptureSession else { return }
+            session.beginConfiguration()
+            guard let currentInput = session.inputs.first(where: {
+                ($0 as? AVCaptureDeviceInput)?.device.hasMediaType(.video) == true
+            }) as? AVCaptureDeviceInput else {
+                session.commitConfiguration()
+                return
+            }
 
-    private func setZoom(_ factor: CGFloat) {
-        currentZoomFactor = factor
-        guard let device = videoDevice else { return }
-        do {
-            try device.lockForConfiguration()
-            device.videoZoomFactor = max(1.0, min(factor, device.activeFormat.videoMaxZoomFactor))
-            device.unlockForConfiguration()
-        } catch {
-            print("Zoom lock error: \(error)")
+            session.removeInput(currentInput)
+            let newPosition: AVCaptureDevice.Position = (currentInput.device.position == .front) ? .back : .front
+            var activePosition = currentInput.device.position
+
+            if let newDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: newPosition),
+               let newInput = try? AVCaptureDeviceInput(device: newDevice),
+               session.canAddInput(newInput) {
+                session.addInput(newInput)
+                self.sessionVideoDevice = newDevice
+                activePosition = newPosition
+            } else {
+                session.addInput(currentInput)
+            }
+
+            self.stateBox.cameraPosition = activePosition
+            self.stateBox.isFrontCamera = (activePosition == .front)
+            self.configureVideoConnection(self.sessionVideoDataOutput?.connection(with: .video), position: activePosition)
+            self.configureVideoConnection(self.sessionPhotoOutput?.connection(with: .video), position: activePosition)
+            session.commitConfiguration()
+
+            let resolvedPosition = activePosition
+            let isFront = (resolvedPosition == .front)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.isFrontCamera = isFront
+                self.applyPreviewLayerConfiguration(for: resolvedPosition)
+            }
         }
     }
 
@@ -265,56 +527,106 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     func startCountdown(seconds: Int = 3, completion: @escaping (UIImage?) -> Void) {
         guard !isCapturing else { return }
 
-        // Do not begin a capture sequence from an already-invalid frame. Live analysis
-        // will keep providing the adjustment prompt until the subject is aligned.
         guard feedback.allChecksPassed else {
+            let reason = currentBlockingReason()
+            surfaceShutterStatus(reason)
             speakCurrentPoseGuidanceIfNeeded()
             return
         }
 
-        isCapturing = true
-        // Keep the visual counter hidden while a current guidance phrase finishes.
-        // The first visible tick is the first spoken number.
+        shutterStatusClearTask?.cancel()
+        shutterStatusClearTask = nil
+        shutterStatusMessage = nil
+
+        setCapturingState(true)
         countdownRemaining = 0
         pendingPhotoCompletion = completion
-        isCountdownInProgress = true
+        setCountdownInProgressState(true)
         isCountdownSpeechActive = false
 
         let token = UUID()
         countdownToken = token
 
-        speakCountdown(seconds: seconds, token: token)
+        countdownTask?.cancel()
+        countdownTask = Task { @MainActor [weak self] in
+            await self?.runCountdown(seconds: seconds, token: token)
+        }
     }
 
-    private func speakCountdown(seconds: Int, token: UUID) {
-        guard isCapturing, isCountdownInProgress, countdownToken == token else { return }
-
-        // A countdown must never cut off a coaching phrase. This applies to the
-        // first number and every subsequent tick.
-        guard !speechSynthesizer.isSpeaking else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                self?.speakCountdown(seconds: seconds, token: token)
+    private func currentBlockingReason() -> String {
+        if let cameraErrorMessage, !cameraErrorMessage.isEmpty {
+            return cameraErrorMessage
+        }
+        if !feedback.isFaceCentered {
+            return "Center your face in the guide oval first"
+        }
+        if !feedback.isAngleCorrect {
+            switch targetAngle {
+            case .front: return "Face the camera directly"
+            case .left: return "Turn slightly to your left"
+            case .right: return "Turn slightly to your right"
             }
-            return
+        }
+        if feedback.lighting != .good {
+            switch feedback.lighting {
+            case .tooDark: return "Lighting is too dark — add front light"
+            case .uneven: return "Balance lighting across your face"
+            case .tooBright: return "Lighting is too bright — reduce glare"
+            case .good: break
+            }
+        }
+        if !feedback.isEyeLevel {
+            return "Hold phone upright at eye level"
+        }
+        if feedback.background != .clean {
+            return "Use a plain, uncluttered background"
+        }
+        return "Align inside the guide oval"
+    }
+
+    private func surfaceShutterStatus(_ message: String) {
+        shutterStatusClearTask?.cancel()
+        shutterStatusMessage = message
+        shutterStatusClearTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled, let self else { return }
+            if self.shutterStatusMessage == message {
+                self.shutterStatusMessage = nil
+            }
+        }
+    }
+
+    private func runCountdown(seconds: Int, token: UUID) async {
+        // Wait briefly if a coaching phrase is already speaking, without stalling forever.
+        var waitedSteps = 0
+        while speechSynthesizer.isSpeaking && waitedSteps < 15 {
+            guard !Task.isCancelled, isCapturing, isCountdownInProgress, countdownToken == token else { return }
+            guard feedback.allChecksPassed else {
+                cancelCountdownAndResumePoseGuidance()
+                return
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            waitedSteps += 1
         }
 
-        guard feedback.allChecksPassed else {
-            cancelCountdownAndResumePoseGuidance()
-            return
+        if seconds > 0 {
+            for tick in stride(from: seconds, through: 1, by: -1) {
+                guard !Task.isCancelled, isCapturing, isCountdownInProgress, countdownToken == token else { return }
+                guard feedback.allChecksPassed else {
+                    cancelCountdownAndResumePoseGuidance()
+                    return
+                }
+
+                countdownRemaining = tick
+                isCountdownSpeechActive = true
+                speak("\(tick)", forceSpeak: true)
+
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
         }
 
-        guard seconds > 0 else {
-            capturePhotoNow(token: token)
-            return
-        }
-
-        countdownRemaining = seconds
-        isCountdownSpeechActive = true
-        speak("\(seconds)", forceSpeak: true)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.speakCountdown(seconds: seconds - 1, token: token)
-        }
+        guard !Task.isCancelled, isCapturing, isCountdownInProgress, countdownToken == token else { return }
+        capturePhotoNow(token: token)
     }
 
     private func capturePhotoNow(token: UUID) {
@@ -324,36 +636,56 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
             return
         }
 
-        // The countdown has reached zero. Cancel every pending countdown tick
-        // before handing control to the still-in-progress photo capture.
-        isCountdownInProgress = false
+        setCountdownInProgressState(false)
         isCountdownSpeechActive = false
         countdownRemaining = 0
         countdownToken = nil
 
         #if targetEnvironment(simulator)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self = self, self.isCapturing else { return }
-            let simulatedPhoto = self.generateSimulatedHeadshot(angle: self.targetAngle)
+        guard isDemoMode else {
+            cameraErrorMessage = "Camera capture is unavailable in Simulator without Demo Mode."
+            completePhotoCapture(with: nil)
+            return
+        }
+        let angle = targetAngle
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard let self, self.isCapturing else { return }
+            let simulatedPhoto = DemoMediaGenerator.renderHeadshotImage(angle: angle.rawValue)
             self.completePhotoCapture(with: simulatedPhoto)
         }
         #else
-        guard let photoOutput = self.photoOutput else {
-            let fallback = generateSimulatedHeadshot(angle: targetAngle)
-            completePhotoCapture(with: fallback)
-            return
-        }
+        let angle = targetAngle
+        let demoMode = isDemoMode
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            guard let photoOutput = self.sessionPhotoOutput else {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if demoMode {
+                        let fallback = DemoMediaGenerator.renderHeadshotImage(angle: angle.rawValue)
+                        self.completePhotoCapture(with: fallback)
+                    } else {
+                        self.cameraErrorMessage = "Camera is unavailable. Please check permissions or use Photo Import."
+                        self.completePhotoCapture(with: nil)
+                    }
+                }
+                return
+            }
 
-        let settings = AVCapturePhotoSettings()
-        photoOutput.capturePhoto(with: settings, delegate: self)
+            let settings = AVCapturePhotoSettings()
+            photoOutput.capturePhoto(with: settings, delegate: self)
+        }
         #endif
     }
 
     private func completePhotoCapture(with image: UIImage?) {
-        isCapturing = false
+        setCapturingState(false)
         countdownRemaining = 0
         countdownToken = nil
-        isCountdownInProgress = false
+        countdownTask?.cancel()
+        countdownTask = nil
+        setCountdownInProgressState(false)
         isCountdownSpeechActive = false
 
         let completion = pendingPhotoCompletion
@@ -368,81 +700,144 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     private func prepareCameraSession() {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
+            cameraPermissionDenied = false
             setupCameraSession()
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
-                guard granted else { return }
-                DispatchQueue.main.async {
-                    guard let self, self.isSessionRunning else { return }
-                    self.setupCameraSession()
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.cameraPermissionDenied = !granted
+                    if granted {
+                        self.cameraErrorMessage = nil
+                        if self.isSessionRunning {
+                            self.setupCameraSession()
+                        }
+                    } else {
+                        self.cameraErrorMessage = "Camera access is denied. Enable camera access in Settings to capture headshots."
+                    }
                 }
             }
         case .denied, .restricted:
-            break
+            cameraPermissionDenied = true
+            cameraErrorMessage = "Camera access is denied. Enable camera access in Settings to capture headshots."
         @unknown default:
-            break
+            cameraPermissionDenied = true
+            cameraErrorMessage = "Camera access is unavailable."
         }
     }
 
     private func setupCameraSession() {
-        if let existing = captureSession {
-            if !existing.isRunning {
-                DispatchQueue.global(qos: .userInitiated).async {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+
+            if let existing = self.sessionCaptureSession {
+                if !existing.isRunning, self.stateBox.isSessionRunning {
                     existing.startRunning()
                 }
+                let position = self.stateBox.cameraPosition
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if self.captureSession !== existing {
+                        self.captureSession = existing
+                    }
+                    self.isFrontCamera = (position == .front)
+                    self.applyPreviewLayerConfiguration(for: position)
+                }
+                return
             }
-            return
+
+            let session = AVCaptureSession()
+            session.beginConfiguration()
+            session.sessionPreset = .photo
+            session.automaticallyConfiguresApplicationAudioSession = false
+
+            guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
+                ?? AVCaptureDevice.default(for: .video) else {
+                session.commitConfiguration()
+                Task { @MainActor [weak self] in
+                    self?.cameraErrorMessage = "No camera device available."
+                }
+                return
+            }
+
+            let initialPosition: AVCaptureDevice.Position = (camera.position == .back) ? .back : .front
+            self.sessionVideoDevice = camera
+            self.stateBox.cameraPosition = initialPosition
+            self.stateBox.isFrontCamera = (initialPosition == .front)
+
+            do {
+                let input = try AVCaptureDeviceInput(device: camera)
+                if session.canAddInput(input) {
+                    session.addInput(input)
+                }
+
+                let photo = AVCapturePhotoOutput()
+                if session.canAddOutput(photo) {
+                    session.addOutput(photo)
+                    self.sessionPhotoOutput = photo
+                    self.configureVideoConnection(photo.connection(with: .video), position: initialPosition)
+                }
+
+                let videoOutput = AVCaptureVideoDataOutput()
+                videoOutput.alwaysDiscardsLateVideoFrames = true
+                videoOutput.videoSettings = [
+                    kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
+                ]
+                videoOutput.setSampleBufferDelegate(self, queue: self.visionQueue)
+                if session.canAddOutput(videoOutput) {
+                    session.addOutput(videoOutput)
+                    self.sessionVideoDataOutput = videoOutput
+                    self.configureVideoConnection(videoOutput.connection(with: .video), position: initialPosition)
+                }
+
+                session.commitConfiguration()
+                self.sessionCaptureSession = session
+
+                if self.stateBox.isSessionRunning {
+                    session.startRunning()
+                }
+
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.captureSession = session
+                    self.isFrontCamera = (initialPosition == .front)
+                    self.applyPreviewLayerConfiguration(for: initialPosition)
+                }
+            } catch {
+                session.commitConfiguration()
+                Task { @MainActor [weak self] in
+                    self?.cameraErrorMessage = "Camera setup failed: \(error.localizedDescription)"
+                }
+            }
         }
+    }
 
-        let session = AVCaptureSession()
-        session.sessionPreset = .photo
-        session.automaticallyConfiguresApplicationAudioSession = false
-
-        guard let frontCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else {
-            return
+    nonisolated private func configureVideoConnection(_ connection: AVCaptureConnection?, position: AVCaptureDevice.Position) {
+        guard let connection else { return }
+        if connection.isVideoRotationAngleSupported(90) {
+            connection.videoRotationAngle = 90
         }
-        self.videoDevice = frontCamera
-
-        do {
-            let input = try AVCaptureDeviceInput(device: frontCamera)
-            if session.canAddInput(input) {
-                session.addInput(input)
-            }
-
-            let photo = AVCapturePhotoOutput()
-            if session.canAddOutput(photo) {
-                session.addOutput(photo)
-                self.photoOutput = photo
-            }
-
-            let videoOutput = AVCaptureVideoDataOutput()
-            videoOutput.alwaysDiscardsLateVideoFrames = true
-            videoOutput.setSampleBufferDelegate(self, queue: DispatchQueue(label: "com.onetake.vision.queue"))
-            if session.canAddOutput(videoOutput) {
-                session.addOutput(videoOutput)
-                self.videoDataOutput = videoOutput
-            }
-
-            self.captureSession = session
-            DispatchQueue.global(qos: .userInitiated).async {
-                session.startRunning()
-            }
-        } catch {
-            print("Camera configuration failed: \(error)")
+        if connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = (position == .front)
         }
     }
 
     // MARK: - Permission-Gated Voice Trigger Setup (SFSpeechRecognizer)
 
-    private func requestMicrophonePermission(_ completion: @escaping (Bool) -> Void) {
-        if #available(iOS 17.0, *) {
-            AVAudioApplication.requestRecordPermission { granted in
-                DispatchQueue.main.async { completion(granted) }
-            }
-        } else {
-            AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                DispatchQueue.main.async { completion(granted) }
-            }
+    private var isVoiceAuthorizedInSystem: Bool {
+        AVAudioApplication.shared.recordPermission == .granted &&
+        SFSpeechRecognizer.authorizationStatus() == .authorized
+    }
+
+    /// Explicit opt-in entry point when the user chooses to enable voice commands.
+    func enableVoiceTriggers() {
+        voiceStatus = .starting
+        VoiceAuthorizationService.shared.requestAccess { [weak self] authorized in
+            guard let self, self.isSessionRunning else { return }
+            guard authorized else { self.voiceStatus = .failed; return }
+            guard self.configureGuidanceAudioSession() else { self.voiceStatus = .failed; return }
+            self.startVoiceListening()
         }
     }
 
@@ -450,10 +845,11 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         VoiceAudioSessionCoordinator.shared.activate()
     }
 
-    private func setupVoiceTrigger() {
+    private func setupVoiceTriggerIfAuthorized() {
+        guard isVoiceAuthorizedInSystem else { return }
         voiceStatus = .starting
         VoiceAuthorizationService.shared.requestAccess { [weak self] authorized in
-            guard let self = self, self.isSessionRunning else { return }
+            guard let self, self.isSessionRunning else { return }
             guard authorized else { self.voiceStatus = .failed; return }
             guard self.configureGuidanceAudioSession() else { self.voiceStatus = .failed; return }
             self.startVoiceListening()
@@ -467,35 +863,32 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         speechRecognizer?.delegate = self
         guard let speechRecognizer, speechRecognizer.isAvailable else { voiceStatus = .unavailable; return }
 
-        // The audio session must be active before inputNode/tap access.
         guard configureGuidanceAudioSession() else { voiceStatus = .failed; return }
         let inputNode = audioEngine.inputNode
         let inputFormat = inputNode.inputFormat(forBus: 0)
         let outputFormat = inputNode.outputFormat(forBus: 0)
-            guard let tapFormat = [inputFormat, outputFormat].first(where: { $0.sampleRate > 0 && $0.channelCount > 0 }) else {
-                print("Invalid audio input formats in HeadshotGuidanceService")
+        guard let tapFormat = [inputFormat, outputFormat].first(where: { $0.sampleRate > 0 && $0.channelCount > 0 }) else {
+            voiceStatus = .failed
+            return
+        }
+
+        if !stateBox.isAudioTapInstalled {
+            inputNode.removeTap(onBus: 0)
+            let box = stateBox
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: tapFormat) { readOnlyBuffer, _ in
+                box.recognitionRequest?.append(readOnlyBuffer)
+            }
+            stateBox.isAudioTapInstalled = true
+        }
+
+        if !audioEngine.isRunning {
+            do {
+                try audioEngine.start()
+            } catch {
                 voiceStatus = .failed
                 return
             }
-
-            if !isAudioTapInstalled {
-                inputNode.removeTap(onBus: 0)
-                inputNode.installTap(onBus: 0, bufferSize: 1024, format: tapFormat) { [weak self] readOnlyBuffer, _ in
-                    guard let self = self else { return }
-                    self.recognitionRequest?.append(readOnlyBuffer)
-                }
-                isAudioTapInstalled = true
-            }
-
-            if !audioEngine.isRunning {
-                do {
-                    try audioEngine.start()
-                } catch {
-                    print("Failed to start audioEngine in HeadshotGuidanceService: \(error)")
-                    voiceStatus = .failed
-                    return
-                }
-            }
+        }
 
         guard isSessionRunning else { return }
         startRecognitionTask()
@@ -512,10 +905,8 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         taskRestartTimer?.invalidate()
         taskRestartTimer = nil
 
-        // Ignore the asynchronous cancellation callback from the task we are
-        // deliberately replacing; otherwise it can schedule a second restart.
-        activeRecognitionTaskID = nil
-        recognitionRequest?.endAudio()
+        stateBox.activeRecognitionTaskID = nil
+        stateBox.recognitionRequest?.endAudio()
         recognitionTask?.cancel()
         recognitionTask = nil
 
@@ -523,33 +914,30 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         request.shouldReportPartialResults = true
         request.taskHint = .dictation
         request.requiresOnDeviceRecognition = false
-        self.recognitionRequest = request
+        stateBox.recognitionRequest = request
         let taskID = UUID()
-        activeRecognitionTaskID = taskID
+        stateBox.activeRecognitionTaskID = taskID
 
         self.recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
-            guard let self = self,
-                  self.isSessionRunning,
-                  self.activeRecognitionTaskID == taskID else { return }
+            guard let self else { return }
+            let resultTranscript = result?.bestTranscription.formattedString
+            let isFinal = result?.isFinal ?? false
+            let hasError = (error != nil)
 
-            if let result = result {
-                let transcript = result.bestTranscription.formattedString
-                let isFinal = result.isFinal
+            Task { @MainActor [weak self] in
+                guard let self,
+                      self.isSessionRunning,
+                      self.stateBox.activeRecognitionTaskID == taskID else { return }
 
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
+                if let transcript = resultTranscript {
                     self.handleRecognizedTranscript(transcript, isFinal: isFinal)
+                    if isFinal {
+                        self.restartRecognitionTaskSeamlessly()
+                    }
                 }
-
-                if isFinal {
+                if hasError {
                     self.restartRecognitionTaskSeamlessly()
                 }
-            }
-
-            if error != nil {
-                // Keep the indicator steady while the next short recognition
-                // request replaces this completed one.
-                self.restartRecognitionTaskSeamlessly()
             }
         }
 
@@ -557,21 +945,25 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         voiceStatus = .listening
 
         taskRestartTimer = Timer.scheduledTimer(withTimeInterval: 50.0, repeats: false) { [weak self] _ in
-            guard let self = self, self.isSessionRunning else { return }
-            self.restartRecognitionTaskSeamlessly()
+            Task { @MainActor [weak self] in
+                guard let self, self.isSessionRunning else { return }
+                self.restartRecognitionTaskSeamlessly()
+            }
         }
     }
 
     private func restartRecognitionTaskSeamlessly() {
-        guard isSessionRunning, !isRestartingRecognition else { return }
-        isRestartingRecognition = true
+        guard isSessionRunning, !stateBox.isRestartingRecognition else { return }
+        stateBox.isRestartingRecognition = true
 
         taskRestartTimer?.invalidate()
         taskRestartTimer = nil
+        recognitionRestartWorkItem?.cancel()
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self = self, self.isSessionRunning else { return }
-            self.isRestartingRecognition = false
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.stateBox.isRestartingRecognition = false
+            guard self.isSessionRunning else { return }
             guard self.configureGuidanceAudioSession() else { self.voiceStatus = .failed; return }
             if !self.audioEngine.isRunning {
                 do { try self.audioEngine.start() }
@@ -579,6 +971,8 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
             }
             self.startRecognitionTask()
         }
+        recognitionRestartWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 
     // MARK: - Single Transcript Entry Point
@@ -643,8 +1037,8 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
     /// Resets completed capture state, then announces the next pose without
     /// interrupting the last countdown utterance.
-    func transitionToNextPose(_ angle: HeadshotAngle) {
-        startSession(for: angle)
+    func transitionToNextPose(_ angle: HeadshotAngle, isDemoMode: Bool? = nil) {
+        startSession(for: angle, isDemoMode: isDemoMode ?? self.isDemoMode)
         announceAngle(angle, notBefore: Date().addingTimeInterval(0.4))
     }
 
@@ -684,57 +1078,78 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         voiceStatus = .idle
         taskRestartTimer?.invalidate()
         taskRestartTimer = nil
+        recognitionRestartWorkItem?.cancel()
+        recognitionRestartWorkItem = nil
+        stateBox.isRestartingRecognition = false
 
-        recognitionRequest?.endAudio()
-        activeRecognitionTaskID = nil
+        stateBox.recognitionRequest?.endAudio()
+        stateBox.activeRecognitionTaskID = nil
         recognitionTask?.cancel()
         recognitionTask = nil
-        recognitionRequest = nil
+        stateBox.recognitionRequest = nil
 
-        if isAudioTapInstalled {
+        if stateBox.isAudioTapInstalled {
             audioEngine.inputNode.removeTap(onBus: 0)
-            isAudioTapInstalled = false
+            stateBox.isAudioTapInstalled = false
         }
         if audioEngine.isRunning {
             audioEngine.stop()
         }
-
     }
 
     private func observeAudioSessionChanges() {
         let center = NotificationCenter.default
         audioSessionObservers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
-            guard let self, self.isSessionRunning else { return }
-            let type = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init(rawValue:))
-            if type == .began { self.isVoiceListening = false; self.voiceStatus = .interrupted }
-            else { self.restartRecognitionTaskSeamlessly() }
+            let typeRaw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            Task { @MainActor [weak self] in
+                guard let self, self.isSessionRunning else { return }
+                let type = typeRaw.flatMap(AVAudioSession.InterruptionType.init(rawValue:))
+                if type == .began {
+                    self.isVoiceListening = false
+                    self.voiceStatus = .interrupted
+                } else if self.isVoiceAuthorizedInSystem {
+                    self.restartRecognitionTaskSeamlessly()
+                }
+            }
         })
         audioSessionObservers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.restartRecognitionTaskSeamlessly()
+            Task { @MainActor [weak self] in
+                guard let self, self.isSessionRunning, self.isVoiceAuthorizedInSystem else { return }
+                self.restartRecognitionTaskSeamlessly()
+            }
         })
         audioSessionObservers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
-            guard let self else { return }
-            self.isAudioTapInstalled = false
-            self.audioEngine.reset()
-            self.isVoiceListening = false
-            self.restartVoicePipeline()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.stateBox.isAudioTapInstalled = false
+                self.audioEngine.reset()
+                self.isVoiceListening = false
+                self.restartVoicePipeline()
+            }
         })
     }
 
     private func restartVoicePipeline() {
         guard isSessionRunning else { return }
-        isRestartingRecognition = false
+        stateBox.isRestartingRecognition = false
         stopVoiceTrigger()
-        if isSessionRunning { voiceStatus = .starting; startVoiceListening() }
+        if isSessionRunning, isVoiceAuthorizedInSystem {
+            voiceStatus = .starting
+            startVoiceListening()
+        }
     }
 
-    func speechRecognizer(_ speechRecognizer: SFSpeechRecognizer, availabilityDidChange available: Bool) {
-        guard isSessionRunning else { return }
-        if available {
-            if !isVoiceListening { restartRecognitionTaskSeamlessly() }
-        } else {
-            isVoiceListening = false
-            voiceStatus = .unavailable
+    nonisolated func speechRecognizer(_ speechRecognizer: SFSpeechRecognizer, availabilityDidChange available: Bool) {
+        Task { @MainActor [weak self] in
+            guard let self, self.isSessionRunning else { return }
+            if available {
+                if !self.isVoiceListening, self.isVoiceAuthorizedInSystem {
+                    self.restartRecognitionTaskSeamlessly()
+                }
+            } else {
+                self.isVoiceListening = false
+                self.voiceStatus = .unavailable
+            }
         }
     }
 
@@ -770,17 +1185,16 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         guard isCountdownInProgress else { return }
 
         let wasSpeakingCountdown = isCountdownSpeechActive
+        countdownTask?.cancel()
+        countdownTask = nil
         countdownToken = nil
-        isCountdownInProgress = false
+        setCountdownInProgressState(false)
         isCountdownSpeechActive = false
-        isCapturing = false
+        setCapturingState(false)
         countdownRemaining = 0
         pendingPhotoCompletion = nil
         lastSpokenTime = .distantPast
 
-        // If a countdown number is currently audible, remove it before returning
-        // to a pose prompt. If this was still waiting for the prior coaching phrase,
-        // the helper below waits for that phrase instead of interrupting it.
         if wasSpeakingCountdown {
             speechSynthesizer.stopSpeaking(at: .immediate)
         }
@@ -813,113 +1227,384 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         }
     }
 
-    // MARK: - Single Image Evaluation
+    // MARK: - Single Image Evaluation (Off Main Thread)
 
     func evaluateImage(_ image: UIImage, for angle: HeadshotAngle) async -> GuidanceFeedback {
-        guard let cgImage = image.cgImage else { return feedback }
+        guard let cgImage = image.cgImage else { return GuidanceFeedback() }
+        let orientation = cgImagePropertyOrientation(for: image.imageOrientation)
 
-        return await withCheckedContinuation { continuation in
-            let faceRequest = VNDetectFaceLandmarksRequest { [weak self] request, _ in
-                guard let self = self else {
-                    continuation.resume(returning: GuidanceFeedback())
-                    return
-                }
-                guard let results = request.results as? [VNFaceObservation], let face = results.first else {
-                    var fb = GuidanceFeedback()
-                    fb.isFaceCentered = false
-                    fb.spokenAdvice = "Face not detected. Center yourself in the frame."
-                    continuation.resume(returning: fb)
-                    return
-                }
+        return await Task.detached(priority: .userInitiated) {
+            let faceRequest = VNDetectFaceRectanglesRequest()
+            let segRequest = VNGeneratePersonSegmentationRequest()
+            segRequest.qualityLevel = .fast
 
-                var fb = GuidanceFeedback()
+            let handler = VNImageRequestHandler(cgImage: cgImage, orientation: orientation, options: [:])
+            try? handler.perform([faceRequest, segRequest])
+
+            let face = (faceRequest.results ?? []).max(by: {
+                ($0.boundingBox.width * $0.boundingBox.height) < ($1.boundingBox.width * $1.boundingBox.height)
+            })
+            let posePrediction = HeadshotPosePredictor.shared.predict(cgImage: cgImage, orientation: orientation)
+
+            var fb = GuidanceFeedback()
+
+            if let face {
                 let box = face.boundingBox
-                let midX = box.midX
-                let midY = box.midY
-
-                fb.isFaceCentered = (midX >= 0.35 && midX <= 0.65) && (midY >= 0.30 && midY <= 0.70)
-
-                let yawRad = face.yaw?.doubleValue ?? 0.0
-                let yawDeg = yawRad * 180.0 / .pi
-                fb.currentYawDegrees = yawDeg
-
-                switch angle {
-                case .front:
-                    fb.isAngleCorrect = abs(yawDeg) <= 18.0
-                    if !fb.isAngleCorrect { fb.spokenAdvice = "Look directly at the camera." }
-                case .left:
-                    fb.isAngleCorrect = yawDeg >= 30.0 && yawDeg <= 85.0
-                    if !fb.isAngleCorrect { fb.spokenAdvice = "Turn your face to the left." }
-                case .right:
-                    fb.isAngleCorrect = yawDeg <= -30.0 && yawDeg >= -85.0
-                    if !fb.isAngleCorrect { fb.spokenAdvice = "Turn your face to the right." }
-                }
-
-                fb.lighting = self.evaluateLuminance(of: cgImage)
-                if fb.lighting == .tooDark {
-                    fb.spokenAdvice = "Face is too dark. Add key light in front of you."
-                } else if fb.lighting == .uneven {
-                    fb.spokenAdvice = "Lighting is uneven. Balance the light across your face."
-                }
-
-                continuation.resume(returning: fb)
+                fb.isFaceCentered = (box.midX >= 0.35 && box.midX <= 0.65) && (box.midY >= 0.30 && box.midY <= 0.70)
+            } else {
+                fb.isFaceCentered = false
             }
 
-            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-            try? handler.perform([faceRequest])
-        }
+            let visionYawDeg = face?.yaw.map { $0.doubleValue * 180.0 / .pi }
+            let angleEval = Self.evaluateYawAngle(
+                targetAngle: angle,
+                visionYawDegrees: visionYawDeg,
+                posePrediction: posePrediction
+            )
+            fb.isAngleCorrect = angleEval.isCorrect
+            fb.currentYawDegrees = angleEval.resolvedYawDegrees
+
+            fb.lighting = Self.evaluateCGImageLuminance(
+                cgImage,
+                orientation: orientation,
+                faceBoundingBox: face?.boundingBox
+            )
+
+            if let segObs = segRequest.results?.first as? VNPixelBufferObservation {
+                fb.background = Self.evaluateBackgroundClutter(
+                    maskBuffer: segObs.pixelBuffer,
+                    cgImage: cgImage,
+                    orientation: orientation
+                ) ? .clean : .cluttered
+            } else {
+                fb.background = .clean
+            }
+
+            if !fb.isFaceCentered {
+                fb.spokenAdvice = "Face not detected or off-center. Center yourself in the frame."
+            } else if !fb.isAngleCorrect {
+                switch angle {
+                case .front: fb.spokenAdvice = "Look directly at the camera."
+                case .left: fb.spokenAdvice = "Turn your face to the left."
+                case .right: fb.spokenAdvice = "Turn your face to the right."
+                }
+            } else if fb.lighting == .tooDark {
+                fb.spokenAdvice = "Face is too dark. Add key light in front of you."
+            } else if fb.lighting == .uneven {
+                fb.spokenAdvice = "Lighting is uneven. Balance the light across your face."
+            } else if fb.lighting == .tooBright {
+                fb.spokenAdvice = "Lighting is too bright. Reduce glare."
+            } else if fb.background == .cluttered {
+                fb.spokenAdvice = "Background looks busy. Try a plain wall behind you."
+            }
+
+            return fb
+        }.value
     }
 
-    private func evaluateLuminance(of cgImage: CGImage) -> LightingStatus {
-        guard let dataProvider = cgImage.dataProvider,
-              let data = dataProvider.data,
-              let ptr = CFDataGetBytePtr(data) else {
+    // MARK: - Safe Luminance & Background Evaluators
+
+    nonisolated static func evaluateCGImageLuminance(
+        _ cgImage: CGImage,
+        orientation: CGImagePropertyOrientation = .up,
+        faceBoundingBox: CGRect? = nil
+    ) -> LightingStatus {
+        let sampleSize = 120
+        let ciImage = CIImage(cgImage: cgImage).oriented(orientation)
+        let extent = ciImage.extent
+        guard extent.width > 0, extent.height > 0 else { return .good }
+
+        let bytesPerRow = sampleSize * 4
+        var rgba = [UInt8](repeating: 0, count: sampleSize * bytesPerRow)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+
+        guard let ctx = CGContext(
+            data: &rgba,
+            width: sampleSize,
+            height: sampleSize,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        ) else {
             return .good
         }
 
-        let width = cgImage.width
-        let height = cgImage.height
-        let bytesPerPixel = cgImage.bitsPerPixel / 8
-        let bytesPerRow = cgImage.bytesPerRow
+        let ciContext = CIContext(options: [.useSoftwareRenderer: true])
+        guard let rendered = ciContext.createCGImage(ciImage, from: extent) else { return .good }
+        ctx.draw(rendered, in: CGRect(x: 0, y: 0, width: sampleSize, height: sampleSize))
+
+        let region = clampedPixelRegion(for: faceBoundingBox, width: sampleSize, height: sampleSize)
+        return computeLightingStatus(
+            width: sampleSize,
+            height: sampleSize,
+            region: region
+        ) { x, y in
+            let offset = y * bytesPerRow + x * 4
+            let r = Double(rgba[offset]) / 255.0
+            let g = Double(rgba[offset + 1]) / 255.0
+            let b = Double(rgba[offset + 2]) / 255.0
+            return 0.299 * r + 0.587 * g + 0.114 * b
+        }
+    }
+
+    nonisolated static func evaluatePixelBufferLuminance(
+        _ pixelBuffer: CVPixelBuffer,
+        faceBoundingBox: CGRect? = nil
+    ) -> LightingStatus {
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        let planeCount = CVPixelBufferGetPlaneCount(pixelBuffer)
+        let pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
+
+        if planeCount > 0 {
+            guard pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ||
+                  pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+                  pixelFormat == kCVPixelFormatType_420YpCbCr8Planar,
+                  let yBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) else {
+                return .good
+            }
+            let width = CVPixelBufferGetWidthOfPlane(pixelBuffer, 0)
+            let height = CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
+            let bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+            guard width > 0, height > 0, bytesPerRow >= width else { return .good }
+
+            let ptr = yBase.assumingMemoryBound(to: UInt8.self)
+            let region = clampedPixelRegion(for: faceBoundingBox, width: width, height: height)
+            return computeLightingStatus(width: width, height: height, region: region) { x, y in
+                Double(ptr[y * bytesPerRow + x]) / 255.0
+            }
+        } else {
+            guard pixelFormat == kCVPixelFormatType_32BGRA,
+                  let base = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+                return .good
+            }
+            let width = CVPixelBufferGetWidth(pixelBuffer)
+            let height = CVPixelBufferGetHeight(pixelBuffer)
+            let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+            guard width > 0, height > 0, bytesPerRow >= width * 4 else { return .good }
+
+            let ptr = base.assumingMemoryBound(to: UInt8.self)
+            let region = clampedPixelRegion(for: faceBoundingBox, width: width, height: height)
+            return computeLightingStatus(width: width, height: height, region: region) { x, y in
+                let offset = y * bytesPerRow + x * 4
+                let b = Double(ptr[offset]) / 255.0
+                let g = Double(ptr[offset + 1]) / 255.0
+                let r = Double(ptr[offset + 2]) / 255.0
+                return 0.299 * r + 0.587 * g + 0.114 * b
+            }
+        }
+    }
+
+    nonisolated private static func clampedPixelRegion(
+        for faceBoundingBox: CGRect?,
+        width: Int,
+        height: Int
+    ) -> (minX: Int, maxX: Int, minY: Int, maxY: Int) {
+        guard let box = faceBoundingBox, box.width > 0.05, box.height > 0.05 else {
+            return (0, width, 0, height)
+        }
+        // Vision boundingBox uses normalized bottom-left origin; pixel buffers use top-left origin.
+        let rawMinX = Int(floor(box.minX * CGFloat(width)))
+        let rawMaxX = Int(ceil(box.maxX * CGFloat(width)))
+        let rawMinY = Int(floor((1.0 - box.maxY) * CGFloat(height)))
+        let rawMaxY = Int(ceil((1.0 - box.minY) * CGFloat(height)))
+
+        let minX = max(0, min(width - 1, rawMinX))
+        let maxX = max(minX + 1, min(width, rawMaxX))
+        let minY = max(0, min(height - 1, rawMinY))
+        let maxY = max(minY + 1, min(height, rawMaxY))
+
+        if (maxX - minX) < 12 || (maxY - minY) < 12 {
+            return (0, width, 0, height)
+        }
+        return (minX, maxX, minY, maxY)
+    }
+
+    nonisolated private static func computeLightingStatus(
+        width: Int,
+        height: Int,
+        region: (minX: Int, maxX: Int, minY: Int, maxY: Int),
+        luminanceAt: (_ x: Int, _ y: Int) -> Double
+    ) -> LightingStatus {
+        let regionWidth = region.maxX - region.minX
+        let step = max(1, regionWidth / 24)
+        let midX = (region.minX + region.maxX) / 2
 
         var totalLum: Double = 0
         var leftLum: Double = 0
         var rightLum: Double = 0
-        var sampledCount = 0
-        var leftCount = 0
-        var rightCount = 0
+        var sampled = 0
+        var leftSampled = 0
+        var rightSampled = 0
 
-        let step = max(1, width / 40)
-        for y in stride(from: 0, to: height, by: step) {
-            for x in stride(from: 0, to: width, by: step) {
-                let offset = y * bytesPerRow + x * bytesPerPixel
-                let r = Double(ptr[offset]) / 255.0
-                let g = Double(ptr[offset + 1]) / 255.0
-                let b = Double(ptr[offset + 2]) / 255.0
-                let lum = 0.299 * r + 0.587 * g + 0.114 * b
-
+        for y in stride(from: region.minY, to: region.maxY, by: step) {
+            for x in stride(from: region.minX, to: region.maxX, by: step) {
+                let lum = luminanceAt(x, y)
                 totalLum += lum
-                sampledCount += 1
-
-                if x < width / 2 {
+                sampled += 1
+                if x < midX {
                     leftLum += lum
-                    leftCount += 1
+                    leftSampled += 1
                 } else {
                     rightLum += lum
-                    rightCount += 1
+                    rightSampled += 1
                 }
             }
         }
 
-        guard sampledCount > 0 else { return .good }
-        let avgLum = totalLum / Double(sampledCount)
-        let avgLeft = leftCount > 0 ? leftLum / Double(leftCount) : avgLum
-        let avgRight = rightCount > 0 ? rightLum / Double(rightCount) : avgLum
+        guard sampled > 0 else { return .good }
+        let avg = totalLum / Double(sampled)
+        let avgLeft = leftSampled > 0 ? leftLum / Double(leftSampled) : avg
+        let avgRight = rightSampled > 0 ? rightLum / Double(rightSampled) : avg
 
-        if avgLum < 0.22 { return .tooDark }
-        if avgLum > 0.85 { return .tooBright }
-        if abs(avgLeft - avgRight) > 0.32 { return .uneven }
+        if avg < 0.22 { return .tooDark }
+        if avg > 0.85 { return .tooBright }
+        if abs(avgLeft - avgRight) > unevenLightingThreshold { return .uneven }
         return .good
+    }
+
+    nonisolated static func evaluateBackgroundClutter(
+        maskBuffer: CVPixelBuffer,
+        frameBuffer: CVPixelBuffer
+    ) -> Bool {
+        CVPixelBufferLockBaseAddress(maskBuffer, .readOnly)
+        CVPixelBufferLockBaseAddress(frameBuffer, .readOnly)
+        defer {
+            CVPixelBufferUnlockBaseAddress(maskBuffer, .readOnly)
+            CVPixelBufferUnlockBaseAddress(frameBuffer, .readOnly)
+        }
+
+        guard let maskBase = CVPixelBufferGetBaseAddress(maskBuffer) else { return true }
+        let maskWidth = CVPixelBufferGetWidth(maskBuffer)
+        let maskHeight = CVPixelBufferGetHeight(maskBuffer)
+        let maskBytesPerRow = CVPixelBufferGetBytesPerRow(maskBuffer)
+        guard maskWidth > 0, maskHeight > 0, maskBytesPerRow >= maskWidth else { return true }
+        let maskPtr = maskBase.assumingMemoryBound(to: UInt8.self)
+
+        let planeCount = CVPixelBufferGetPlaneCount(frameBuffer)
+        let pixelFormat = CVPixelBufferGetPixelFormatType(frameBuffer)
+        let isPlanar = planeCount > 0
+
+        let frameWidth: Int
+        let frameHeight: Int
+        let frameBytesPerRow: Int
+        let framePtr: UnsafePointer<UInt8>
+
+        if isPlanar {
+            guard pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ||
+                  pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+                  pixelFormat == kCVPixelFormatType_420YpCbCr8Planar,
+                  let base = CVPixelBufferGetBaseAddressOfPlane(frameBuffer, 0) else {
+                return true
+            }
+            frameWidth = CVPixelBufferGetWidthOfPlane(frameBuffer, 0)
+            frameHeight = CVPixelBufferGetHeightOfPlane(frameBuffer, 0)
+            frameBytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(frameBuffer, 0)
+            guard frameWidth > 0, frameHeight > 0, frameBytesPerRow >= frameWidth else { return true }
+            framePtr = UnsafePointer(base.assumingMemoryBound(to: UInt8.self))
+        } else {
+            guard pixelFormat == kCVPixelFormatType_32BGRA,
+                  let base = CVPixelBufferGetBaseAddress(frameBuffer) else {
+                return true
+            }
+            frameWidth = CVPixelBufferGetWidth(frameBuffer)
+            frameHeight = CVPixelBufferGetHeight(frameBuffer)
+            frameBytesPerRow = CVPixelBufferGetBytesPerRow(frameBuffer)
+            guard frameWidth > 0, frameHeight > 0, frameBytesPerRow >= frameWidth * 4 else { return true }
+            framePtr = UnsafePointer(base.assumingMemoryBound(to: UInt8.self))
+        }
+
+        var backgroundLums: [Double] = []
+        let step = max(1, maskWidth / 25)
+
+        for y in stride(from: 0, to: maskHeight, by: step) {
+            for x in stride(from: 0, to: maskWidth, by: step) {
+                let maskVal = maskPtr[y * maskBytesPerRow + x]
+                if maskVal < 60 {
+                    let fx = min(frameWidth - 1, x * frameWidth / maskWidth)
+                    let fy = min(frameHeight - 1, y * frameHeight / maskHeight)
+                    let lum: Double
+                    if isPlanar {
+                        lum = Double(framePtr[fy * frameBytesPerRow + fx]) / 255.0
+                    } else {
+                        let offset = fy * frameBytesPerRow + fx * 4
+                        let b = Double(framePtr[offset]) / 255.0
+                        let g = Double(framePtr[offset + 1]) / 255.0
+                        let r = Double(framePtr[offset + 2]) / 255.0
+                        lum = 0.299 * r + 0.587 * g + 0.114 * b
+                    }
+                    backgroundLums.append(lum)
+                }
+            }
+        }
+
+        guard backgroundLums.count > 15 else { return true }
+        let mean = backgroundLums.reduce(0, +) / Double(backgroundLums.count)
+        let variance = backgroundLums.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(backgroundLums.count)
+        return sqrt(variance) < 0.26
+    }
+
+    nonisolated private static func evaluateBackgroundClutter(
+        maskBuffer: CVPixelBuffer,
+        cgImage: CGImage,
+        orientation: CGImagePropertyOrientation
+    ) -> Bool {
+        CVPixelBufferLockBaseAddress(maskBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(maskBuffer, .readOnly) }
+
+        guard let maskBase = CVPixelBufferGetBaseAddress(maskBuffer) else { return true }
+        let maskWidth = CVPixelBufferGetWidth(maskBuffer)
+        let maskHeight = CVPixelBufferGetHeight(maskBuffer)
+        let maskBytesPerRow = CVPixelBufferGetBytesPerRow(maskBuffer)
+        guard maskWidth > 0, maskHeight > 0, maskBytesPerRow >= maskWidth else { return true }
+        let maskPtr = maskBase.assumingMemoryBound(to: UInt8.self)
+
+        let sampleSize = 120
+        let ciImage = CIImage(cgImage: cgImage).oriented(orientation)
+        let extent = ciImage.extent
+        guard extent.width > 0, extent.height > 0 else { return true }
+
+        let bytesPerRow = sampleSize * 4
+        var rgba = [UInt8](repeating: 0, count: sampleSize * bytesPerRow)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: &rgba,
+            width: sampleSize,
+            height: sampleSize,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        ) else {
+            return true
+        }
+        let ciContext = CIContext(options: [.useSoftwareRenderer: true])
+        guard let rendered = ciContext.createCGImage(ciImage, from: extent) else { return true }
+        ctx.draw(rendered, in: CGRect(x: 0, y: 0, width: sampleSize, height: sampleSize))
+
+        var backgroundLums: [Double] = []
+        let step = max(1, maskWidth / 25)
+        for y in stride(from: 0, to: maskHeight, by: step) {
+            for x in stride(from: 0, to: maskWidth, by: step) {
+                let maskVal = maskPtr[y * maskBytesPerRow + x]
+                if maskVal < 60 {
+                    let fx = min(sampleSize - 1, x * sampleSize / maskWidth)
+                    let fy = min(sampleSize - 1, y * sampleSize / maskHeight)
+                    let offset = fy * bytesPerRow + fx * 4
+                    let r = Double(rgba[offset]) / 255.0
+                    let g = Double(rgba[offset + 1]) / 255.0
+                    let b = Double(rgba[offset + 2]) / 255.0
+                    backgroundLums.append(0.299 * r + 0.587 * g + 0.114 * b)
+                }
+            }
+        }
+
+        guard backgroundLums.count > 15 else { return true }
+        let mean = backgroundLums.reduce(0, +) / Double(backgroundLums.count)
+        let variance = backgroundLums.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(backgroundLums.count)
+        return sqrt(variance) < 0.26
     }
 
     // MARK: - Simulator Headshot Generator
@@ -929,15 +1614,20 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         let renderer = UIGraphicsImageRenderer(size: size)
 
         return renderer.image { ctx in
-            let bgGradient = CGGradient(
+            let colors = [
+                UIColor(red: 0.94, green: 0.94, blue: 0.96, alpha: 1.0).cgColor,
+                UIColor(red: 0.88, green: 0.88, blue: 0.92, alpha: 1.0).cgColor
+            ] as CFArray
+            if let bgGradient = CGGradient(
                 colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                colors: [
-                    UIColor(red: 0.94, green: 0.94, blue: 0.96, alpha: 1.0).cgColor,
-                    UIColor(red: 0.88, green: 0.88, blue: 0.92, alpha: 1.0).cgColor
-                ] as CFArray,
+                colors: colors,
                 locations: [0.0, 1.0]
-            )!
-            ctx.cgContext.drawLinearGradient(bgGradient, start: CGPoint.zero, end: CGPoint(x: 0, y: size.height), options: [])
+            ) {
+                ctx.cgContext.drawLinearGradient(bgGradient, start: .zero, end: CGPoint(x: 0, y: size.height), options: [])
+            } else {
+                UIColor(red: 0.91, green: 0.91, blue: 0.94, alpha: 1.0).setFill()
+                ctx.fill(CGRect(origin: .zero, size: size))
+            }
 
             let figureColor = UIColor(red: 0.31, green: 0.20, blue: 0.42, alpha: 0.85)
             figureColor.setFill()
@@ -982,278 +1672,177 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
 
 extension HeadshotGuidanceService: AVCaptureVideoDataOutputSampleBufferDelegate {
-    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        // Continue checking alignment during the countdown. Guidance speech remains
-        // locked out by isCapturing, but a lost check must cancel the pending photo.
-        guard !isAnalyzingFrame, (!isCapturing || isCountdownInProgress) else { return }
-        isAnalyzingFrame = true
-        defer { isAnalyzingFrame = false }
+    nonisolated func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard stateBox.tryBeginFrameAnalysis(minInterval: Self.frameAnalysisInterval) else { return }
+        defer { stateBox.endFrameAnalysis() }
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        let currentLighting = evaluatePixelBufferLuminance(pixelBuffer)
-
-        let faceRequest = VNDetectFaceLandmarksRequest { [weak self] req, _ in
-            guard let self = self, let results = req.results as? [VNFaceObservation], let face = results.first else {
-                DispatchQueue.main.async {
-                    self?.feedback.isFaceCentered = false
-                    self?.feedback.isAngleCorrect = false
-                    self?.cancelCountdownIfAlignmentLost()
-                }
-                return
-            }
-
-            let box = face.boundingBox
-            let midX = box.midX
-            let midY = box.midY
-            let centered = (midX >= 0.35 && midX <= 0.65) && (midY >= 0.30 && midY <= 0.70)
-            let yawRad = face.yaw?.doubleValue ?? 0.0
-            let yawDeg = yawRad * 180.0 / .pi
-
-            var anglePass = false
-            switch self.targetAngle {
-            case .front: anglePass = abs(yawDeg) <= 18.0
-            case .left: anglePass = yawDeg >= 30.0 && yawDeg <= 85.0
-            case .right: anglePass = yawDeg <= -30.0 && yawDeg >= -85.0
-            }
-
-            DispatchQueue.main.async {
-                self.feedback.isFaceCentered = centered
-                self.feedback.isAngleCorrect = anglePass
-                self.feedback.currentYawDegrees = yawDeg
-                self.feedback.lighting = currentLighting
-
-                self.cancelCountdownIfAlignmentLost()
-                guard !self.isCountdownInProgress else { return }
-
-                if self.feedback.allChecksPassed {
-                    self.speakDebouncedWarning("Framing and lighting look great.")
-                } else if !centered {
-                    self.speakDebouncedWarning("Center your face in the guide oval.")
-                } else if !anglePass {
-                    switch self.targetAngle {
-                    case .front: self.speakDebouncedWarning("Turn your head to face front.")
-                    case .left: self.speakDebouncedWarning("Turn slightly to your left.")
-                    case .right: self.speakDebouncedWarning("Turn slightly to your right.")
-                    }
-                } else if currentLighting == .tooDark {
-                    self.speakDebouncedWarning("Lighting is too dark. Add key light in front of you.")
-                } else if currentLighting == .uneven {
-                    self.speakDebouncedWarning("Lighting is uneven. Balance the light across your face.")
-                } else if currentLighting == .tooBright {
-                    self.speakDebouncedWarning("Lighting is too bright. Reduce glare.")
-                } else if !self.feedback.isEyeLevel {
-                    self.speakDebouncedWarning("Hold your phone at eye level.")
-                } else if self.feedback.background == .cluttered {
-                    self.speakDebouncedWarning("Background looks busy. Try a plain wall behind you.")
-                }
-            }
+        let isFront = stateBox.isFrontCamera
+        let orientation: CGImagePropertyOrientation
+        if connection.isVideoRotationAngleSupported(90) && connection.videoRotationAngle == 90 {
+            orientation = isFront ? (connection.isVideoMirrored ? .up : .upMirrored) : .up
+        } else {
+            orientation = isFront ? .leftMirrored : .right
         }
 
-        let segRequest = VNGeneratePersonSegmentationRequest { [weak self] req, _ in
-            guard let self = self,
-                  let result = req.results?.first as? VNPixelBufferObservation else { return }
-            let isPlain = self.evaluateBackgroundClutter(maskBuffer: result.pixelBuffer, frameBuffer: pixelBuffer)
-            DispatchQueue.main.async {
-                self.feedback.background = isPlain ? .clean : .cluttered
-                self.cancelCountdownIfAlignmentLost()
-            }
-        }
+        let faceRequest = VNDetectFaceRectanglesRequest()
+        let segRequest = VNGeneratePersonSegmentationRequest()
         segRequest.qualityLevel = .fast
 
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .upMirrored, options: [:])
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         try? handler.perform([faceRequest, segRequest])
-    }
 
-    func evaluatePixelBufferLuminance(_ pixelBuffer: CVPixelBuffer) -> LightingStatus {
-        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+        let face = (faceRequest.results ?? []).max(by: {
+            ($0.boundingBox.width * $0.boundingBox.height) < ($1.boundingBox.width * $1.boundingBox.height)
+        })
+        let posePrediction = HeadshotPosePredictor.shared.predict(pixelBuffer: pixelBuffer, orientation: orientation)
 
-        let planeCount = CVPixelBufferGetPlaneCount(pixelBuffer)
-        if planeCount > 0 {
-            guard let yBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) else { return .good }
-            let width = CVPixelBufferGetWidthOfPlane(pixelBuffer, 0)
-            let height = CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
-            let bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
-            let ptr = yBase.assumingMemoryBound(to: UInt8.self)
-
-            var totalLum: Double = 0
-            var leftLum: Double = 0
-            var rightLum: Double = 0
-            var sampled = 0
-            var leftSampled = 0
-            var rightSampled = 0
-
-            let step = max(1, width / 30)
-            for y in stride(from: 0, to: height, by: step) {
-                for x in stride(from: 0, to: width, by: step) {
-                    let lum = Double(ptr[y * bytesPerRow + x]) / 255.0
-                    totalLum += lum
-                    sampled += 1
-                    if x < width / 2 {
-                        leftLum += lum
-                        leftSampled += 1
-                    } else {
-                        rightLum += lum
-                        rightSampled += 1
-                    }
-                }
-            }
-            guard sampled > 0 else { return .good }
-            let avg = totalLum / Double(sampled)
-            let avgLeft = leftSampled > 0 ? leftLum / Double(leftSampled) : avg
-            let avgRight = rightSampled > 0 ? rightLum / Double(rightSampled) : avg
-
-            if avg < 0.22 { return .tooDark }
-            if avg > 0.85 { return .tooBright }
-            if abs(avgLeft - avgRight) > 0.30 { return .uneven }
-            return .good
+        let targetAngle = stateBox.targetAngle
+        let centered: Bool
+        if let face {
+            let box = face.boundingBox
+            centered = (box.midX >= 0.35 && box.midX <= 0.65) && (box.midY >= 0.30 && box.midY <= 0.70)
         } else {
-            guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return .good }
-            let width = CVPixelBufferGetWidth(pixelBuffer)
-            let height = CVPixelBufferGetHeight(pixelBuffer)
-            let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-            let ptr = base.assumingMemoryBound(to: UInt8.self)
-
-            var totalLum: Double = 0
-            var leftLum: Double = 0
-            var rightLum: Double = 0
-            var sampled = 0
-            var leftSampled = 0
-            var rightSampled = 0
-
-            let step = max(1, width / 30)
-            for y in stride(from: 0, to: height, by: step) {
-                for x in stride(from: 0, to: width, by: step) {
-                    let offset = y * bytesPerRow + x * 4
-                    let b = Double(ptr[offset]) / 255.0
-                    let g = Double(ptr[offset + 1]) / 255.0
-                    let r = Double(ptr[offset + 2]) / 255.0
-                    let lum = 0.299 * r + 0.587 * g + 0.114 * b
-                    totalLum += lum
-                    sampled += 1
-                    if x < width / 2 {
-                        leftLum += lum
-                        leftSampled += 1
-                    } else {
-                        rightLum += lum
-                        rightSampled += 1
-                    }
-                }
-            }
-            guard sampled > 0 else { return .good }
-            let avg = totalLum / Double(sampled)
-            let avgLeft = leftSampled > 0 ? leftLum / Double(leftSampled) : avg
-            let avgRight = rightSampled > 0 ? rightLum / Double(rightSampled) : avg
-
-            if avg < 0.22 { return .tooDark }
-            if avg > 0.85 { return .tooBright }
-            if abs(avgLeft - avgRight) > 0.30 { return .uneven }
-            return .good
-        }
-    }
-
-    func evaluateBackgroundClutter(maskBuffer: CVPixelBuffer, frameBuffer: CVPixelBuffer) -> Bool {
-        CVPixelBufferLockBaseAddress(maskBuffer, .readOnly)
-        CVPixelBufferLockBaseAddress(frameBuffer, .readOnly)
-        defer {
-            CVPixelBufferUnlockBaseAddress(maskBuffer, .readOnly)
-            CVPixelBufferUnlockBaseAddress(frameBuffer, .readOnly)
+            centered = false
         }
 
-        guard let maskBase = CVPixelBufferGetBaseAddress(maskBuffer) else { return true }
-        let maskWidth = CVPixelBufferGetWidth(maskBuffer)
-        let maskHeight = CVPixelBufferGetHeight(maskBuffer)
-        let maskBytesPerRow = CVPixelBufferGetBytesPerRow(maskBuffer)
-        let maskPtr = maskBase.assumingMemoryBound(to: UInt8.self)
+        let visionYawDeg = face?.yaw.map { $0.doubleValue * 180.0 / .pi }
+        let angleEval = Self.evaluateYawAngle(
+            targetAngle: targetAngle,
+            visionYawDegrees: visionYawDeg,
+            posePrediction: posePrediction
+        )
 
-        let isPlanar = CVPixelBufferGetPlaneCount(frameBuffer) > 0
-        let frameWidth = isPlanar ? CVPixelBufferGetWidthOfPlane(frameBuffer, 0) : CVPixelBufferGetWidth(frameBuffer)
-        let frameHeight = isPlanar ? CVPixelBufferGetHeightOfPlane(frameBuffer, 0) : CVPixelBufferGetHeight(frameBuffer)
-        let frameBytesPerRow = isPlanar ? CVPixelBufferGetBytesPerRowOfPlane(frameBuffer, 0) : CVPixelBufferGetBytesPerRow(frameBuffer)
-        guard let frameBase = isPlanar ? CVPixelBufferGetBaseAddressOfPlane(frameBuffer, 0) : CVPixelBufferGetBaseAddress(frameBuffer) else { return true }
-        let framePtr = frameBase.assumingMemoryBound(to: UInt8.self)
+        let currentLighting = Self.evaluatePixelBufferLuminance(
+            pixelBuffer,
+            faceBoundingBox: face?.boundingBox
+        )
 
-        var backgroundLums: [Double] = []
-        let step = max(1, maskWidth / 25)
+        let isPlain: Bool
+        if let segResult = segRequest.results?.first as? VNPixelBufferObservation {
+            isPlain = Self.evaluateBackgroundClutter(maskBuffer: segResult.pixelBuffer, frameBuffer: pixelBuffer)
+        } else {
+            isPlain = true
+        }
 
-        for y in stride(from: 0, to: maskHeight, by: step) {
-            for x in stride(from: 0, to: maskWidth, by: step) {
-                let maskVal = maskPtr[y * maskBytesPerRow + x]
-                if maskVal < 60 {
-                    let fx = min(frameWidth - 1, x * frameWidth / maskWidth)
-                    let fy = min(frameHeight - 1, y * frameHeight / maskHeight)
-                    let lum: Double
-                    if isPlanar {
-                        lum = Double(framePtr[fy * frameBytesPerRow + fx]) / 255.0
-                    } else {
-                        let offset = fy * frameBytesPerRow + fx * 4
-                        let b = Double(framePtr[offset]) / 255.0
-                        let g = Double(framePtr[offset + 1]) / 255.0
-                        let r = Double(framePtr[offset + 2]) / 255.0
-                        lum = 0.299 * r + 0.587 * g + 0.114 * b
-                    }
-                    backgroundLums.append(lum)
+        Task { @MainActor [weak self] in
+            guard let self, self.isSessionRunning else { return }
+            self.feedback.isFaceCentered = centered
+            self.feedback.isAngleCorrect = angleEval.isCorrect
+            self.feedback.currentYawDegrees = angleEval.resolvedYawDegrees
+            self.feedback.lighting = currentLighting
+            self.feedback.background = isPlain ? .clean : .cluttered
+
+            self.cancelCountdownIfAlignmentLost()
+            guard !self.isCountdownInProgress else { return }
+
+            if self.feedback.allChecksPassed {
+                self.shutterStatusMessage = nil
+                self.speakDebouncedWarning("Framing and lighting look great.")
+            } else if !centered {
+                self.speakDebouncedWarning("Center your face in the guide oval.")
+            } else if !angleEval.isCorrect {
+                switch self.targetAngle {
+                case .front: self.speakDebouncedWarning("Turn your head to face front.")
+                case .left: self.speakDebouncedWarning("Turn slightly to your left.")
+                case .right: self.speakDebouncedWarning("Turn slightly to your right.")
                 }
+            } else if currentLighting == .tooDark {
+                self.speakDebouncedWarning("Lighting is too dark. Add key light in front of you.")
+            } else if currentLighting == .uneven {
+                self.speakDebouncedWarning("Lighting is uneven. Balance the light across your face.")
+            } else if currentLighting == .tooBright {
+                self.speakDebouncedWarning("Lighting is too bright. Reduce glare.")
+            } else if !self.feedback.isEyeLevel {
+                self.speakDebouncedWarning("Hold your phone at eye level.")
+            } else if self.feedback.background == .cluttered {
+                self.speakDebouncedWarning("Background looks busy. Try a plain wall behind you.")
             }
         }
-
-        guard backgroundLums.count > 15 else { return true }
-        let mean = backgroundLums.reduce(0, +) / Double(backgroundLums.count)
-        let variance = backgroundLums.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(backgroundLums.count)
-        return sqrt(variance) < 0.26
     }
 }
 
 // MARK: - AVCapturePhotoCaptureDelegate
 
 extension HeadshotGuidanceService: AVCapturePhotoCaptureDelegate {
-    func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-        guard error == nil, let data = photo.fileDataRepresentation(), let image = UIImage(data: data) else {
-            completePhotoCapture(with: nil)
-            return
+    nonisolated func photoOutput(
+        _ output: AVCapturePhotoOutput,
+        didFinishProcessingPhoto photo: AVCapturePhoto,
+        error: Error?
+    ) {
+        let photoData = (error == nil) ? photo.fileDataRepresentation() : nil
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let image = photoData.flatMap { UIImage(data: $0) }
+            self.completePhotoCapture(with: image)
         }
-        completePhotoCapture(with: image)
     }
 }
 
 // MARK: - Face-Aware Auto Cropper (ImageFramer)
 
-enum ImageFramer {
+nonisolated enum ImageFramer {
     static func autoCrop(
         image: UIImage,
         aspectRatio: HeadshotAspectRatio,
         preset: HeadshotCropPreset = .theatrical
     ) async -> UIImage {
-        guard let cgImage = image.cgImage else { return image }
+        await Task.detached(priority: .userInitiated) {
+            let upright = HeadshotCropMath.normalizedImage(image)
+            guard let cgImage = upright.cgImage else { return upright }
 
-        let targetRatio: CGFloat
-        switch preset {
-        case .cardSlotFit: targetRatio = 4.0 / 5.0
-        case .theatrical: targetRatio = 4.0 / 5.0
-        case .commercial: targetRatio = 3.0 / 4.0
-        case .square: targetRatio = 1.0
-        case .tightCloseUp: targetRatio = 4.0 / 5.0
-        case .headAndShoulders: targetRatio = 2.0 / 3.0
-        }
+            let imageSize = CGSize(width: cgImage.width, height: cgImage.height)
+            let targetRatio = HeadshotCropMath.targetAspect(
+                for: aspectRatio,
+                preset: preset,
+                imageSize: imageSize
+            )
 
-        let faceRect = await detectFaceBoundingBox(in: cgImage)
-        let cropped = crop(cgImage: cgImage, targetRatio: targetRatio, faceNormalizedRect: faceRect, preset: preset)
-        return UIImage(cgImage: cropped, scale: image.scale, orientation: image.imageOrientation)
+            let faceRect = detectFaceBoundingBox(in: cgImage)
+            let cropped = crop(
+                cgImage: cgImage,
+                targetRatio: targetRatio,
+                faceNormalizedRect: faceRect,
+                preset: preset
+            )
+            return UIImage(cgImage: cropped, scale: 1, orientation: .up)
+        }.value
     }
 
-    private static func detectFaceBoundingBox(in cgImage: CGImage) async -> CGRect? {
-        await withCheckedContinuation { continuation in
-            let request = VNDetectFaceRectanglesRequest { req, _ in
-                guard let results = req.results as? [VNFaceObservation], let face = results.first else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                continuation.resume(returning: face.boundingBox)
-            }
-            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-            try? handler.perform([request])
+    private static func detectFaceBoundingBox(in cgImage: CGImage) -> CGRect? {
+        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
+        let request = VNDetectFaceRectanglesRequest()
+        if (try? handler.perform([request])) != nil,
+           let face = request.results?.max(by: {
+               ($0.boundingBox.width * $0.boundingBox.height) < ($1.boundingBox.width * $1.boundingBox.height)
+           }),
+           face.confidence > 0.3 {
+            return face.boundingBox
         }
+
+        // CoreImage fallback (useful when ANE is unavailable in Simulator).
+        let ciImage = CIImage(cgImage: cgImage)
+        if let detector = CIDetector(ofType: CIDetectorTypeFace, context: nil, options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]) {
+            let features = detector.features(in: ciImage).compactMap { $0 as? CIFaceFeature }
+            if let best = features.max(by: { ($0.bounds.width * $0.bounds.height) < ($1.bounds.width * $1.bounds.height) }) {
+                let imgW = CGFloat(cgImage.width)
+                let imgH = CGFloat(cgImage.height)
+                if imgW > 0, imgH > 0 {
+                    return CGRect(
+                        x: best.bounds.minX / imgW,
+                        y: best.bounds.minY / imgH,
+                        width: best.bounds.width / imgW,
+                        height: best.bounds.height / imgH
+                    )
+                }
+            }
+        }
+        return nil
     }
 
     private static func crop(
@@ -1264,6 +1853,7 @@ enum ImageFramer {
     ) -> CGImage {
         let imgWidth = CGFloat(cgImage.width)
         let imgHeight = CGFloat(cgImage.height)
+        guard imgWidth > 0, imgHeight > 0, targetRatio > 0 else { return cgImage }
 
         let faceBox = faceNormalizedRect ?? CGRect(x: 0.3, y: 0.35, width: 0.4, height: 0.4)
         let facePixelX = faceBox.origin.x * imgWidth
@@ -1282,22 +1872,29 @@ enum ImageFramer {
         case .square: heightMultiplier = 2.6
         }
 
-        var cropHeight = min(imgHeight, facePixelH * heightMultiplier)
+        var cropHeight = min(imgHeight, max(imgHeight * 0.45, facePixelH * heightMultiplier))
         var cropWidth = cropHeight * targetRatio
 
         if cropWidth > imgWidth {
             cropWidth = imgWidth
             cropHeight = cropWidth / targetRatio
         }
+        if cropHeight > imgHeight {
+            cropHeight = imgHeight
+            cropWidth = cropHeight * targetRatio
+        }
 
         let headroomFactor: CGFloat = (preset == .tightCloseUp) ? 0.38 : 0.42
         var cropX = faceCenter.x - cropWidth / 2.0
         var cropY = faceCenter.y - (cropHeight * headroomFactor)
 
-        cropX = max(0, min(cropX, imgWidth - cropWidth))
-        cropY = max(0, min(cropY, imgHeight - cropHeight))
+        let roundedW = max(1, min(imgWidth, round(cropWidth)))
+        let roundedH = max(1, min(imgHeight, round(cropHeight)))
 
-        let cropRect = CGRect(x: cropX, y: cropY, width: cropWidth, height: cropHeight)
+        cropX = max(0, min(round(cropX), imgWidth - roundedW))
+        cropY = max(0, min(round(cropY), imgHeight - roundedH))
+
+        let cropRect = CGRect(x: cropX, y: cropY, width: roundedW, height: roundedH)
         return cgImage.cropping(to: cropRect) ?? cgImage
     }
 }
