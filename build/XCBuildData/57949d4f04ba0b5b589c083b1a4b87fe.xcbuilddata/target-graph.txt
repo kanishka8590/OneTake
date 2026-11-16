@@ -1,2 +1,0 @@
-Target dependency graph (1 target)
-Target 'OneTake' in project 'OneTake' (no dependencies)

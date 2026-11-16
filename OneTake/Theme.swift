@@ -39,7 +39,10 @@ enum Theme {
         static let studioYellow = Color.yellow
         static let studioGreen = Color.green
         static let studioBlue = Color.cyan
-        static let goldInk = Color(red: 0.58, green: 0.42, blue: 0.0)
+        static let goldInk = adaptive(
+            light: UIColor(red: 0.58, green: 0.42, blue: 0.0, alpha: 1),
+            dark: UIColor(red: 0.95, green: 0.80, blue: 0.35, alpha: 1)
+        )
         static let annotationBlue = Color(red: 0.35, green: 0.72, blue: 0.96)
 
         // These are intentionally fixed because the capture UI forces a dark
@@ -60,7 +63,6 @@ enum Theme {
     }
 
     enum Artwork {
-        static let onboardingHero = "onboarding_hero"
         static let practiceBanner = "practice_banner"
         static let dramaBanner = "scene_drama_banner"
         static let auditionBanner = "scene_audition_banner"
@@ -69,11 +71,11 @@ enum Theme {
     // MARK: - Typography
 
     enum Typography {
-        static let screenTitle: Font = .system(size: 30, weight: .bold, design: .default)
-        static let sectionHeader: Font = .system(size: 21, weight: .bold)
-        static let cardTitle: Font = .system(size: 17, weight: .semibold)
-        static let bodyRegular: Font = .system(size: 15, weight: .regular)
-        static let captionBadge: Font = .system(size: 12, weight: .medium)
+        static let screenTitle: Font = .system(.title, design: .default, weight: .bold)
+        static let sectionHeader: Font = .system(.title2, design: .default, weight: .bold)
+        static let cardTitle: Font = .system(.headline, design: .default, weight: .semibold)
+        static let bodyRegular: Font = .system(.subheadline, design: .default, weight: .regular)
+        static let captionBadge: Font = .system(.caption, design: .default, weight: .medium)
     }
 
     // MARK: - Layout Tokens
@@ -203,15 +205,15 @@ extension View {
                     .font(Theme.Typography.sectionHeader)
                     .foregroundStyle(Theme.Colors.textPrimary)
 
-                Text("Screen Title (28 Bold)")
+                Text("Screen Title (Title Bold)")
                     .font(Theme.Typography.screenTitle)
-                Text("Section Header (20 Semibold)")
+                Text("Section Header (Title2 Bold)")
                     .font(Theme.Typography.sectionHeader)
-                Text("Card Title (17 Semibold)")
+                Text("Card Title (Headline Semibold)")
                     .font(Theme.Typography.cardTitle)
-                Text("Body Regular (15 Regular)")
+                Text("Body Regular (Subheadline Regular)")
                     .font(Theme.Typography.bodyRegular)
-                Text("Caption Badge (12 Medium)")
+                Text("Caption Badge (Caption Medium)")
                     .font(Theme.Typography.captionBadge)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -249,7 +251,7 @@ extension View {
                     Text("Failed")
                         .statusBadge(color: Theme.Colors.errorCrimson)
                     Text("Draft")
-                        .statusBadge(color: Theme.Colors.primaryPlum)
+                        .statusBadge(color: Theme.Colors.accent)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

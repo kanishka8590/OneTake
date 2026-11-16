@@ -473,7 +473,7 @@ enum PracticeSpeechDeliveryAnalyzer {
         return contractionExpansions[normalized] ?? [normalized]
     }
 
-    private static let contractionExpansions: [String: [String]] = [
+    private nonisolated static let contractionExpansions: [String: [String]] = [
         "ain't": ["am", "not"],
         "aren't": ["are", "not"],
         "can't": ["can", "not"],
