@@ -168,12 +168,8 @@ struct NotificationPreferencesView: View {
 struct PrivacyAndDataView: View {
     let appState: AppState
     @State private var showingPolicy = false
-    @State private var confirmation: DataAction?
-
-    private enum DataAction: Identifiable {
-        case local, account
-        var id: Int { self == .local ? 0 : 1 }
-    }
+    @State private var confirmingDeleteLocalData = false
+    @State private var confirmingDeleteAccount = false
 
     var body: some View {
         List {
@@ -187,8 +183,38 @@ struct PrivacyAndDataView: View {
             }
 
             Section {
-                Button("Delete all local data", role: .destructive) { confirmation = .local }
-                Button("Delete account", role: .destructive) { confirmation = .account }
+                Button("Delete all local data", role: .destructive) {
+                    confirmingDeleteLocalData = true
+                }
+                .confirmationDialog(
+                    "Delete all local data?",
+                    isPresented: $confirmingDeleteLocalData,
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete local data", role: .destructive) {
+                        appState.deleteAllLocalData()
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("This cannot be undone.")
+                }
+
+                Button("Delete account", role: .destructive) {
+                    confirmingDeleteAccount = true
+                }
+                .confirmationDialog(
+                    "Delete account?",
+                    isPresented: $confirmingDeleteAccount,
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete account", role: .destructive) {
+                        appState.deleteAllLocalData()
+                        appState.logout()
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("This removes your account data from this device. Contact support@onetake.app for any server-side request.")
+                }
             } footer: {
                 Text("Deleting local data removes auditions, recordings, practice sessions, and your profile from this device.")
             }
@@ -199,24 +225,6 @@ struct PrivacyAndDataView: View {
         }
         .sheet(isPresented: $showingPolicy) {
             PrivacyPolicyView()
-        }
-        .confirmationDialog(
-            confirmation == .account ? "Delete account?" : "Delete all local data?",
-            item: $confirmation
-        ) { action in
-            Button(action == .account ? "Delete account" : "Delete local data", role: .destructive) {
-                appState.deleteAllLocalData()
-                if action == .account {
-                    appState.logout()
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: { action in
-            Text(
-                action == .account
-                    ? "This removes your account data from this device. Contact support@onetake.app for any server-side request."
-                    : "This cannot be undone."
-            )
         }
     }
 
