@@ -204,9 +204,10 @@ nonisolated enum NoticeOCR {
         ].compactMap { $0 }
 
         for variant in variants {
-            let boxes = performVisionOCRBoxes(on: variant)
+            let boxes = performVisionOCRBoxes(on: variant, usesLanguageCorrection: false)
             for box in boxes where box.text.contains("@")
                 || box.text.lowercased().contains("http")
+                || box.text.lowercased().contains("www.")
                 || box.text.lowercased().contains(".in")
                 || box.text.lowercased().contains(".com") {
                 let mappedRect = CGRect(
@@ -298,11 +299,14 @@ nonisolated enum NoticeOCR {
         return context.makeImage()
     }
 
-    private static func performVisionOCRBoxes(on cgImage: CGImage) -> [OCRLayoutReconstructor.TextBoundingBox] {
+    private static func performVisionOCRBoxes(
+        on cgImage: CGImage,
+        usesLanguageCorrection: Bool? = nil
+    ) -> [OCRLayoutReconstructor.TextBoundingBox] {
         for level in [VNRequestTextRecognitionLevel.accurate, .fast] {
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = level
-            request.usesLanguageCorrection = (level == .accurate)
+            request.usesLanguageCorrection = usesLanguageCorrection ?? (level == .accurate)
             #if targetEnvironment(simulator)
             request.usesCPUOnly = true
             #endif
@@ -325,6 +329,9 @@ nonisolated enum NoticeOCR {
                         || ($0.string.contains("@") && $0.confidence >= 0.15)
                     })
                 guard let candidate = chosen else { return nil }
+                if isSocialOverlayCounter(text: candidate.string, rect: observation.boundingBox) {
+                    return nil
+                }
                 return OCRLayoutReconstructor.TextBoundingBox(
                     text: candidate.string,
                     rect: observation.boundingBox,
@@ -332,9 +339,69 @@ nonisolated enum NoticeOCR {
                 )
             }
 
-            if !boxes.isEmpty { return boxes }
+            if !boxes.isEmpty {
+                // Re-read contact lines (@, http, www.) without language correction so emails/handles stay exact.
+                if usesLanguageCorrection == nil && level == .accurate {
+                    return reconcileContactLinesWithoutCorrection(boxes: boxes, on: cgImage)
+                }
+                return boxes
+            }
         }
         return []
+    }
+
+    private static func isSocialOverlayCounter(text: String, rect: CGRect) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard rect.minX >= 0.84, rect.height <= 0.055 else { return false }
+        return trimmed.range(of: #"^(?:\d{1,3}(?:,\d{3})*|\d+(?:\.\d+)?[KMkm]?)$"#, options: .regularExpression) != nil
+    }
+
+    private static func reconcileContactLinesWithoutCorrection(
+        boxes: [OCRLayoutReconstructor.TextBoundingBox],
+        on cgImage: CGImage
+    ) -> [OCRLayoutReconstructor.TextBoundingBox] {
+        let needsRawRead = boxes.contains { box in
+            let lower = box.text.lowercased()
+            return lower.contains("@") || lower.contains("www.") || lower.contains("http") || lower.contains(".com") || lower.contains(".in")
+        }
+        guard needsRawRead else { return boxes }
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        #if targetEnvironment(simulator)
+        request.usesCPUOnly = true
+        #endif
+        configureSupportedLanguages(for: request)
+
+        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up)
+        guard (try? handler.perform([request])) != nil,
+              let rawObservations = request.results, !rawObservations.isEmpty else {
+            return boxes
+        }
+
+        return boxes.map { box in
+            let lower = box.text.lowercased()
+            guard lower.contains("@") || lower.contains("www.") || lower.contains("http") || lower.contains(".com") || lower.contains(".in") else {
+                return box
+            }
+            if let matchingRaw = rawObservations.first(where: { obs in
+                let inter = obs.boundingBox.intersection(box.rect)
+                guard !inter.isNull, !inter.isEmpty else { return false }
+                let area = inter.width * inter.height
+                let minArea = max(1e-6, min(obs.boundingBox.width * obs.boundingBox.height, box.rect.width * box.rect.height))
+                return (area / minArea) > 0.4
+            }),
+               let rawText = matchingRaw.topCandidates(1).first?.string,
+               rawText.contains("@") || rawText.lowercased().contains("www.") || rawText.lowercased().contains("http") {
+                return OCRLayoutReconstructor.TextBoundingBox(
+                    text: rawText,
+                    rect: box.rect,
+                    confidence: box.confidence
+                )
+            }
+            return box
+        }
     }
 
     private static func enhancedCGImage(_ source: CGImage, forceInvert: Bool = false) -> CGImage? {

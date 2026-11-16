@@ -29,6 +29,7 @@ struct HeadshotGuidanceView: View {
     @State private var showingMatchGuide = false
     @State private var autoCaptureHoldTask: Task<Void, Never>?
     @State private var autoCaptureCancelTask: Task<Void, Never>?
+    @State private var autoHoldProgress: Double = 0.0
     @State private var gestureHoldTask: Task<Void, Never>?
     @State private var lastGestureTriggerAt: Date = .distantPast
 
@@ -194,6 +195,7 @@ struct HeadshotGuidanceView: View {
             autoCaptureHoldTask = nil
             autoCaptureCancelTask?.cancel()
             autoCaptureCancelTask = nil
+            autoHoldProgress = 0.0
             return
         }
 
@@ -203,20 +205,30 @@ struct HeadshotGuidanceView: View {
             guard autoCaptureHoldTask == nil else { return }
 
             autoCaptureHoldTask = Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 750_000_000)
-                guard !Task.isCancelled,
-                      guidanceService.autoCaptureEnabled,
-                      guidanceService.feedback.allChecksPassed,
-                      !guidanceService.isCapturing,
-                      !showVoiceGuideIntro,
-                      !showingMatchGuide,
-                      !showingReviewSheet else {
+                let totalSteps = 8
+                for step in 1...totalSteps {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                    guard !Task.isCancelled,
+                          guidanceService.autoCaptureEnabled,
+                          !guidanceService.isCapturing,
+                          !showVoiceGuideIntro,
+                          !showingMatchGuide,
+                          !showingReviewSheet else {
+                        autoHoldProgress = 0.0
+                        autoCaptureHoldTask = nil
+                        return
+                    }
+                    autoHoldProgress = Double(step) / Double(totalSteps)
+                }
+                guard guidanceService.feedback.allChecksPassed else {
+                    autoHoldProgress = 0.0
                     autoCaptureHoldTask = nil
                     return
                 }
+                autoHoldProgress = 0.0
                 autoCaptureHoldTask = nil
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                triggerBatchCapture(requireAlignment: true)
+                triggerBatchCapture(requireAlignment: true, countdownSeconds: 1)
             }
         } else if autoCaptureHoldTask != nil && autoCaptureCancelTask == nil {
             autoCaptureCancelTask = Task { @MainActor in
@@ -226,6 +238,7 @@ struct HeadshotGuidanceView: View {
                 if !guidanceService.feedback.allChecksPassed {
                     autoCaptureHoldTask?.cancel()
                     autoCaptureHoldTask = nil
+                    autoHoldProgress = 0.0
                 }
             }
         }
@@ -606,8 +619,17 @@ struct HeadshotGuidanceView: View {
                 } label: {
                     ZStack {
                         Circle()
-                            .stroke(guidanceService.feedback.allChecksPassed ? Color.green : Color.white, lineWidth: 4)
+                            .stroke(guidanceService.feedback.allChecksPassed ? Color.green.opacity(guidanceService.autoCaptureEnabled ? 0.35 : 1.0) : Color.white, lineWidth: 4)
                             .frame(width: 78, height: 78)
+
+                        if guidanceService.autoCaptureEnabled && autoHoldProgress > 0 {
+                            Circle()
+                                .trim(from: 0, to: autoHoldProgress)
+                                .stroke(Color.green, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                                .rotationEffect(.degrees(-90))
+                                .frame(width: 82, height: 82)
+                                .animation(.linear(duration: 0.1), value: autoHoldProgress)
+                        }
 
                         Circle()
                             .fill(guidanceService.isCapturing ? Color.red : Color.white)
@@ -885,8 +907,8 @@ struct HeadshotGuidanceView: View {
 
     // MARK: - Batch Continuous Capture Trigger
 
-    private func triggerBatchCapture(requireAlignment: Bool = false) {
-        guidanceService.startCountdown(seconds: 3, requireAlignment: requireAlignment) { capturedImage in
+    private func triggerBatchCapture(requireAlignment: Bool = false, countdownSeconds: Int = 3) {
+        guidanceService.startCountdown(seconds: countdownSeconds, requireAlignment: requireAlignment) { capturedImage in
             guard let image = capturedImage else { return }
 
             switch currentAngle {

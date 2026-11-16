@@ -23,11 +23,16 @@ struct TeleprompterRecorderView: View {
     @State private var recorderService = TeleprompterRecorderService.shared
     @State private var cueEngine = CuePartnerAudioEngine.shared
 
-    // Teleprompter Scroll State
+    // Teleprompter Scroll & Voice Read-Along State
+    @State private var voiceTracker = VoiceTeleprompterTracker()
+    @State private var followVoice: Bool = true
     @State private var scrollSpeed: Double = 1.0
     @State private var scrollOffset: CGFloat = 0.0
     @State private var prompterViewportHeight: CGFloat = 0.0
     @State private var prompterContentHeight: CGFloat = 0.0
+    @State private var lineFrames: [Int: CGRect] = [:]
+    @State private var lastProcessedTranscript: String = ""
+    @State private var lastProcessedIsFinal: Bool = false
     @State private var scrollTimer: Timer?
     @State private var isShowingSpeedControl = false
     @State private var selectedCountdownSeconds: Int = 3
@@ -161,12 +166,24 @@ struct TeleprompterRecorderView: View {
                 )
                 cueEngine.cueVolume = Float(appState.settings.cueVolume)
 
+                let cueSpeakerSet = Set(audition.cueLines.map(\.speaker))
+                voiceTracker.configure(scriptLines: effectiveScriptLines, cueSpeakers: cueSpeakerSet)
+                recorderService.scriptContextualStrings = voiceTracker.contextualStrings
+
                 recorderService.onVoiceActionTriggered = {
                     startCountdownAndRecord()
                 }
 
                 recorderService.onLiveMicData = { rms, transcript, isFinal in
                     cueEngine.ingestLiveMicInput(rms: rms, transcript: transcript, isFinal: isFinal)
+                    guard recorderService.isRecording, followVoice else { return }
+                    let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return }
+                    guard trimmed != lastProcessedTranscript || isFinal != lastProcessedIsFinal else { return }
+                    lastProcessedTranscript = trimmed
+                    lastProcessedIsFinal = isFinal
+                    voiceTracker.ingestTranscript(trimmed, isFinal: isFinal)
+                    syncScrollOffsetToVoiceTracker()
                 }
                 recorderService.shouldIgnoreRecognizedTranscript = { cueEngine.isCuePlaying }
 
@@ -180,7 +197,9 @@ struct TeleprompterRecorderView: View {
             }
             .onChange(of: recorderService.isRecording) { _, isRecording in
                 if isRecording {
-                    if !effectiveScriptLines.isEmpty {
+                    lastProcessedTranscript = ""
+                    lastProcessedIsFinal = false
+                    if !followVoice && !effectiveScriptLines.isEmpty {
                         startPrompterScroll()
                     }
                     if !isSlate && !audition.cueLines.isEmpty {
@@ -198,7 +217,7 @@ struct TeleprompterRecorderView: View {
             }
             .fullScreenCover(item: $takeReviewRoute, onDismiss: {
                 if !didSaveApprovedTake && !recorderService.isSessionRunning {
-                    scrollOffset = 0.0
+                    resetPrompterPosition()
                     recorderService.startSession()
                 }
             }) { route in
@@ -216,7 +235,7 @@ struct TeleprompterRecorderView: View {
                     onTakeSaved(approvedTake)
                 } onRetake: {
                     takeReviewRoute = nil
-                    scrollOffset = 0.0
+                    resetPrompterPosition()
                     if !recorderService.isSessionRunning {
                         recorderService.startSession()
                     }
@@ -277,9 +296,9 @@ struct TeleprompterRecorderView: View {
 
     private var teleprompterOverlay: some View {
         VStack(spacing: 6) {
-            HStack {
+            HStack(spacing: 8) {
                 Button {
-                    scrollOffset = 0.0
+                    resetPrompterPosition()
                 } label: {
                     Label("Reset", systemImage: "arrow.uturn.backward")
                         .font(.system(size: 12, weight: .semibold))
@@ -290,15 +309,37 @@ struct TeleprompterRecorderView: View {
                 Spacer()
 
                 Button {
-                    withAnimation { isShowingSpeedControl.toggle() }
+                    withAnimation {
+                        followVoice.toggle()
+                        if followVoice {
+                            isShowingSpeedControl = false
+                            stopPrompterScroll()
+                        } else if recorderService.isRecording {
+                            startPrompterScroll()
+                        }
+                    }
                 } label: {
-                    Label(String(format: "%.1fx Speed", scrollSpeed), systemImage: "speedometer")
-                        .font(.system(size: 12, weight: .semibold))
+                    Label(
+                        followVoice ? "Voice Sync" : String(format: "Timed %.1fx", scrollSpeed),
+                        systemImage: followVoice ? "waveform" : "speedometer"
+                    )
+                    .font(.system(size: 12, weight: .semibold))
                 }
-                .nativeGlassCapsuleButton()
+                .nativeGlassCapsuleButton(tint: followVoice ? .green : nil)
+
+                if !followVoice {
+                    Button {
+                        withAnimation { isShowingSpeedControl.toggle() }
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .nativeGlassCircleButton()
+                    .accessibilityLabel("Adjust scroll speed")
+                }
             }
 
-            if isShowingSpeedControl {
+            if !followVoice && isShowingSpeedControl {
                 HStack(spacing: 12) {
                     Text("0.5x").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
                     Slider(value: $scrollSpeed, in: 0.5...2.5, step: 0.1)
@@ -316,16 +357,23 @@ struct TeleprompterRecorderView: View {
 
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 14) {
-                        ForEach(Array(effectiveScriptLines.enumerated()), id: \.offset) { idx, line in
-                            Text(line)
-                                .font(prompterFont)
-                                .foregroundStyle(lineColor(for: line))
-                                .lineSpacing(6)
-                                .id(idx)
+                        ForEach(voiceTracker.lines) { line in
+                            prompterLineView(line)
+                                .id(line.id)
+                                .onGeometryChange(for: CGRect.self) { proxy in
+                                    proxy.frame(in: .named("prompterContent"))
+                                } action: { rect in
+                                    lineFrames[line.id] = rect
+                                }
+                                .onTapGesture {
+                                    voiceTracker.jumpToLine(line.id)
+                                    syncScrollOffsetToVoiceTracker()
+                                }
                         }
                         Spacer().frame(height: 120)
                     }
                     .padding(16)
+                    .coordinateSpace(name: "prompterContent")
                     .onGeometryChange(for: CGFloat.self) { proxy in
                         proxy.size.height
                     } action: { newHeight in
@@ -334,6 +382,7 @@ struct TeleprompterRecorderView: View {
                     }
                     .offset(y: -scrollOffset)
                 }
+                .clipped()
                 .onGeometryChange(for: CGFloat.self) { proxy in
                     proxy.size.height
                 } action: { newHeight in
@@ -341,6 +390,71 @@ struct TeleprompterRecorderView: View {
                     scrollOffset = min(scrollOffset, max(0, prompterContentHeight - newHeight))
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func prompterLineView(_ line: VoiceTeleprompterTracker.LineModel) -> some View {
+        if line.isCueLine {
+            Text(line.rawText)
+                .font(prompterFont)
+                .italic()
+                .foregroundStyle(Theme.Colors.cameraTeleprompterHighlight.opacity(0.9))
+                .lineSpacing(6)
+        } else if followVoice {
+            highlightedSpeakableLine(line)
+                .font(prompterFont)
+                .lineSpacing(6)
+        } else {
+            Text(line.rawText)
+                .font(prompterFont)
+                .foregroundStyle(lineColor(for: line.rawText))
+                .lineSpacing(6)
+        }
+    }
+
+    private func highlightedSpeakableLine(_ line: VoiceTeleprompterTracker.LineModel) -> Text {
+        let words = line.displayWords
+        var composed = Text("")
+        for (wordIdx, word) in words.enumerated() {
+            let suffix = (wordIdx < words.count - 1) ? " " : ""
+            let isMatched = voiceTracker.isWordMatched(lineIndex: line.id, wordIndex: wordIdx)
+            let isCurrent = voiceTracker.isWordCurrent(lineIndex: line.id, wordIndex: wordIdx)
+
+            let tokenText = Text(word + suffix)
+            if isCurrent {
+                composed = composed + tokenText
+                    .foregroundColor(Theme.Colors.cameraTeleprompterHighlight)
+                    .fontWeight(.heavy)
+            } else if isMatched {
+                composed = composed + tokenText
+                    .foregroundColor(Color.white.opacity(0.42))
+            } else {
+                composed = composed + tokenText
+                    .foregroundColor(Color.white)
+            }
+        }
+        return composed
+    }
+
+    private func syncScrollOffsetToVoiceTracker() {
+        let idx = voiceTracker.activeLineIndex
+        guard let frame = lineFrames[idx], prompterViewportHeight > 0 else { return }
+        let fraction = CGFloat(voiceTracker.lineWordFraction(idx))
+        let activeY = frame.minY + fraction * max(24, frame.height)
+        let target = min(maxScrollOffset, max(0, activeY - prompterViewportHeight * 0.28))
+        guard abs(target - scrollOffset) >= 2 else { return }
+        withAnimation(.easeOut(duration: 0.26)) {
+            scrollOffset = target
+        }
+    }
+
+    private func resetPrompterPosition() {
+        voiceTracker.reset()
+        lastProcessedTranscript = ""
+        lastProcessedIsFinal = false
+        withAnimation(.easeOut(duration: 0.2)) {
+            scrollOffset = 0.0
         }
     }
 

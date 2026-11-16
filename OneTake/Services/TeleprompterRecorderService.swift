@@ -83,6 +83,7 @@ nonisolated private final class RecorderStateBox: @unchecked Sendable {
     private var _activeTapSampleRate: Double = 0
     private var _activeTapChannelCount: AVAudioChannelCount = 0
     private var _hasMovieFileOutput = false
+    private var _hasAudioDataOutput = false
 
     func withLock<T>(_ body: (RecorderStateBox) -> T) -> T {
         lock.lock()
@@ -160,6 +161,11 @@ nonisolated private final class RecorderStateBox: @unchecked Sendable {
         set { withLock { $0._hasMovieFileOutput = newValue } }
     }
 
+    var hasAudioDataOutput: Bool {
+        get { withLock { $0._hasAudioDataOutput } }
+        set { withLock { $0._hasAudioDataOutput = newValue } }
+    }
+
     func tryBeginFrameAnalysis() -> Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -185,6 +191,26 @@ nonisolated private final class RecorderStateBox: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return _activeTapSampleRate == sampleRate && _activeTapChannelCount == channelCount
+    }
+
+    /// Appends an audio CMSampleBuffer from AVCaptureAudioDataOutput and throttles MainActor UI updates (~15 Hz).
+    func processCapturedAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer, rms: Float) -> (shouldDispatch: Bool, transcript: String) {
+        lock.lock()
+        _latestRMS = rms
+        let request = _recognitionRequest
+        let transcript = _latestTranscript
+        let now = CFAbsoluteTimeGetCurrent()
+        let elapsed = now - _lastMicDispatchTime
+        let delta = abs(rms - _lastDispatchedRMS)
+        let shouldDispatch = elapsed >= (1.0 / 15.0) || delta >= 0.03
+        if shouldDispatch {
+            _lastMicDispatchTime = now
+            _lastDispatchedRMS = rms
+        }
+        lock.unlock()
+
+        request?.appendAudioSampleBuffer(sampleBuffer)
+        return (shouldDispatch, transcript)
     }
 
     /// Appends audio to the active request and throttles MainActor UI updates (~15 Hz unless RMS changes meaningfully).
@@ -255,6 +281,7 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     /// Supplied by cue playback. A locked cue rejects its own speaker audio before
     /// it can reach either commands or script progression.
     @ObservationIgnored var shouldIgnoreRecognizedTranscript: (() -> Bool)?
+    @ObservationIgnored var scriptContextualStrings: [String] = []
     var defaultCountdownSeconds: Int = 3
 
     // Simulator test controls
@@ -268,6 +295,7 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     @ObservationIgnored private let stateBox = RecorderStateBox()
     @ObservationIgnored private let sessionQueue = DispatchQueue(label: "com.onetake.teleprompter.session")
     @ObservationIgnored private let visionQueue = DispatchQueue(label: "com.onetake.teleprompter.vision.queue")
+    @ObservationIgnored private let audioSampleQueue = DispatchQueue(label: "com.onetake.teleprompter.audio.queue")
     @ObservationIgnored private var taskRestartTimer: Timer?
     @ObservationIgnored private var recognitionRestartWorkItem: DispatchWorkItem?
     @ObservationIgnored private var sessionObservers: [NSObjectProtocol] = []
@@ -278,6 +306,7 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     @ObservationIgnored nonisolated(unsafe) private var sessionVideoDevice: AVCaptureDevice?
     @ObservationIgnored nonisolated(unsafe) private var sessionMovieFileOutput: AVCaptureMovieFileOutput?
     @ObservationIgnored nonisolated(unsafe) private var sessionVideoDataOutput: AVCaptureVideoDataOutput?
+    @ObservationIgnored nonisolated(unsafe) private var sessionAudioDataOutput: AVCaptureAudioDataOutput?
     @ObservationIgnored private weak var previewLayer: AVCaptureVideoPreviewLayer?
     @ObservationIgnored private var outputFileURL: URL?
 
@@ -536,6 +565,16 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
 
             if let existing = self.sessionCaptureSession {
                 existing.beginConfiguration()
+                if self.sessionAudioDataOutput == nil {
+                    let audioDataOut = AVCaptureAudioDataOutput()
+                    audioDataOut.setSampleBufferDelegate(self, queue: self.audioSampleQueue)
+                    if existing.canAddOutput(audioDataOut) {
+                        existing.addOutput(audioDataOut)
+                        self.sessionAudioDataOutput = audioDataOut
+                        self.stateBox.hasAudioDataOutput = true
+                    }
+                }
+
                 self.applySessionVideoConfiguration(
                     to: existing,
                     device: self.sessionVideoDevice,
@@ -619,6 +658,14 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
                     )
                 }
 
+                let audioDataOut = AVCaptureAudioDataOutput()
+                audioDataOut.setSampleBufferDelegate(self, queue: self.audioSampleQueue)
+                if session.canAddOutput(audioDataOut) {
+                    session.addOutput(audioDataOut)
+                    self.sessionAudioDataOutput = audioDataOut
+                    self.stateBox.hasAudioDataOutput = true
+                }
+
                 self.applySessionVideoConfiguration(
                     to: session,
                     device: camera,
@@ -638,6 +685,14 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
                     self.isUsingFrontCamera = (initialPosition == .front)
                     self.currentZoomFactor = 1.0
                     self.applyPreviewLayerConfiguration(for: initialPosition)
+                    if self.stateBox.hasAudioDataOutput && self.stateBox.isAudioTapInstalled {
+                        self.speechAudioEngine.inputNode.removeTap(onBus: 0)
+                        self.stateBox.isAudioTapInstalled = false
+                        self.stateBox.setTapFormat(sampleRate: 0, channelCount: 0)
+                        if self.speechAudioEngine.isRunning {
+                            self.speechAudioEngine.stop()
+                        }
+                    }
                 }
             } catch {
                 session.commitConfiguration()
@@ -719,6 +774,14 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
                     newDevice.unlockForConfiguration()
                 } catch {
                     print("Flip camera zoom reset error: \(error)")
+                }
+
+                let audioDataOut = AVCaptureAudioDataOutput()
+                audioDataOut.setSampleBufferDelegate(self, queue: self.audioSampleQueue)
+                if session.canAddOutput(audioDataOut) {
+                    session.addOutput(audioDataOut)
+                    self.sessionAudioDataOutput = audioDataOut
+                    self.stateBox.hasAudioDataOutput = true
                 }
 
                 self.applySessionVideoConfiguration(
@@ -811,50 +874,52 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
             return
         }
 
-        let inputNode = speechAudioEngine.inputNode
-        let outputFormat = inputNode.outputFormat(forBus: 0)
-        let inputFormat = inputNode.inputFormat(forBus: 0)
-        guard let tapFormat = [outputFormat, inputFormat].first(where: { $0.sampleRate > 0 && $0.channelCount > 0 }) else {
-            print("Invalid audio input formats in TeleprompterRecorderService")
-            voiceStatus = .failed
-            return
-        }
-
-        if !stateBox.isAudioTapInstalled {
-            inputNode.removeTap(onBus: 0)
-            let box = stateBox
-            inputNode.installTap(onBus: 0, bufferSize: 1024, format: tapFormat) { [weak self] readOnlyBuffer, _ in
-                var rms: Float = 0.0
-                if let channelData = readOnlyBuffer.floatChannelData?[0] {
-                    let frameLength = Int(readOnlyBuffer.frameLength)
-                    if frameLength > 0 {
-                        var sumSquares: Float = 0.0
-                        for i in 0..<frameLength {
-                            let sample = channelData[i]
-                            sumSquares += sample * sample
-                        }
-                        rms = sqrt(sumSquares / Float(frameLength))
-                    }
-                }
-
-                let dispatchDecision = box.processAudioTapBuffer(readOnlyBuffer, rms: rms)
-                if dispatchDecision.shouldDispatch {
-                    Task { @MainActor [weak self] in
-                        self?.onLiveMicData?(rms, dispatchDecision.transcript, false)
-                    }
-                }
-            }
-            stateBox.setTapFormat(sampleRate: tapFormat.sampleRate, channelCount: tapFormat.channelCount)
-            stateBox.isAudioTapInstalled = true
-        }
-
-        if !speechAudioEngine.isRunning {
-            do {
-                try speechAudioEngine.start()
-            } catch {
-                print("Failed to start speechAudioEngine: \(error)")
+        if !stateBox.hasAudioDataOutput {
+            let inputNode = speechAudioEngine.inputNode
+            let outputFormat = inputNode.outputFormat(forBus: 0)
+            let inputFormat = inputNode.inputFormat(forBus: 0)
+            guard let tapFormat = [outputFormat, inputFormat].first(where: { $0.sampleRate > 0 && $0.channelCount > 0 }) else {
+                print("Invalid audio input formats in TeleprompterRecorderService")
                 voiceStatus = .failed
                 return
+            }
+
+            if !stateBox.isAudioTapInstalled {
+                inputNode.removeTap(onBus: 0)
+                let box = stateBox
+                inputNode.installTap(onBus: 0, bufferSize: 1024, format: tapFormat) { [weak self] readOnlyBuffer, _ in
+                    var rms: Float = 0.0
+                    if let channelData = readOnlyBuffer.floatChannelData?[0] {
+                        let frameLength = Int(readOnlyBuffer.frameLength)
+                        if frameLength > 0 {
+                            var sumSquares: Float = 0.0
+                            for i in 0..<frameLength {
+                                let sample = channelData[i]
+                                sumSquares += sample * sample
+                            }
+                            rms = sqrt(sumSquares / Float(frameLength))
+                        }
+                    }
+
+                    let dispatchDecision = box.processAudioTapBuffer(readOnlyBuffer, rms: rms)
+                    if dispatchDecision.shouldDispatch {
+                        Task { @MainActor [weak self] in
+                            self?.onLiveMicData?(rms, dispatchDecision.transcript, false)
+                        }
+                    }
+                }
+                stateBox.setTapFormat(sampleRate: tapFormat.sampleRate, channelCount: tapFormat.channelCount)
+                stateBox.isAudioTapInstalled = true
+            }
+
+            if !speechAudioEngine.isRunning {
+                do {
+                    try speechAudioEngine.start()
+                } catch {
+                    print("Failed to start speechAudioEngine: \(error)")
+                    voiceStatus = .failed
+                    return
+                }
             }
         }
 
@@ -885,6 +950,12 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         request.shouldReportPartialResults = true
         request.taskHint = .dictation
         request.addsPunctuation = false
+        var combinedHints = ["Action", "Cut", "How do I look"]
+        for word in scriptContextualStrings where !combinedHints.contains(word) {
+            combinedHints.append(word)
+            if combinedHints.count >= 100 { break }
+        }
+        request.contextualStrings = combinedHints
         request.requiresOnDeviceRecognition = speechRecognizer.supportsOnDeviceRecognition
         stateBox.recognitionRequest = request
 
@@ -951,7 +1022,7 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
                 self.voiceStatus = .failed
                 return
             }
-            if !self.speechAudioEngine.isRunning {
+            if !self.stateBox.hasAudioDataOutput && !self.speechAudioEngine.isRunning {
                 do { try self.speechAudioEngine.start() }
                 catch { self.voiceStatus = .failed; return }
             }
@@ -1032,6 +1103,11 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
                 guard reason == .newDeviceAvailable
                     || reason == .oldDeviceUnavailable
                     || reason == .override else {
+                    return
+                }
+
+                if self.stateBox.hasAudioDataOutput {
+                    self.restartRecognitionTaskSeamlessly()
                     return
                 }
 
@@ -1299,7 +1375,7 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
             guard let self = self,
                   self.isSessionRunning,
                   VoiceAuthorizationService.shared.isAuthorized else { return }
-            if !self.speechAudioEngine.isRunning {
+            if !self.stateBox.hasAudioDataOutput && !self.speechAudioEngine.isRunning {
                 try? self.speechAudioEngine.start()
             }
         }
@@ -1416,12 +1492,23 @@ extension TeleprompterRecorderService: AVCaptureFileOutputRecordingDelegate {
 
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
 
-extension TeleprompterRecorderService: AVCaptureVideoDataOutputSampleBufferDelegate {
+extension TeleprompterRecorderService: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     nonisolated func captureOutput(
         _ output: AVCaptureOutput,
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
+        if output is AVCaptureAudioDataOutput {
+            let rms = Self.computeSampleBufferRMS(sampleBuffer)
+            let dispatchDecision = stateBox.processCapturedAudioSampleBuffer(sampleBuffer, rms: rms)
+            if dispatchDecision.shouldDispatch {
+                Task { @MainActor [weak self] in
+                    self?.onLiveMicData?(rms, dispatchDecision.transcript, false)
+                }
+            }
+            return
+        }
+
         guard stateBox.tryBeginFrameAnalysis() else { return }
         defer { stateBox.endFrameAnalysis() }
 
@@ -1471,6 +1558,50 @@ extension TeleprompterRecorderService: AVCaptureVideoDataOutputSampleBufferDeleg
 
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         try? handler.perform([faceRequest, segRequest])
+    }
+
+    nonisolated private static func computeSampleBufferRMS(_ sampleBuffer: CMSampleBuffer) -> Float {
+        guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee else {
+            return 0
+        }
+        var blockBuffer: CMBlockBuffer?
+        var audioBufferList = AudioBufferList()
+        let status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer,
+            bufferListSizeNeededOut: nil,
+            bufferListOut: &audioBufferList,
+            bufferListSize: MemoryLayout<AudioBufferList>.size,
+            blockBufferAllocator: nil,
+            blockBufferMemoryAllocator: nil,
+            flags: 0,
+            blockBufferOut: &blockBuffer
+        )
+        guard status == noErr, let data = audioBufferList.mBuffers.mData else { return 0 }
+        let byteCount = Int(audioBufferList.mBuffers.mDataByteSize)
+        guard byteCount > 0 else { return 0 }
+
+        var sumSquares: Double = 0
+        var count = 0
+        if (asbd.mFormatFlags & kAudioFormatFlagIsFloat) != 0 && asbd.mBitsPerChannel == 32 {
+            let sampleCount = byteCount / MemoryLayout<Float>.size
+            let samples = data.bindMemory(to: Float.self, capacity: sampleCount)
+            for i in stride(from: 0, to: sampleCount, by: 4) {
+                let s = Double(samples[i])
+                sumSquares += s * s
+                count += 1
+            }
+        } else if asbd.mBitsPerChannel == 16 {
+            let sampleCount = byteCount / MemoryLayout<Int16>.size
+            let samples = data.bindMemory(to: Int16.self, capacity: sampleCount)
+            for i in stride(from: 0, to: sampleCount, by: 4) {
+                let s = Double(samples[i]) / Double(Int16.max)
+                sumSquares += s * s
+                count += 1
+            }
+        }
+        guard count > 0 else { return 0 }
+        return Float(sqrt(sumSquares / Double(count)))
     }
 
     nonisolated private static func evaluateLuminance(of pixelBuffer: CVPixelBuffer) -> String {

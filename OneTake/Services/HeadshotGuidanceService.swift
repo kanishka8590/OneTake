@@ -59,7 +59,7 @@ nonisolated struct GuidanceFeedback: Sendable {
     var posePrediction: HeadshotPosePrediction? = nil
 
     var allChecksPassed: Bool {
-        isFaceCentered && isAngleCorrect && (lighting == .good) && isEyeLevel && (background == .clean)
+        hasFace && isFaceCentered && isAngleCorrect && (lighting == .good)
     }
 }
 
@@ -126,6 +126,11 @@ nonisolated private final class GuidanceStateBox: @unchecked Sendable {
     private var _isAnalyzingFrame = false
     private var _visionFrameCounter: Int = 0
     private var _cachedBackgroundIsPlain: Bool = true
+    private var _recentYaws: [Double] = []
+    private var _recentPoses: [HeadshotPosePrediction] = []
+    private var _smoothedCenterX: CGFloat?
+    private var _smoothedCenterY: CGFloat?
+    private var _smoothedFaceHeight: CGFloat?
 
     func withLock<T>(_ body: (GuidanceStateBox) -> T) -> T {
         lock.lock()
@@ -223,6 +228,75 @@ nonisolated private final class GuidanceStateBox: @unchecked Sendable {
     var cachedBackgroundIsPlain: Bool {
         get { withLock { $0._cachedBackgroundIsPlain } }
         set { withLock { $0._cachedBackgroundIsPlain = newValue } }
+    }
+
+    func resetSmoothing() {
+        withLock { box in
+            box._recentYaws.removeAll()
+            box._recentPoses.removeAll()
+            box._smoothedCenterX = nil
+            box._smoothedCenterY = nil
+            box._smoothedFaceHeight = nil
+            box._cachedBackgroundIsPlain = true
+            box._visionFrameCounter = 0
+        }
+    }
+
+    func smoothVisionSignals(
+        hasFace: Bool,
+        centerX: CGFloat,
+        centerYTopDown: CGFloat,
+        faceHeight: CGFloat,
+        rawYaw: Double?,
+        posePrediction: HeadshotPosePrediction?
+    ) -> (centerX: CGFloat, centerYTopDown: CGFloat, faceHeight: CGFloat, yaw: Double?, pose: HeadshotPosePrediction?) {
+        withLock { box in
+            let sX: CGFloat
+            let sY: CGFloat
+            let sH: CGFloat
+            if hasFace {
+                if let px = box._smoothedCenterX, let py = box._smoothedCenterY, let ph = box._smoothedFaceHeight {
+                    sX = px * 0.4 + centerX * 0.6
+                    sY = py * 0.4 + centerYTopDown * 0.6
+                    sH = ph * 0.4 + faceHeight * 0.6
+                } else {
+                    sX = centerX
+                    sY = centerYTopDown
+                    sH = faceHeight
+                }
+                box._smoothedCenterX = sX
+                box._smoothedCenterY = sY
+                box._smoothedFaceHeight = sH
+            } else {
+                box._smoothedCenterX = nil
+                box._smoothedCenterY = nil
+                box._smoothedFaceHeight = nil
+                box._recentYaws.removeAll()
+                sX = centerX
+                sY = centerYTopDown
+                sH = faceHeight
+            }
+
+            if let rawYaw {
+                box._recentYaws.append(rawYaw)
+                if box._recentYaws.count > 3 { box._recentYaws.removeFirst() }
+            } else if !hasFace {
+                box._recentYaws.removeAll()
+            }
+
+            let smoothedYaw: Double? = box._recentYaws.isEmpty ? rawYaw : {
+                let sorted = box._recentYaws.sorted()
+                return sorted[sorted.count / 2]
+            }()
+
+            if let posePrediction {
+                box._recentPoses.append(posePrediction)
+                if box._recentPoses.count > 3 { box._recentPoses.removeFirst() }
+            }
+            let smoothedPose: HeadshotPosePrediction? = box._recentPoses.last
+
+            return (sX, sY, sH, smoothedYaw, smoothedPose)
+        }
     }
 }
 
@@ -351,7 +425,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         switch targetAngle {
         case .front:
             if let yaw = visionYawDegrees {
-                return AngleEvaluationResult(isCorrect: abs(yaw) <= 20.0, resolvedYawDegrees: yaw)
+                return AngleEvaluationResult(isCorrect: abs(yaw) <= 22.0, resolvedYawDegrees: yaw)
             }
             if let prediction = posePrediction, prediction.pose == .front, prediction.confidence >= 0.45 {
                 return AngleEvaluationResult(isCorrect: true, resolvedYawDegrees: prediction.yawDegrees)
@@ -359,10 +433,10 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
             return AngleEvaluationResult(isCorrect: false, resolvedYawDegrees: posePrediction?.yawDegrees ?? 0.0)
 
         case .left:
-            if let yaw = visionYawDegrees, yaw >= 22.0 && yaw <= 88.0 {
+            if let yaw = visionYawDegrees, yaw >= 20.0 && yaw <= 88.0 {
                 return AngleEvaluationResult(isCorrect: true, resolvedYawDegrees: yaw)
             }
-            if let prediction = posePrediction, prediction.pose == .leftProfile, prediction.confidence >= 0.50 {
+            if let prediction = posePrediction, prediction.pose == .leftProfile, prediction.confidence >= 0.45 {
                 return AngleEvaluationResult(isCorrect: true, resolvedYawDegrees: prediction.yawDegrees)
             }
             return AngleEvaluationResult(
@@ -371,10 +445,10 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
             )
 
         case .right:
-            if let yaw = visionYawDegrees, yaw <= -22.0 && yaw >= -88.0 {
+            if let yaw = visionYawDegrees, yaw <= -20.0 && yaw >= -88.0 {
                 return AngleEvaluationResult(isCorrect: true, resolvedYawDegrees: yaw)
             }
-            if let prediction = posePrediction, prediction.pose == .rightProfile, prediction.confidence >= 0.50 {
+            if let prediction = posePrediction, prediction.pose == .rightProfile, prediction.confidence >= 0.45 {
                 return AngleEvaluationResult(isCorrect: true, resolvedYawDegrees: prediction.yawDegrees)
             }
             return AngleEvaluationResult(
@@ -428,7 +502,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
             )
         }
 
-        if faceHeight < 0.20 {
+        if faceHeight < 0.17 {
             return PoseGuideEvaluation(
                 isFaceCentered: false,
                 isAngleCorrect: angleEval.isCorrect,
@@ -438,7 +512,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
                 isAligned: false
             )
         }
-        if faceHeight > 0.52 {
+        if faceHeight > 0.56 {
             return PoseGuideEvaluation(
                 isFaceCentered: false,
                 isAngleCorrect: angleEval.isCorrect,
@@ -448,7 +522,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
                 isAligned: false
             )
         }
-        if centerX < 0.38 {
+        if centerX < 0.33 {
             return PoseGuideEvaluation(
                 isFaceCentered: false,
                 isAngleCorrect: angleEval.isCorrect,
@@ -458,7 +532,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
                 isAligned: false
             )
         }
-        if centerX > 0.62 {
+        if centerX > 0.67 {
             return PoseGuideEvaluation(
                 isFaceCentered: false,
                 isAngleCorrect: angleEval.isCorrect,
@@ -468,7 +542,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
                 isAligned: false
             )
         }
-        if centerYTopDown < 0.28 {
+        if centerYTopDown < 0.24 {
             return PoseGuideEvaluation(
                 isFaceCentered: false,
                 isAngleCorrect: angleEval.isCorrect,
@@ -478,7 +552,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
                 isAligned: false
             )
         }
-        if centerYTopDown > 0.58 {
+        if centerYTopDown > 0.62 {
             return PoseGuideEvaluation(
                 isFaceCentered: false,
                 isAngleCorrect: angleEval.isCorrect,
@@ -598,28 +672,6 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
             break
         }
 
-        if !isEyeLevel {
-            return PoseGuideEvaluation(
-                isFaceCentered: true,
-                isAngleCorrect: true,
-                resolvedYawDegrees: yawDegrees,
-                headline: "Hold phone at eye level",
-                spoken: "Hold your phone at eye level.",
-                isAligned: false
-            )
-        }
-
-        if background == .cluttered {
-            return PoseGuideEvaluation(
-                isFaceCentered: true,
-                isAngleCorrect: true,
-                resolvedYawDegrees: yawDegrees,
-                headline: "Use a plain wall behind you",
-                spoken: "Use a plain wall behind you.",
-                isAligned: false
-            )
-        }
-
         return PoseGuideEvaluation(
             isFaceCentered: true,
             isAngleCorrect: true,
@@ -675,6 +727,8 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         self.isDemoMode = isDemoMode
         self.stateBox.targetAngle = angle
         self.stateBox.isDemoMode = isDemoMode
+        self.stateBox.resetSmoothing()
+        self.lastAlignedAt = nil
 
         self.poseAnnouncementToken = nil
         self.countdownTask?.cancel()
@@ -2112,12 +2166,6 @@ extension HeadshotGuidanceService: AVCaptureVideoDataOutputSampleBufferDelegate 
 
         let faceRequest = VNDetectFaceRectanglesRequest()
         faceRequest.revision = VNDetectFaceRectanglesRequestRevision3
-        let runSegmentation = stateBox.shouldRunSegmentationThisFrame()
-        let segRequest: VNGeneratePersonSegmentationRequest? = runSegmentation ? {
-            let req = VNGeneratePersonSegmentationRequest()
-            req.qualityLevel = .fast
-            return req
-        }() : nil
         let wantsHandGesture = stateBox.wantsHandGesture
         let handRequest: VNDetectHumanHandPoseRequest? = wantsHandGesture ? {
             let req = VNDetectHumanHandPoseRequest()
@@ -2126,9 +2174,6 @@ extension HeadshotGuidanceService: AVCaptureVideoDataOutputSampleBufferDelegate 
         }() : nil
 
         var requests: [VNRequest] = [faceRequest]
-        if let segRequest {
-            requests.append(segRequest)
-        }
         if let handRequest {
             requests.append(handRequest)
         }
@@ -2139,61 +2184,60 @@ extension HeadshotGuidanceService: AVCaptureVideoDataOutputSampleBufferDelegate 
         let face = (faceRequest.results ?? []).max(by: {
             ($0.boundingBox.width * $0.boundingBox.height) < ($1.boundingBox.width * $1.boundingBox.height)
         })
-        let posePrediction = HeadshotPosePredictor.shared.predict(pixelBuffer: pixelBuffer, orientation: orientation)
+        let rawPosePrediction = HeadshotPosePredictor.shared.predict(pixelBuffer: pixelBuffer, orientation: orientation)
 
         // CoreML can recognize full 90° profiles when Vision's face box drops out (ported from OneTake-iOS-main).
         let hasFace: Bool
-        let centerX: CGFloat
-        let centerYTopDown: CGFloat
-        let faceHeight: CGFloat
+        let rawCenterX: CGFloat
+        let rawCenterYTopDown: CGFloat
+        let rawFaceHeight: CGFloat
         if let face {
             hasFace = true
-            centerX = face.boundingBox.midX
-            centerYTopDown = 1.0 - face.boundingBox.midY
-            faceHeight = face.boundingBox.height
-        } else if let posePrediction, posePrediction.confidence >= 0.65 {
+            rawCenterX = face.boundingBox.midX
+            rawCenterYTopDown = 1.0 - face.boundingBox.midY
+            rawFaceHeight = face.boundingBox.height
+        } else if let rawPosePrediction, rawPosePrediction.confidence >= 0.65 {
             hasFace = true
-            centerX = 0.5
-            centerYTopDown = 0.42
-            faceHeight = 0.34
+            rawCenterX = 0.5
+            rawCenterYTopDown = 0.42
+            rawFaceHeight = 0.34
         } else {
             hasFace = false
-            centerX = 0.5
-            centerYTopDown = 0.5
-            faceHeight = 0.0
+            rawCenterX = 0.5
+            rawCenterYTopDown = 0.5
+            rawFaceHeight = 0.0
         }
 
         let targetAngle = stateBox.targetAngle
-        let visionYawDeg = face?.yaw.map { $0.doubleValue * 180.0 / .pi }
+        let rawVisionYawDeg = face?.yaw.map { $0.doubleValue * 180.0 / .pi }
+        let smoothed = stateBox.smoothVisionSignals(
+            hasFace: hasFace,
+            centerX: rawCenterX,
+            centerYTopDown: rawCenterYTopDown,
+            faceHeight: rawFaceHeight,
+            rawYaw: rawVisionYawDeg,
+            posePrediction: rawPosePrediction
+        )
+
         let currentLighting = Self.evaluatePixelBufferLuminance(
             pixelBuffer,
             faceBoundingBox: face?.boundingBox,
             allowUnevenShadow: targetAngle != .front
         )
-
-        let isPlain: Bool
-        if let segResult = segRequest?.results?.first as? VNPixelBufferObservation {
-            let computed = Self.evaluateBackgroundClutter(maskBuffer: segResult.pixelBuffer, frameBuffer: pixelBuffer)
-            stateBox.cachedBackgroundIsPlain = computed
-            isPlain = computed
-        } else {
-            isPlain = stateBox.cachedBackgroundIsPlain
-        }
         let openPalm = handRequest?.results?.contains(where: Self.isOpenPalm) ?? false
 
         Task { @MainActor [weak self] in
             guard let self, self.isSessionRunning else { return }
-            let backgroundStatus: BackgroundStatus = isPlain ? .clean : .cluttered
             let evaluation = Self.evaluatePoseGuide(
                 hasFace: hasFace,
-                centerX: centerX,
-                centerYTopDown: centerYTopDown,
-                faceHeight: faceHeight,
-                visionYawDegrees: visionYawDeg,
-                posePrediction: posePrediction,
+                centerX: smoothed.centerX,
+                centerYTopDown: smoothed.centerYTopDown,
+                faceHeight: smoothed.faceHeight,
+                visionYawDegrees: smoothed.yaw,
+                posePrediction: smoothed.pose,
                 lighting: currentLighting,
                 isEyeLevel: self.feedback.isEyeLevel,
-                background: backgroundStatus,
+                background: .clean,
                 targetAngle: targetAngle,
                 autoCaptureEnabled: self.autoCaptureEnabled
             )
@@ -2203,8 +2247,8 @@ extension HeadshotGuidanceService: AVCaptureVideoDataOutputSampleBufferDelegate 
             self.feedback.isAngleCorrect = evaluation.isAngleCorrect
             self.feedback.currentYawDegrees = evaluation.resolvedYawDegrees
             self.feedback.lighting = currentLighting
-            self.feedback.background = backgroundStatus
-            self.feedback.posePrediction = posePrediction
+            self.feedback.background = .clean
+            self.feedback.posePrediction = smoothed.pose
             self.feedback.guidanceHeadline = evaluation.headline
             self.feedback.spokenAdvice = evaluation.spoken
             self.openPalmDetected = self.gesturesEnabled && openPalm

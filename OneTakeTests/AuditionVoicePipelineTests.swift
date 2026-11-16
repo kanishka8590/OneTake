@@ -244,4 +244,39 @@ final class AuditionVoicePipelineTests: XCTestCase {
         scheduled.removeFirst()()
         XCTAssertEqual(fired, [0, 1])
     }
+
+    // MARK: - VoiceTeleprompterTracker Read-Along Tests
+
+    func testVoiceTeleprompterTrackerAdvancesWordByWordAcrossRolloversAndAdLibs() {
+        let tracker = VoiceTeleprompterTracker(
+            scriptLines: [
+                "[READER]: Are you ready to talk?",
+                "I'm five′8″ tall and I live in Mumbai.",
+                "Let's finish this scene together before midnight."
+            ],
+            cueSpeakers: ["READER"]
+        )
+
+        // Reader line has 0 speakable words so active line starts cleanly on line 1 ("I'm ...").
+        XCTAssertEqual(tracker.activeLineIndex, 1)
+        XCTAssertEqual(tracker.activeWordIndexInLine, 0)
+
+        // Contraction ("I am" == "I'm") and spoken height ("five eight" == "5′8″") advance smoothly.
+        tracker.ingestTranscript("I am five eight", isFinal: false)
+        XCTAssertEqual(tracker.activeLineIndex, 1)
+        XCTAssertTrue(tracker.isWordMatched(lineIndex: 1, wordIndex: 0))
+        XCTAssertTrue(tracker.isWordMatched(lineIndex: 1, wordIndex: 1))
+        XCTAssertGreaterThan(tracker.lineWordFraction(1), 0.2)
+
+        // Task rollover (final then fresh short transcript) must NEVER move progress backward.
+        let prevCount = tracker.matchedWordCount
+        tracker.ingestTranscript("I am five eight tall and", isFinal: true)
+        XCTAssertGreaterThan(tracker.matchedWordCount, prevCount)
+
+        // Actor skips "live in" or ad-libs briefly -> bigram resync picks up "Mumbai" / "Let's finish".
+        let countAfterFirstSentence = tracker.matchedWordCount
+        tracker.ingestTranscript("Mumbai lets finish this scene", isFinal: false)
+        XCTAssertGreaterThan(tracker.matchedWordCount, countAfterFirstSentence)
+        XCTAssertEqual(tracker.activeLineIndex, 2)
+    }
 }

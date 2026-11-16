@@ -82,13 +82,26 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
     // MARK: - Image / Scan OCR with Column Reconstruction
 
     func parseImage(_ image: UIImage) async throws -> ParsedCastingCall {
-        let rawText = try await extractRawText(from: image)
-        return await parseText(rawText)
+        let layout = await Task.detached(priority: .userInitiated) {
+            NoticeOCR.recognizeLayout(in: image, pageIndex: 0)
+        }.value
+        return await parseLayout(lines: layout.lines, rawText: layout.text)
     }
 
     func parseImages(_ images: [UIImage]) async throws -> ParsedCastingCall {
-        let combinedText = await NoticeOCR.recognizeText(in: images)
-        return await parseText(combinedText)
+        var allLines: [LayoutLine] = []
+        var pages: [String] = []
+        for (idx, image) in images.enumerated() {
+            let layout = await Task.detached(priority: .userInitiated) {
+                NoticeOCR.recognizeLayout(in: image, pageIndex: idx)
+            }.value
+            let trimmed = layout.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                allLines.append(contentsOf: layout.lines)
+                pages.append(trimmed)
+            }
+        }
+        return await parseLayout(lines: allLines, rawText: pages.joined(separator: "\n\n"))
     }
 
     func extractRawText(from image: UIImage) async throws -> String {
@@ -278,13 +291,17 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
     // MARK: - Deterministic + ML-Assisted Parser
 
     func parseText(_ text: String) async -> ParsedCastingCall {
+        await parseLayout(lines: [], rawText: text)
+    }
+
+    func parseLayout(lines layoutLines: [LayoutLine], rawText text: String) async -> ParsedCastingCall {
         let deterministic = await Task.detached(priority: .userInitiated) { [self] in
-            self.parseTextSync(text)
+            self.parseTextSync(text, layoutLines: layoutLines)
         }.value
         return await OnDeviceIntelligence.refineParsedCall(deterministic, sourceText: text)
     }
 
-    private func parseTextSync(_ text: String) -> ParsedCastingCall {
+    private func parseTextSync(_ text: String, layoutLines: [LayoutLine] = []) -> ParsedCastingCall {
         var result = ParsedCastingCall()
         let normalizedRaw = text.replacingOccurrences(of: "\u{FFFC}", with: "")
         result.rawExtractedText = normalizedRaw
@@ -320,7 +337,7 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
         result.detectedScriptText = dialogueResult.scriptText
 
         // 4. Project Name
-        result.projectName = extractProjectName(from: lines, cleanText: cleanText)
+        result.projectName = extractProjectName(from: lines, cleanText: cleanText, layoutLines: layoutLines)
 
         // 5. Deadline Extraction (only inspect notice/header lines, never screenplay dialogue lines)
         if let deadline = extractDeadline(from: lines, hasDialogue: dialogueResult.scriptText != nil) {
@@ -397,7 +414,8 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
         var bestEmail = ""
         var bestScore = Int.min
 
-        for line in lines where !line.isEmpty {
+        for rawLine in lines where !rawLine.isEmpty {
+            let line = sanitizeEmailLine(rawLine)
             let nsRange = NSRange(line.startIndex..., in: line)
             let matches = regex.matches(in: line, range: nsRange)
             guard !matches.isEmpty else { continue }
@@ -434,6 +452,12 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
         }
 
         return bestEmail
+    }
+
+    private func sanitizeEmailLine(_ raw: String) -> String {
+        raw
+            .replacingOccurrences(of: #"\s*@\s*"#, with: "@", options: .regularExpression)
+            .replacingOccurrences(of: #"([A-Za-z0-9._%+-]+@[A-Za-z0-9-]+)\s*\.\s*([A-Za-z]{2,})"#, with: "$1.$2", options: .regularExpression)
     }
 
     private func isTheaterProduction(in lowerText: String) -> Bool {
@@ -525,7 +549,11 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
         return Double(text[range])
     }
 
-    private func extractProjectName(from lines: [String], cleanText: String) -> String {
+    private func extractProjectName(
+        from lines: [String],
+        cleanText: String,
+        layoutLines: [LayoutLine] = []
+    ) -> String {
         for line in lines {
             let lower = line.lowercased()
             if lower.hasPrefix("project:") || lower.hasPrefix("title:") || lower.hasPrefix("film:") || lower.hasPrefix("audition for:") {
@@ -611,13 +639,50 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
             "feature film", "short film", "web series", "ad film", "commercial",
             "series", "television", "theater", "theatre", "casting call",
             "casting notice", "now casting", "apply for free", "songs & scenes",
-            "audition sides", "project details", "key criteria", "requirements to be submitted", "how to apply"
+            "audition sides", "project details", "key criteria", "requirements to be submitted", "how to apply",
+            "role", "age", "gender", "category", "location", "language", "languages", "skills", "character look"
         ]
         let sentenceStarts = [
             "we are ", "looking for ", "interested ", "kindly ", "please ",
             "age group", "if you ", "audition deadline", "you can reach", "download the",
-            "a message from"
+            "a message from", "issued", "region", "scan qr", "email to apply"
         ]
+
+        // Spatial typographic hierarchy fallback: pick prominent upper-half display titles from OCR layout.
+        if !layoutLines.isEmpty {
+            let prominent = layoutLines
+                .filter { line in
+                    let cleaned = line.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"“”'•-–")))
+                    let lower = cleaned.lowercased()
+                    guard line.rect.maxY >= 0.45,
+                          line.rect.height >= 0.032,
+                          cleaned.count >= 3,
+                          cleaned.count <= 55,
+                          !categoryOrBannerExact.contains(lower),
+                          !lower.contains("casting call"),
+                          !lower.contains("casting notice"),
+                          !lower.contains("looking for"),
+                          !sentenceStarts.contains(where: { lower.hasPrefix($0) }),
+                          !lower.contains("@"),
+                          !lower.contains("http"),
+                          !lower.contains("www."),
+                          !lower.contains("for a feature film"),
+                          !lower.contains("for a short film"),
+                          cleaned.rangeOfCharacter(from: .letters) != nil else {
+                        return false
+                    }
+                    return true
+                }
+                .max { lhs, rhs in
+                    if abs(lhs.rect.height - rhs.rect.height) > 0.008 {
+                        return lhs.rect.height < rhs.rect.height
+                    }
+                    return lhs.rect.midY < rhs.rect.midY
+                }
+            if let prominent {
+                return smartTitleCase(prominent.text.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }
 
         if let headerLine = lines.first(where: { line in
             let cleaned = line.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"“”'•-–")))
@@ -660,6 +725,12 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
                 || lower.contains("due")
                 || lower.contains("last date")
                 || lower.contains("apply by")
+                || lower.contains("apply before")
+                || lower.contains("closes on")
+                || lower.contains("submissions close")
+                || lower.contains("closing date")
+                || lower.contains("valid till")
+                || lower.contains("valid until")
                 || ((lower.contains("submission") || lower.contains("send ")) && lower.contains(" by"))
             if isDeadlineCue {
                 let candidateLine = idx + 1 < lines.count ? "\(line) \(lines[idx + 1])" : line
@@ -770,7 +841,7 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
             let line = rawLine.replacingOccurrences(of: #"^[•\-\*]\s*"#, with: "", options: .regularExpression)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let lower = line.lowercased()
-            if lower.hasPrefix("role:") || lower.hasPrefix("character:") {
+            if lower.hasPrefix("role:") || lower.hasPrefix("character:") || lower.hasPrefix("seeking:") || lower.hasPrefix("role needed:") || lower.hasPrefix("character name:") {
                 let parts = line.split(separator: ":", maxSplits: 1).map(String.init)
                 if parts.count > 1 {
                     let value = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -781,7 +852,7 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
                         return smartTitleCase(value)
                     }
                 }
-            } else if lower == "role" || lower == "character" {
+            } else if lower == "role" || lower == "character" || lower == "character:" || lower == "seeking" {
                 var collected: [String] = []
                 var offset = 1
                 while index + offset < lines.count && collected.count < 2 && offset <= 4 {
@@ -806,7 +877,7 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
         }
 
         let rolePhrasePatterns = [
-            #"\b(male\s+lead|female\s+lead|fresh\s+female\s+talent|fresh\s+male\s+talent)\b"#
+            #"\b(male\s+lead|female\s+lead|fresh\s+female\s+talent|fresh\s+male\s+talent|supporting\s+actor|supporting\s+actress|supporting\s+role|child\s+artist|protagonist|antagonist)\b"#
         ]
         for pattern in rolePhrasePatterns {
             if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
