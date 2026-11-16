@@ -150,7 +150,7 @@ struct TalkToOneTakeBriefingView: View {
             age: (profile?.age ?? 0) > 0 ? "\(profile?.age ?? 0)" : "",
             basedIn: profile?.basedIn ?? "",
             representation: profile?.representation ?? "Self-represented",
-            previousWork: profile?.previousWork ?? [],
+            previousWork: [],
             roleName: audition.roleName,
             projectName: audition.projectName
         )

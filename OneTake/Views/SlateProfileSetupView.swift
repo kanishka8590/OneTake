@@ -69,17 +69,8 @@ struct SlateProfileSetupView: View {
     @Bindable var audition: Audition
     let onSlateSaved: () -> Void
 
-    @State private var actorName: String = ""
-    @State private var height: String = ""
-    @State private var age: String = ""
-    @State private var basedIn: String = ""
-    @State private var representation: String = ""
-    @State private var previousWorkTags: [String] = []
+    @State private var draft = PersonalDetailsDraft()
     @State private var generatedSlateScript: String = ""
-
-    // Editing modal state
-    @State private var editingField: SlateField? = nil
-    @State private var editBuffer: String = ""
 
     // Flow navigation
     @State private var showingBriefing = false
@@ -88,115 +79,66 @@ struct SlateProfileSetupView: View {
     @State private var returnToBriefingAfterRecorder = false
     @State private var finalSlateScriptToRecord = ""
 
-    enum SlateField: String, Identifiable {
-        case name = "Name"
-        case height = "Height"
-        case age = "Age"
-        case basedIn = "Based in"
-        case representation = "Representation"
-        case previousWork = "Previous Work"
-
-        var id: String { rawValue }
-    }
-
     var body: some View {
         NavigationStack {
-            ZStack {
-                Theme.Colors.canvasBackground
-                    .ignoresSafeArea()
+            Form {
+                Section {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("How casting meets you")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(Theme.Colors.textPrimary)
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("How casting meets you")
-                                .font(.system(size: 26, weight: .bold))
-                                .foregroundStyle(Theme.Colors.textPrimary)
-
-                            Text("Review your slate details before rolling camera.")
-                                .font(.system(size: 14, weight: .regular))
-                                .foregroundStyle(Theme.Colors.textSecondary)
-                        }
-                        .padding(.top, 12)
-                        .padding(.horizontal, 4)
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("SLATE PREVIEW")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(Theme.Colors.textSecondary)
-                                .padding(.horizontal, 4)
-
-                            VStack(spacing: 0) {
-                                slatePreviewRow(
-                                    value: actorName.isEmpty ? "Add your name" : actorName,
-                                    label: "Name",
-                                    field: .name,
-                                    isDimmedValue: actorName.isEmpty
-                                )
-                                Divider().padding(.horizontal, 16)
-
-                                slatePreviewRow(
-                                    value: height.isEmpty ? "Add height" : height,
-                                    label: "Height",
-                                    field: .height,
-                                    isDimmedValue: height.isEmpty
-                                )
-                                Divider().padding(.horizontal, 16)
-
-                                slatePreviewRow(
-                                    value: age.isEmpty ? "Add age" : age,
-                                    label: "Age",
-                                    field: .age,
-                                    isDimmedValue: age.isEmpty
-                                )
-                                Divider().padding(.horizontal, 16)
-
-                                slatePreviewRow(
-                                    value: basedIn.isEmpty ? "Add city" : basedIn,
-                                    label: "Based In",
-                                    field: .basedIn,
-                                    isDimmedValue: basedIn.isEmpty
-                                )
-                                Divider().padding(.horizontal, 16)
-
-                                slatePreviewRow(
-                                    value: representation.isEmpty ? "Self-represented" : representation,
-                                    label: "Representation",
-                                    field: .representation,
-                                    isDimmedValue: representation.isEmpty
-                                )
-                                Divider().padding(.horizontal, 16)
-
-                                slatePreviewRow(
-                                    value: previousWorkTags.isEmpty ? "Previous Experience" : previousWorkTags.joined(separator: ", "),
-                                    label: "Credits",
-                                    field: .previousWork,
-                                    isDimmedValue: previousWorkTags.isEmpty
-                                )
-                            }
-                            .background(Theme.Colors.cardSurface)
-                            .clipShape(RoundedRectangle(cornerRadius: 18))
-                            .shadow(color: Color.black.opacity(0.04), radius: 8, x: 0, y: 2)
-                        }
-
-                        Spacer(minLength: 40)
-
-                        Button {
-                            updateGeneratedScript()
-                            finalSlateScriptToRecord = generatedSlateScript
-                            showingBriefing = true
-                        } label: {
-                            Text("Continue")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Theme.Colors.onAction)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .background(Theme.Colors.primaryPlum)
-                                .clipShape(Capsule())
-                        }
-                        .padding(.bottom, 24)
+                        Text("Review your slate details before rolling camera.")
+                            .font(.system(size: 14, weight: .regular))
+                            .foregroundStyle(Theme.Colors.textSecondary)
                     }
-                    .padding(.horizontal, 20)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
                 }
+
+                Section {
+                    Text(generatedSlateScript)
+                        .font(Theme.Typography.bodyRegular)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.vertical, 4)
+                } header: {
+                    Text("Preview")
+                }
+
+                Section {
+                    PersonalDetailsFormRows(draft: $draft, includeEmail: false)
+                } header: {
+                    Text("Personal Details")
+                } footer: {
+                    Text("Your slate script updates live as you edit your details.")
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
+            .safeAreaInset(edge: .bottom) {
+                Button {
+                    persistProfileEdits()
+                    updateGeneratedScript()
+                    finalSlateScriptToRecord = generatedSlateScript
+                    showingBriefing = true
+                } label: {
+                    Text("Continue")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.Colors.onAction)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Theme.Colors.primaryPlum)
+                        .clipShape(Capsule())
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 12)
+                .background(
+                    Theme.Colors.canvasBackground
+                        .opacity(0.92)
+                        .ignoresSafeArea(edges: .bottom)
+                )
             }
             .navigationTitle("Slate Preview")
             .navigationBarTitleDisplayMode(.inline)
@@ -204,12 +146,19 @@ struct SlateProfileSetupView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }
+
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        dismissActiveKeyboard()
+                    }
+                }
             }
             .onAppear {
                 loadProfileDefaults()
             }
-            .sheet(item: $editingField) { field in
-                editFieldSheet(for: field)
+            .onChange(of: draft) { _, _ in
+                updateGeneratedScript()
             }
             .sheet(isPresented: $showingBriefing, onDismiss: {
                 guard let script = pendingSlateScript else { return }
@@ -259,141 +208,22 @@ struct SlateProfileSetupView: View {
         }
     }
 
-    // MARK: - Slate Preview Row
-
-    private func slatePreviewRow(
-        value: String,
-        label: String,
-        field: SlateField,
-        isDimmedValue: Bool = false
-    ) -> some View {
-        Button {
-            editBuffer = initialEditValue(for: field)
-            editingField = field
-        } label: {
-            HStack(alignment: .center, spacing: 12) {
-                Text(value)
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(isDimmedValue ? Theme.Colors.textSecondary : Theme.Colors.textPrimary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-
-                Spacer()
-
-                Text(label)
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(Theme.Colors.textSecondary)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.Colors.textSecondary.opacity(0.4))
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 16)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func initialEditValue(for field: SlateField) -> String {
-        switch field {
-        case .name: return actorName
-        case .height: return height
-        case .age: return age
-        case .basedIn: return basedIn
-        case .representation: return representation
-        case .previousWork: return previousWorkTags.joined(separator: ", ")
-        }
-    }
-
-    // MARK: - Edit Field Sheet
-
-    private func editFieldSheet(for field: SlateField) -> some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Edit \(field.rawValue)")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(Theme.Colors.textPrimary)
-
-                TextField(field.rawValue, text: $editBuffer)
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(Theme.Colors.textPrimary)
-                    .keyboardType(field == .age ? .numberPad : .default)
-                    .padding(14)
-                    .background(Theme.Colors.controlSurface)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.Colors.controlBorder, lineWidth: 1))
-
-                Spacer()
-
-                Button {
-                    commitEdit(for: field)
-                    editingField = nil
-                } label: {
-                    Text("Save")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Theme.Colors.onAction)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(Theme.Colors.primaryPlum)
-                        .clipShape(Capsule())
-                }
-            }
-            .padding(24)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { editingField = nil }
-                }
-            }
-        }
-        .presentationDetents([.height(240)])
-    }
-
-    private func commitEdit(for field: SlateField) {
-        let trimmed = editBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch field {
-        case .name:
-            actorName = trimmed
-        case .height:
-            height = trimmed
-        case .age:
-            age = trimmed
-        case .basedIn:
-            basedIn = trimmed
-        case .representation:
-            representation = trimmed
-        case .previousWork:
-            if trimmed.isEmpty {
-                previousWorkTags = []
-            } else {
-                previousWorkTags = trimmed
-                    .components(separatedBy: ",")
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-            }
-        }
-        persistProfileEdits()
-        updateGeneratedScript()
-    }
-
     private func persistProfileEdits() {
-        let parsedAge = Int(age.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
         if let user = appState.currentUser {
-            user.name = actorName
-            user.height = height
-            user.age = parsedAge
-            user.basedIn = basedIn
-            user.representation = representation.isEmpty ? "Self-represented" : representation
-            user.previousWork = previousWorkTags
+            user.name = draft.trimmedName
+            user.height = draft.formattedHeight
+            user.age = draft.age
+            user.basedIn = draft.trimmedBasedIn
+            user.representation = draft.resolvedRepresentation
+            user.previousWork = []
         } else {
             let profile = UserProfile(
-                name: actorName,
-                height: height,
-                age: parsedAge,
-                basedIn: basedIn,
-                representation: representation.isEmpty ? "Self-represented" : representation,
-                previousWork: previousWorkTags
+                name: draft.trimmedName,
+                height: draft.formattedHeight,
+                age: draft.age,
+                basedIn: draft.trimmedBasedIn,
+                representation: draft.resolvedRepresentation,
+                previousWork: []
             )
             appState.modelContext?.insert(profile)
             appState.currentUser = profile
@@ -405,31 +235,21 @@ struct SlateProfileSetupView: View {
 
     private func loadProfileDefaults() {
         if let user = appState.currentUser {
-            actorName = user.name
-            height = user.height
-            age = user.age > 0 ? "\(user.age)" : ""
-            basedIn = user.basedIn
-            representation = user.representation
-            previousWorkTags = user.previousWork
+            draft = PersonalDetailsDraft(user: user)
         } else {
-            actorName = ""
-            height = ""
-            age = ""
-            basedIn = ""
-            representation = "Self-represented"
-            previousWorkTags = []
+            draft = PersonalDetailsDraft()
         }
         updateGeneratedScript()
     }
 
     private func updateGeneratedScript() {
         generatedSlateScript = SlateScriptTemplate.build(
-            name: actorName,
-            height: height,
-            age: age,
-            basedIn: basedIn,
-            representation: representation,
-            previousWork: previousWorkTags,
+            name: draft.trimmedName,
+            height: draft.formattedHeight,
+            age: draft.ageString,
+            basedIn: draft.trimmedBasedIn,
+            representation: draft.resolvedRepresentation,
+            previousWork: [],
             roleName: audition.roleName,
             projectName: audition.projectName
         )

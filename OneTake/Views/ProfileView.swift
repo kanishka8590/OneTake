@@ -55,23 +55,6 @@ struct ProfileView: View {
                         }
                     }
 
-                    // Previous Work Section
-                    if !appState.isDemoMode && !user.previousWork.isEmpty {
-                        Section("Credits & Previous Work") {
-                            ForEach(Array(user.previousWork.enumerated()), id: \.offset) { _, work in
-                                HStack(spacing: 8) {
-                                    Image(systemName: "star")
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(Theme.Colors.warningAmber)
-                                        .accessibilityHidden(true)
-                                    Text(work)
-                                        .font(Theme.Typography.bodyRegular)
-                                        .foregroundStyle(Theme.Colors.textPrimary)
-                                }
-                            }
-                        }
-                    }
-
                     // Profile & App Settings
                     Section("Profile & settings") {
                         NavigationLink("Recording settings") { RecordingSettingsView(appState: appState) }
@@ -299,22 +282,10 @@ struct ProfileView: View {
 // MARK: - Edit Profile Sheet
 
 struct EditProfileSheet: View {
-    private struct CreditItem: Identifiable {
-        let id = UUID()
-        var title: String
-    }
-
     let appState: AppState
     @Binding var isPresented: Bool
 
-    @State private var name: String = ""
-    @State private var email: String = ""
-    @State private var height: String = ""
-    @State private var ageText: String = ""
-    @State private var basedIn: String = ""
-    @State private var representation: String = ""
-    @State private var newCredit: String = ""
-    @State private var creditItems: [CreditItem] = []
+    @State private var draft = PersonalDetailsDraft()
     @State private var stagedAvatarData: Data? = nil
     @State private var photoItem: PhotosPickerItem?
     @State private var showingPhotoPicker = false
@@ -373,56 +344,7 @@ struct EditProfileSheet: View {
                 }
 
                 Section("Personal Details") {
-                    LabeledContent("Name") {
-                        TextField("Full Name", text: $name)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    LabeledContent("Email") {
-                        TextField("Email", text: $email)
-                            .keyboardType(.emailAddress)
-                            .textInputAutocapitalization(.never)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    LabeledContent("Height") {
-                        TextField("e.g. 5'6\"", text: $height)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    LabeledContent("Age") {
-                        TextField("Age", text: $ageText)
-                            .keyboardType(.numberPad)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    LabeledContent("Based In") {
-                        TextField("City", text: $basedIn)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    LabeledContent("Representation") {
-                        TextField("Agency or Self-represented", text: $representation)
-                            .multilineTextAlignment(.trailing)
-                    }
-                }
-
-                if !appState.isDemoMode {
-                    Section("Credits & Past Projects") {
-                        ForEach(creditItems) { item in
-                            Text(item.title)
-                        }
-                        .onDelete { indices in
-                            creditItems.remove(atOffsets: indices)
-                        }
-
-                        HStack {
-                            TextField("Add project (e.g. Film Title)", text: $newCredit)
-                            Button("Add") {
-                                let trimmed = newCredit.trimmingCharacters(in: .whitespaces)
-                                if !trimmed.isEmpty {
-                                    creditItems.append(CreditItem(title: trimmed))
-                                    newCredit = ""
-                                }
-                            }
-                            .disabled(newCredit.trimmingCharacters(in: .whitespaces).isEmpty)
-                        }
-                    }
+                    PersonalDetailsFormRows(draft: $draft, includeEmail: true)
                 }
             }
             .navigationTitle("Edit Profile")
@@ -441,16 +363,17 @@ struct EditProfileSheet: View {
                     .font(Theme.Typography.cardTitle)
                     .foregroundStyle(Theme.Colors.accent)
                 }
+
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        dismissActiveKeyboard()
+                    }
+                }
             }
             .onAppear {
                 if let u = appState.currentUser {
-                    name = u.name
-                    email = u.email
-                    height = u.height
-                    ageText = u.age > 0 ? "\(u.age)" : ""
-                    basedIn = u.basedIn
-                    representation = u.representation
-                    creditItems = u.previousWork.map { CreditItem(title: $0) }
+                    draft = PersonalDetailsDraft(user: u)
                     stagedAvatarData = u.avatarImageData
                 }
             }
@@ -480,36 +403,34 @@ struct EditProfileSheet: View {
     }
 
     private func saveProfile() {
-        let trimmedName = name.trimmingCharacters(in: .whitespaces)
-        let trimmedEmail = email.trimmingCharacters(in: .whitespaces)
-        let trimmedHeight = height.trimmingCharacters(in: .whitespaces)
-        let age = Int(ageText) ?? 0
-        let trimmedBasedIn = basedIn.trimmingCharacters(in: .whitespaces)
-        let trimmedRep = representation.trimmingCharacters(in: .whitespaces)
-        let resolvedRep = trimmedRep.isEmpty ? "Self-represented" : trimmedRep
-        let updatedCredits = creditItems.map(\.title)
+        let trimmedName = draft.trimmedName
+        let trimmedEmail = draft.trimmedEmail
+        let formattedHeight = draft.formattedHeight
+        let age = draft.age
+        let trimmedBasedIn = draft.trimmedBasedIn
+        let resolvedRep = draft.resolvedRepresentation
 
         if let current = appState.currentUser {
             current.name = trimmedName
             current.email = trimmedEmail
-            current.height = trimmedHeight
+            current.height = formattedHeight
             current.age = age
             current.basedIn = trimmedBasedIn
             current.representation = resolvedRep
-            current.previousWork = updatedCredits
+            current.previousWork = []
             current.avatarImageData = stagedAvatarData
             appState.saveChanges()
         } else {
             appState.createOrUpdateProfile(
                 name: trimmedName,
                 email: trimmedEmail,
-                height: trimmedHeight,
+                height: formattedHeight,
                 age: age,
                 basedIn: trimmedBasedIn,
                 representation: resolvedRep
             )
             if let current = appState.currentUser {
-                current.previousWork = updatedCredits
+                current.previousWork = []
                 current.avatarImageData = stagedAvatarData
                 appState.saveChanges()
             }
