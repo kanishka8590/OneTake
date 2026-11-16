@@ -104,10 +104,10 @@ struct PracticeASceneSheet: View {
                                 pasteFromClipboard()
                             }
                         }
-                        .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+                        .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 14, trailing: 8))
                         .listRowBackground(Color.clear)
 
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 8) {
                             HStack {
                                 Text("Script Dialogue")
                                     .font(Theme.Typography.captionBadge)
@@ -228,7 +228,7 @@ struct PracticeASceneSheet: View {
                     }
                 }
             }
-            .navigationTitle("Add Practice Scene")
+            .navigationTitle("Add Scene")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -237,7 +237,7 @@ struct PracticeASceneSheet: View {
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save Scene") {
+                    Button("Save") {
                         saveScene()
                     }
                     .fontWeight(.bold)
@@ -581,7 +581,7 @@ private struct CueAudioInlineButton: View {
             togglePlay()
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: isPlaying ? "stop.fill" : "speaker.wave.2.fill")
+                Image(systemName: isPlaying ? "stop" : "speaker.wave.2")
                     .font(.system(size: 11, weight: .semibold))
                 Text(isPlaying ? "Stop" : "Play Cue")
                     .font(.system(size: 11, weight: .semibold))
@@ -818,13 +818,15 @@ private struct ScriptPracticeCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(model.lines) { line in
+            ForEach(Array(model.lines.enumerated()), id: \.element.id) { index, line in
                 if line.isHeader {
-                    Text(line.text)
-                        .font(.system(size: 13, weight: .bold))
-                        .frame(maxWidth: .infinity)
-                        .foregroundStyle(Theme.Colors.accent)
-                        .padding(.vertical, 6)
+                    if !isRedundantSpeakerHeader(at: index, line: line) {
+                        Text(line.text)
+                            .font(.system(size: 13, weight: .bold))
+                            .frame(maxWidth: .infinity)
+                            .foregroundStyle(Theme.Colors.accent)
+                            .padding(.vertical, 6)
+                    }
                 } else if line.isCue || model.cueLineIDs.contains(line.id) {
                     // Cue lines are always visible: they are the actor's prompt
                     cueLine(line)
@@ -845,6 +847,12 @@ private struct ScriptPracticeCard: View {
         }
         .padding(18)
         .cardStyle()
+    }
+
+    private func isRedundantSpeakerHeader(at index: Int, line: PracticeLine) -> Bool {
+        let nextNonHeader = model.lines.dropFirst(index + 1).first(where: { !$0.isHeader })
+        guard let nextLine = nextNonHeader else { return true }
+        return !line.speaker.isEmpty && nextLine.speaker.caseInsensitiveCompare(line.speaker) == .orderedSame
     }
 
     private func cueLine(_ line: PracticeLine) -> some View {
@@ -1659,7 +1667,48 @@ private struct TimelineScrubber: View {
     }
 }
 
-struct PracticeHistoryView: View { let scripts: [PracticeScript]; let appState: AppState; @Environment(\.dismiss) private var dismiss; var body: some View { NavigationStack { List { ForEach(scripts) { script in Section(script.title) { ForEach(script.sessions.sorted { $0.sessionNumber > $1.sessionNumber }) { session in NavigationLink("Practice \(session.sessionNumber) · \(session.date.formatted(date: .abbreviated, time: .omitted))") { PracticeReviewView(script: script, session: session, appState: appState, isSavedReview: true) } } } } }.navigationTitle("Practice history").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } } } } }
+struct PracticeHistoryView: View {
+    let scripts: [PracticeScript]
+    let appState: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    private var scriptsWithSessions: [PracticeScript] {
+        scripts.filter { !$0.sessions.isEmpty }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if scriptsWithSessions.isEmpty {
+                    ContentUnavailableView(
+                        "No Practice Runs Yet",
+                        systemImage: "mic",
+                        description: Text("Complete a Say It Aloud session to review past runs here.")
+                    )
+                } else {
+                    List {
+                        ForEach(scriptsWithSessions) { script in
+                            Section(script.title) {
+                                ForEach(script.sessions.sorted { $0.sessionNumber > $1.sessionNumber }) { session in
+                                    NavigationLink("Practice \(session.sessionNumber) · \(session.date.formatted(date: .abbreviated, time: .omitted))") {
+                                        PracticeReviewView(script: script, session: session, appState: appState, isSavedReview: true)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Practice History")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+    }
+}
 
 @Observable private final class PracticeAudioPlayback: NSObject, AVAudioPlayerDelegate {
     var currentTime = 0.0; var duration = 0.0; var isPlaying = false; var available = false

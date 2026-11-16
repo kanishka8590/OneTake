@@ -174,6 +174,7 @@ struct ProfileView: View {
                 .scrollContentBackground(.hidden)
             }
             .navigationTitle("Profile")
+            .navigationBarTitleDisplayMode(.large)
             .task {
                 await appState.refreshLocalStorageUsage()
             }
@@ -184,7 +185,6 @@ struct ProfileView: View {
                     }
                     .font(Theme.Typography.bodyRegular)
                     .foregroundStyle(Theme.Colors.accent)
-                    .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
                 }
             }
             .sheet(isPresented: $showingEditProfile) {
@@ -368,15 +368,33 @@ struct EditProfileSheet: View {
                 }
 
                 Section("Personal Details") {
-                    TextField("Full Name", text: $name)
-                    TextField("Email", text: $email)
-                        .keyboardType(.emailAddress)
-                        .textInputAutocapitalization(.never)
-                    TextField("Height (e.g. 5'6\")", text: $height)
-                    TextField("Age", text: $ageText)
-                        .keyboardType(.numberPad)
-                    TextField("Based In (e.g. Mumbai, India)", text: $basedIn)
-                    TextField("Representation (e.g. Agency Name or Self-represented)", text: $representation)
+                    LabeledContent("Name") {
+                        TextField("Full Name", text: $name)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent("Email") {
+                        TextField("Email", text: $email)
+                            .keyboardType(.emailAddress)
+                            .textInputAutocapitalization(.never)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent("Height") {
+                        TextField("e.g. 5'6\"", text: $height)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent("Age") {
+                        TextField("Age", text: $ageText)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent("Based In") {
+                        TextField("City", text: $basedIn)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent("Representation") {
+                        TextField("Agency or Self-represented", text: $representation)
+                            .multilineTextAlignment(.trailing)
+                    }
                 }
 
                 Section("Credits & Past Projects") {
@@ -397,7 +415,6 @@ struct EditProfileSheet: View {
                             }
                         }
                         .disabled(newCredit.trimmingCharacters(in: .whitespaces).isEmpty)
-                        .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
                     }
                 }
             }
@@ -408,7 +425,6 @@ struct EditProfileSheet: View {
                     Button("Cancel") {
                         isPresented = false
                     }
-                    .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
                 }
 
                 ToolbarItem(placement: .confirmationAction) {
@@ -417,7 +433,6 @@ struct EditProfileSheet: View {
                     }
                     .font(Theme.Typography.cardTitle)
                     .foregroundStyle(Theme.Colors.accent)
-                    .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
                 }
             }
             .onAppear {

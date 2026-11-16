@@ -13,26 +13,54 @@ struct MainTabView: View {
         explicitAppState ?? envAppState
     }
 
+    private static func outlineTabIcon(systemName: String) -> UIImage {
+        let config = UIImage.SymbolConfiguration(pointSize: 19, weight: .regular)
+        guard let symbol = UIImage(systemName: systemName, withConfiguration: config) else {
+            return UIImage()
+        }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 3.0
+        format.opaque = false
+        let rendered = UIGraphicsImageRenderer(size: symbol.size, format: format).image { _ in
+            symbol.withTintColor(.black, renderingMode: .alwaysOriginal)
+                .draw(in: CGRect(origin: .zero, size: symbol.size))
+        }
+        return rendered.withRenderingMode(.alwaysTemplate)
+    }
+
     var body: some View {
         TabView(selection: Bindable(appState).selectedTab) {
             AuditionsListView(appState: appState)
                 .tabItem {
-                    Label("Auditions", systemImage: "movieclapper")
+                    Label {
+                        Text("Auditions")
+                    } icon: {
+                        Image(uiImage: Self.outlineTabIcon(systemName: "movieclapper"))
+                    }
                 }
                 .tag(AppTab.auditions)
 
             PracticeHubView(appState: appState)
                 .tabItem {
-                    Label("Practice", systemImage: "theatermasks")
+                    Label {
+                        Text("Practice")
+                    } icon: {
+                        Image(uiImage: Self.outlineTabIcon(systemName: "theatermasks"))
+                    }
                 }
                 .tag(AppTab.practice)
 
             ProfileView(appState: appState)
                 .tabItem {
-                    Label("Profile", systemImage: "person.crop.circle")
+                    Label {
+                        Text("Profile")
+                    } icon: {
+                        Image(uiImage: Self.outlineTabIcon(systemName: "person.crop.circle"))
+                    }
                 }
                 .tag(AppTab.profile)
         }
+        .environment(\.symbolVariants, .none)
         .tint(Theme.Colors.accent)
     }
 }

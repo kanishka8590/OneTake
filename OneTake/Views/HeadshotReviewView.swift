@@ -97,9 +97,12 @@ struct HeadshotReviewView: View {
 
                         threeAngleMiniBar
                             .padding(.horizontal, 20)
-
-                        Spacer(minLength: 20)
-
+                            .padding(.bottom, 16)
+                    }
+                }
+                .safeAreaInset(edge: .bottom) {
+                    VStack(spacing: 0) {
+                        Divider()
                         Button {
                             saveAllHeadshots()
                         } label: {
@@ -115,8 +118,9 @@ struct HeadshotReviewView: View {
                         }
                         .disabled(isSaving || savedReadyCount < 3)
                         .padding(.horizontal, 24)
-                        .padding(.bottom, 32)
+                        .padding(.vertical, 14)
                     }
+                    .background(Theme.Colors.canvasBackground)
                 }
             }
             .navigationTitle("Review Headshots")

@@ -136,7 +136,7 @@ struct SlateProfileSetupView: View {
 
                                 slatePreviewRow(
                                     value: height.isEmpty ? "Add height" : height,
-                                    label: "height",
+                                    label: "Height",
                                     field: .height,
                                     isDimmedValue: height.isEmpty
                                 )
@@ -144,7 +144,7 @@ struct SlateProfileSetupView: View {
 
                                 slatePreviewRow(
                                     value: age.isEmpty ? "Add age" : age,
-                                    label: "age",
+                                    label: "Age",
                                     field: .age,
                                     isDimmedValue: age.isEmpty
                                 )
@@ -152,7 +152,7 @@ struct SlateProfileSetupView: View {
 
                                 slatePreviewRow(
                                     value: basedIn.isEmpty ? "Add city" : basedIn,
-                                    label: "based in",
+                                    label: "Based In",
                                     field: .basedIn,
                                     isDimmedValue: basedIn.isEmpty
                                 )
@@ -160,7 +160,7 @@ struct SlateProfileSetupView: View {
 
                                 slatePreviewRow(
                                     value: representation.isEmpty ? "Self-represented" : representation,
-                                    label: "representation",
+                                    label: "Representation",
                                     field: .representation,
                                     isDimmedValue: representation.isEmpty
                                 )
@@ -168,7 +168,7 @@ struct SlateProfileSetupView: View {
 
                                 slatePreviewRow(
                                     value: previousWorkTags.isEmpty ? "Previous Experience" : previousWorkTags.joined(separator: ", "),
-                                    label: "Add",
+                                    label: "Credits",
                                     field: .previousWork,
                                     isDimmedValue: previousWorkTags.isEmpty
                                 )

@@ -464,8 +464,7 @@ struct AuditionDetailsEditorView: View {
             } message: {
                 Text("Your edits to this audition haven't been saved yet.")
             }
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+            .presentationDragIndicator(.hidden)
             .presentationBackground(Theme.Colors.canvasBackground)
         }
     }

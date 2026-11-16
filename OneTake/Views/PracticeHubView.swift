@@ -115,38 +115,55 @@ struct PracticeHubView: View {
                 }
             }
             .navigationTitle("Practice")
+            .navigationBarTitleDisplayMode(.large)
             .searchable(
                 text: Bindable(appState).globalSearchQuery,
                 placement: .navigationBarDrawer(displayMode: .always),
                 prompt: "Search auditions & script sides"
             )
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        showingHistory = true
-                    } label: {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(Theme.Colors.accent)
-                            .frame(width: 32, height: 32)
-                            .background(Theme.Colors.surface, in: Circle())
-                            .overlay(Circle().stroke(Theme.Colors.controlBorder, lineWidth: 1))
+                if #available(iOS 26.0, *) {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showingHistory = true
+                        } label: {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundStyle(Theme.Colors.accent)
+                        }
+                        .accessibilityLabel("Practice History")
                     }
-                    .accessibilityLabel("Practice History")
-                }
+                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showingAddSheet = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(Theme.Colors.accent)
+                        }
+                        .accessibilityLabel("Practice a new scene")
+                    }
+                } else {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button {
+                            showingHistory = true
+                        } label: {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundStyle(Theme.Colors.accent)
+                        }
+                        .accessibilityLabel("Practice History")
 
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingAddSheet = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(Theme.Colors.accent)
-                            .frame(width: 32, height: 32)
-                            .background(Theme.Colors.surface, in: Circle())
-                            .overlay(Circle().stroke(Theme.Colors.controlBorder, lineWidth: 1))
+                        Button {
+                            showingAddSheet = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(Theme.Colors.accent)
+                        }
+                        .accessibilityLabel("Practice a new scene")
                     }
-                    .accessibilityLabel("Practice a new scene")
                 }
             }
             .sheet(isPresented: $showingAddSheet) {
@@ -318,7 +335,7 @@ struct PracticeScriptCardRow: View {
                     // Accuracy badge
                     if let accuracy = accuracyPercentage {
                         HStack(spacing: 3) {
-                            Image(systemName: accuracy >= 85 ? "checkmark.circle.fill" : "chart.bar.fill")
+                            Image(systemName: accuracy >= 85 ? "checkmark.circle" : "chart.bar")
                                 .font(.system(size: 9))
                             Text("\(accuracy)% ACCURACY")
                         }

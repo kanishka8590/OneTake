@@ -242,8 +242,7 @@ struct AuditionPackageHubView: View {
             AuditionDetailsEditorView(existingAudition: audition) { _ in
                 showBanner("Audition details updated!")
             }
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+            .presentationDragIndicator(.hidden)
             .presentationBackground(Theme.Colors.canvasBackground)
         }
         .sheet(isPresented: $showingPackageValidation) {

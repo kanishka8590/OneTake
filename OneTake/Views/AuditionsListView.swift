@@ -165,48 +165,26 @@ struct AuditionsListView: View {
                 }
             }
             .navigationTitle("Auditions")
+            .navigationBarTitleDisplayMode(.large)
             .searchable(
                 text: Bindable(appState).globalSearchQuery,
                 placement: .navigationBarDrawer(displayMode: .always),
                 prompt: "Search auditions & script sides"
             )
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        Picker("Filter", selection: $selectedFilter) {
-                            ForEach(AuditionListFilter.allCases) { filter in
-                                Text(filter.rawValue).tag(filter)
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(selectedFilter.rawValue)
-                                .font(Theme.Typography.captionBadge.bold())
-                                .foregroundStyle(Theme.Colors.textPrimary)
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(Theme.Colors.accent)
-                        }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 10)
-                        .background(Theme.Colors.surface, in: Capsule())
-                        .overlay(Capsule().stroke(Theme.Colors.controlBorder, lineWidth: 1))
+                if #available(iOS 26.0, *) {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        filterToolbarMenu
                     }
-                    .accessibilityLabel("Filter auditions")
-                }
-
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingAddSourceSheet = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(Theme.Colors.accent)
-                            .frame(width: 32, height: 32)
-                            .background(Theme.Colors.surface, in: Circle())
-                            .overlay(Circle().stroke(Theme.Colors.controlBorder, lineWidth: 1))
+                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                    ToolbarItem(placement: .topBarTrailing) {
+                        addAuditionToolbarButton
                     }
-                    .accessibilityLabel("Add audition")
+                } else {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        filterToolbarMenu
+                        addAuditionToolbarButton
+                    }
                 }
             }
             // Compact Add Source Bottom Sheet
@@ -262,8 +240,7 @@ struct AuditionsListView: View {
                 AuditionDetailsEditorView(parsedCall: presentation.parsedCall) { _ in
                     editorPresentation = nil
                 }
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+                .presentationDragIndicator(.hidden)
                 .presentationBackground(Theme.Colors.canvasBackground)
                 .environment(appState)
             }
@@ -271,8 +248,7 @@ struct AuditionsListView: View {
                 AuditionDetailsEditorView(existingAudition: existing) { _ in
                     auditionToEdit = nil
                 }
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+                .presentationDragIndicator(.hidden)
                 .presentationBackground(Theme.Colors.canvasBackground)
                 .environment(appState)
             }
@@ -296,6 +272,40 @@ struct AuditionsListView: View {
                 Text("This will permanently remove the audition, takes, and cue recordings.")
             }
         }
+    }
+
+    // MARK: - Toolbar Controls
+
+    private var filterToolbarMenu: some View {
+        Menu {
+            Picker("Filter", selection: $selectedFilter) {
+                ForEach(AuditionListFilter.allCases) { filter in
+                    Text(filter.rawValue).tag(filter)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(selectedFilter.rawValue)
+                    .font(Theme.Typography.captionBadge.bold())
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.Colors.accent)
+            }
+            .padding(.horizontal, 4)
+        }
+        .accessibilityLabel("Filter auditions")
+    }
+
+    private var addAuditionToolbarButton: some View {
+        Button {
+            showingAddSourceSheet = true
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.Colors.accent)
+        }
+        .accessibilityLabel("Add audition")
     }
 
     // MARK: - Compact "Add an Audition" Bottom Sheet

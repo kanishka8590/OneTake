@@ -141,10 +141,6 @@ struct TakeReviewView: View {
                             Toggle("", isOn: $isNoiseCleaned)
                                 .labelsHidden()
                                 .tint(Theme.Colors.accent)
-                                .overlay(
-                                    Capsule()
-                                        .stroke(Theme.Colors.controlBorder.opacity(0.7), lineWidth: 1)
-                                )
                         }
                         .padding(16)
                         .cardStyle()
