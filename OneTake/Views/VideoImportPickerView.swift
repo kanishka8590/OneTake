@@ -81,6 +81,7 @@ struct VideoImportPickerView: View {
             }
             .onChange(of: selectedVideoItem) { _, item in
                 guard let item = item else { return }
+                selectedVideoItem = nil
                 importVideo(from: item)
             }
         }
@@ -92,50 +93,62 @@ struct VideoImportPickerView: View {
 
         Task {
             do {
-                if let movie = try await item.loadTransferable(type: MovieTransferable.self) {
-                    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                    let dir = docs.appendingPathComponent("Takes_\(audition.id)", isDirectory: true)
-                    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-
-                    let filename = "Imported_\(isSlate ? "Slate" : "Audition")_\(UUID().uuidString.prefix(6)).mp4"
-                    let targetURL = dir.appendingPathComponent(filename)
-
-                    try? FileManager.default.removeItem(at: targetURL)
-                    try FileManager.default.copyItem(at: movie.url, to: targetURL)
-
-                    let asset = AVURLAsset(url: targetURL)
-                    let duration = (try? await asset.load(.duration).seconds) ?? 15.0
-                    let fileSize = (try? FileManager.default.attributesOfItem(atPath: targetURL.path)[.size] as? Double) ?? 10_000_000.0
-                    let sizeMB = fileSize / (1024.0 * 1024.0)
-
-                    let takeCount = isSlate ? audition.slateTakes.count + 1 : audition.auditionTakes.count + 1
-                    let newTake = VideoTake(
-                        title: "Imported Take \(takeCount)",
-                        filePath: targetURL.path,
-                        durationSeconds: duration,
-                        fileSizeMB: sizeMB,
-                        aspectRatioString: "16:9",
-                        isPortrait: false,
-                        isMirrored: false,
-                        noiseCleaned: false,
-                        trimStartSeconds: 0,
-                        trimEndSeconds: duration,
-                        lightingPassed: true,
-                        framingPassed: true,
-                        soundPassed: true,
-                        createdAt: Date()
-                    )
-
-                    await MainActor.run {
-                        self.isImporting = false
-                        self.onImportCompleted(newTake)
-                        self.dismiss()
-                    }
-                } else {
+                guard let movie = try await item.loadTransferable(type: MovieTransferable.self) else {
                     await MainActor.run {
                         self.isImporting = false
                         self.errorMessage = "Could not load video file."
                     }
+                    return
+                }
+                defer {
+                    try? FileManager.default.removeItem(at: movie.url)
+                }
+
+                let ext = movie.url.pathExtension.isEmpty ? "mp4" : movie.url.pathExtension
+                let filename = "Imported_\(isSlate ? "Slate" : "Audition")_\(UUID().uuidString.prefix(6)).\(ext)"
+                let relativePath = "Takes_\(audition.id)/\(filename)"
+                let storedPath = try MediaStorage.copyItem(from: movie.url, toRelativePath: relativePath)
+
+                guard let targetURL = MediaStorage.resolveURL(for: storedPath) else {
+                    await MainActor.run {
+                        self.isImporting = false
+                        self.errorMessage = "Could not resolve imported video destination."
+                    }
+                    return
+                }
+
+                let metadata = await VideoPostProcessingService.inspectTrackMetadata(at: targetURL)
+                guard metadata.durationSeconds > 0 else {
+                    MediaStorage.removeFile(at: storedPath)
+                    await MainActor.run {
+                        self.isImporting = false
+                        self.errorMessage = "Imported video has no valid playable duration."
+                    }
+                    return
+                }
+
+                let takeCount = isSlate ? audition.slateTakes.count + 1 : audition.auditionTakes.count + 1
+                let newTake = VideoTake(
+                    title: "Imported Take \(takeCount)",
+                    filePath: storedPath,
+                    durationSeconds: metadata.durationSeconds,
+                    fileSizeMB: metadata.fileSizeMB,
+                    aspectRatioString: metadata.aspectRatioString,
+                    isPortrait: metadata.isPortrait,
+                    isMirrored: false,
+                    noiseCleaned: false,
+                    trimStartSeconds: 0,
+                    trimEndSeconds: metadata.durationSeconds,
+                    lightingPassed: true,
+                    framingPassed: true,
+                    soundPassed: true,
+                    createdAt: Date()
+                )
+
+                await MainActor.run {
+                    self.isImporting = false
+                    self.onImportCompleted(newTake)
+                    self.dismiss()
                 }
             } catch {
                 await MainActor.run {
@@ -155,8 +168,9 @@ struct MovieTransferable: Transferable {
         FileRepresentation(contentType: .movie) { movie in
             SentTransferredFile(movie.url)
         } importing: { received in
+            let ext = received.file.pathExtension.isEmpty ? "mov" : received.file.pathExtension
             let copyURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("\(UUID().uuidString).\(received.file.pathExtension)")
+                .appendingPathComponent("\(UUID().uuidString).\(ext)")
             try? FileManager.default.removeItem(at: copyURL)
             try FileManager.default.copyItem(at: received.file, to: copyURL)
             return Self(url: copyURL)

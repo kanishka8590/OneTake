@@ -16,10 +16,13 @@ struct CueRecorderView: View {
     @State private var isPlaying: Bool = false
     @State private var recordingDuration: Double = 0.0
     @State private var recordTimer: Timer?
+    @State private var autoAdvanceTask: Task<Void, Never>?
     @State private var hasMicrophonePermission = false
+    @State private var recordingErrorMessage: String?
+    @State private var showingErrorAlert = false
 
     var currentCue: CueLine? {
-        guard !cueLines.isEmpty, selectedIndex < cueLines.count else { return nil }
+        guard cueLines.indices.contains(selectedIndex) else { return nil }
         return cueLines[selectedIndex]
     }
 
@@ -43,7 +46,7 @@ struct CueRecorderView: View {
 
                             Spacer()
 
-                            Text("Cue \(selectedIndex + 1) of \(cueLines.count)")
+                            Text(cueLines.isEmpty ? "No Cues" : "Cue \(selectedIndex + 1) of \(cueLines.count)")
                                 .font(Theme.Typography.captionBadge)
                                 .foregroundStyle(Theme.Colors.textSecondary)
                         }
@@ -122,7 +125,7 @@ struct CueRecorderView: View {
                         // Live dB Waveform Indicator
                         VStack(spacing: 8) {
                             HStack(spacing: 3) {
-                                ForEach(0..<24) { i in
+                                ForEach(0..<24, id: \.self) { i in
                                     RoundedRectangle(cornerRadius: 2)
                                         .fill(isRecording ? Theme.Colors.errorCrimson : (isPlaying ? Theme.Colors.accent : Theme.Colors.lavenderSurface))
                                         .frame(width: 4, height: max(6, CGFloat(audioEngine.currentAudioLevel * 50.0) * sin(Double(i) * 0.3 + (isRecording ? Double(recordingDuration * 5) : 1.0))))
@@ -188,6 +191,8 @@ struct CueRecorderView: View {
                         HStack {
                             Button {
                                 if selectedIndex > 0 {
+                                    autoAdvanceTask?.cancel()
+                                    autoAdvanceTask = nil
                                     stopPlayback()
                                     selectedIndex -= 1
                                 }
@@ -205,6 +210,8 @@ struct CueRecorderView: View {
 
                             Button {
                                 if selectedIndex < cueLines.count - 1 {
+                                    autoAdvanceTask?.cancel()
+                                    autoAdvanceTask = nil
                                     stopPlayback()
                                     selectedIndex += 1
                                 }
@@ -225,6 +232,7 @@ struct CueRecorderView: View {
 
                     // Done & Save button
                     Button {
+                        stopActiveRecordingIfNeeded()
                         stopPlayback()
                         onFinished()
                         dismiss()
@@ -241,16 +249,28 @@ struct CueRecorderView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") {
+                        stopActiveRecordingIfNeeded()
                         stopPlayback()
                         dismiss()
                     }
                 }
             }
+            .alert("Recording Error", isPresented: $showingErrorAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(recordingErrorMessage ?? "An unknown audio error occurred.")
+            }
             .onDisappear {
+                autoAdvanceTask?.cancel()
+                autoAdvanceTask = nil
+                stopActiveRecordingIfNeeded()
                 stopPlayback()
                 audioEngine.stopAuditionScenePartner()
             }
             .onAppear {
+                if !cueLines.indices.contains(selectedIndex) {
+                    selectedIndex = 0
+                }
                 audioEngine.requestRecordingPermission { granted in
                     hasMicrophonePermission = granted
                 }
@@ -260,59 +280,75 @@ struct CueRecorderView: View {
 
     // MARK: - Audio Actions
 
-    private func toggleRecording() {
-        guard hasMicrophonePermission else { return }
+    private func stopActiveRecordingIfNeeded() {
+        recordTimer?.invalidate()
+        recordTimer = nil
         if isRecording {
-            // Stop recording
+            let result = audioEngine.stopRecordingCue()
+            isRecording = false
+            if let tempURL = result.url {
+                try? FileManager.default.removeItem(at: tempURL)
+            }
+        }
+    }
+
+    private func toggleRecording() {
+        guard hasMicrophonePermission, cueLines.indices.contains(selectedIndex) else { return }
+        autoAdvanceTask?.cancel()
+        autoAdvanceTask = nil
+
+        if isRecording {
             recordTimer?.invalidate()
             recordTimer = nil
             let result = audioEngine.stopRecordingCue()
             isRecording = false
 
-            if let tempURL = result.url {
-                // Save to deterministic path: Documents/CueAudio/<audition.id>_<cue.id>.m4a
-                let cue = cueLines[selectedIndex]
-                let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                let cueAudioDir = docsDir.appendingPathComponent("CueAudio", isDirectory: true)
-                try? FileManager.default.createDirectory(at: cueAudioDir, withIntermediateDirectories: true)
+            guard let tempURL = result.url else { return }
+            guard cueLines.indices.contains(selectedIndex) else {
+                try? FileManager.default.removeItem(at: tempURL)
+                return
+            }
 
-                let deterministicName = "\(audition.id)_\(cue.id).m4a"
-                let deterministicURL = cueAudioDir.appendingPathComponent(deterministicName)
+            let cue = cueLines[selectedIndex]
+            let relativePath = "CueAudio/\(audition.id)_\(cue.id).m4a"
 
-                // Remove any previous recording at this deterministic path
-                try? FileManager.default.removeItem(at: deterministicURL)
-                // Move the temp recording to the deterministic path
-                do {
-                    try FileManager.default.moveItem(at: tempURL, to: deterministicURL)
-                } catch {
-                    print("Failed to move cue recording to deterministic path: \(error)")
-                }
-
-                // Mutate audition.cueLines[index] directly with saved path
-                cueLines[selectedIndex].audioFilePath = deterministicURL.path
+            do {
+                let storedPath = try MediaStorage.moveItem(from: tempURL, toRelativePath: relativePath)
+                cueLines[selectedIndex].audioFilePath = storedPath
                 cueLines[selectedIndex].durationSeconds = result.durationSeconds
                 audition.cueLines = cueLines
                 try? appState.modelContext?.save()
 
-                // Auto-advance to next cue if available
-                if selectedIndex < cueLines.count - 1 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                let recordedIndex = selectedIndex
+                if recordedIndex < cueLines.count - 1 {
+                    autoAdvanceTask = Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(300))
+                        guard !Task.isCancelled,
+                              selectedIndex == recordedIndex,
+                              selectedIndex + 1 < cueLines.count else { return }
                         selectedIndex += 1
                     }
                 }
+            } catch {
+                try? FileManager.default.removeItem(at: tempURL)
+                recordingErrorMessage = "Could not save cue audio: \(error.localizedDescription)"
+                showingErrorAlert = true
             }
         } else {
-            // Start recording
             stopPlayback()
             do {
                 _ = try audioEngine.startRecordingCue(orderIndex: selectedIndex)
                 isRecording = true
                 recordingDuration = 0.0
+                recordTimer?.invalidate()
                 recordTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-                    recordingDuration += 0.1
+                    Task { @MainActor in
+                        recordingDuration += 0.1
+                    }
                 }
             } catch {
-                print("Recording cue error: \(error)")
+                recordingErrorMessage = "Could not start cue recording: \(error.localizedDescription)"
+                showingErrorAlert = true
             }
         }
     }
@@ -320,12 +356,15 @@ struct CueRecorderView: View {
     private func togglePlayback(for cue: CueLine) {
         if isPlaying {
             stopPlayback()
-        } else if let path = cue.audioFilePath {
-            let url = URL(fileURLWithPath: path)
+        } else if let url = MediaStorage.resolveURL(for: cue.audioFilePath),
+                  FileManager.default.fileExists(atPath: url.path) {
             isPlaying = true
             audioEngine.playCue(at: url) {
                 isPlaying = false
             }
+        } else {
+            recordingErrorMessage = "Cue audio file could not be found on disk."
+            showingErrorAlert = true
         }
     }
 
@@ -335,9 +374,10 @@ struct CueRecorderView: View {
     }
 
     private func deleteCurrentRecording() {
+        guard cueLines.indices.contains(selectedIndex) else { return }
         stopPlayback()
         if let path = cueLines[selectedIndex].audioFilePath {
-            try? FileManager.default.removeItem(atPath: path)
+            MediaStorage.removeFile(at: path)
         }
         cueLines[selectedIndex].audioFilePath = nil
         cueLines[selectedIndex].durationSeconds = 0

@@ -15,6 +15,10 @@ struct TakesListView: View {
     @State private var showingVideoImporter = false
     @State private var previewTake: VideoTake?
 
+    private var canSaveRename: Bool {
+        !renameBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -136,10 +140,15 @@ struct TakesListView: View {
                 TextField("Take Title", text: $renameBuffer)
                 Button("Cancel", role: .cancel) {}
                 Button("Save") {
-                    if let toRename = takeToRename, let idx = takes.firstIndex(where: { $0.id == toRename.id }) {
-                        takes[idx].title = renameBuffer.trimmingCharacters(in: .whitespaces)
+                    let trimmed = renameBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty,
+                          let toRename = takeToRename,
+                          let idx = takes.firstIndex(where: { $0.id == toRename.id }) else {
+                        return
                     }
+                    takes[idx].title = trimmed
                 }
+                .disabled(!canSaveRename)
             }
             .sheet(item: $previewTake) { take in
                 VideoTakePlayerSheet(take: take)
@@ -156,21 +165,36 @@ struct TakesListView: View {
     private func deleteTake(_ take: VideoTake) {
         if let idx = takes.firstIndex(where: { $0.id == take.id }) {
             takes.remove(at: idx)
-            try? FileManager.default.removeItem(atPath: take.filePath)
-            if selectedTakeID == take.id {
-                selectedTakeID = takes.first?.id
-            }
+            MediaStorage.removeFile(at: take.filePath)
+            syncSelectedTakeAfterDeletion(deletedIDs: [take.id])
         }
     }
 
     private func deleteTakes(at offsets: IndexSet) {
-        for idx in offsets {
+        var deletedIDs: Set<UUID> = []
+        for idx in offsets where takes.indices.contains(idx) {
             let take = takes[idx]
-            try? FileManager.default.removeItem(atPath: take.filePath)
+            deletedIDs.insert(take.id)
+            MediaStorage.removeFile(at: take.filePath)
         }
         takes.remove(atOffsets: offsets)
-        if !takes.contains(where: { $0.id == selectedTakeID }) {
+        syncSelectedTakeAfterDeletion(deletedIDs: deletedIDs)
+    }
+
+    private func syncSelectedTakeAfterDeletion(deletedIDs: Set<UUID>) {
+        if let current = selectedTakeID, deletedIDs.contains(current) || !takes.contains(where: { $0.id == current }) {
             selectedTakeID = takes.first?.id
+        }
+        if isSlate {
+            if let current = audition.selectedSlateTakeID,
+               deletedIDs.contains(current) || !takes.contains(where: { $0.id == current }) {
+                audition.selectedSlateTakeID = selectedTakeID ?? takes.first?.id
+            }
+        } else {
+            if let current = audition.selectedAuditionTakeID,
+               deletedIDs.contains(current) || !takes.contains(where: { $0.id == current }) {
+                audition.selectedAuditionTakeID = selectedTakeID ?? takes.first?.id
+            }
         }
     }
 }
@@ -180,18 +204,52 @@ struct VideoTakePlayerSheet: View {
     @Environment(\.dismiss) private var dismiss
     let take: VideoTake
 
+    @State private var player: AVPlayer?
+    @State private var missingFile = false
+
     var body: some View {
         NavigationStack {
-            let url = URL(fileURLWithPath: take.filePath)
-            VideoPlayer(player: AVPlayer(url: url))
-                .ignoresSafeArea()
-                .navigationTitle(take.title)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") { dismiss() }
+            ZStack {
+                Color.black.ignoresSafeArea()
+
+                if let player {
+                    VideoPlayer(player: player)
+                        .ignoresSafeArea()
+                } else if missingFile {
+                    VStack(spacing: 12) {
+                        Image(systemName: "video.slash")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.white.opacity(0.6))
+                        Text("Video file unavailable on disk.")
+                            .font(Theme.Typography.bodyRegular)
+                            .foregroundStyle(.white.opacity(0.8))
                     }
+                } else {
+                    ProgressView()
+                        .tint(.white)
                 }
+            }
+            .navigationTitle(take.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .onAppear {
+                if let url = MediaStorage.resolveURL(for: take.filePath),
+                   FileManager.default.fileExists(atPath: url.path) {
+                    missingFile = false
+                    player = AVPlayer(url: url)
+                } else {
+                    missingFile = true
+                }
+            }
+            .onDisappear {
+                player?.pause()
+                player?.replaceCurrentItem(with: nil)
+                player = nil
+            }
         }
     }
 }

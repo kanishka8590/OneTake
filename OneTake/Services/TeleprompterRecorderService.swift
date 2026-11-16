@@ -29,6 +29,7 @@ nonisolated struct PreTakeQualityMetrics: Sendable {
 
 // MARK: - Protocol
 
+@MainActor
 protocol TeleprompterRecorderServiceProtocol: AnyObject {
     var isRecording: Bool { get }
     var isCountingDown: Bool { get }
@@ -39,6 +40,10 @@ protocol TeleprompterRecorderServiceProtocol: AnyObject {
     var voiceGuidanceEnabled: Bool { get set }
     var isVoiceListening: Bool { get }
     var voiceStatus: LiveSpeechStatus { get }
+    var cameraPermissionDenied: Bool { get }
+    var cameraErrorMessage: String? { get }
+    var isDemoMode: Bool { get set }
+    var mirrorFrontCamera: Bool { get set }
     var onLiveMicData: ((_ rms: Float, _ transcript: String, _ isFinal: Bool) -> Void)? { get set }
 
     func startSession()
@@ -48,13 +53,151 @@ protocol TeleprompterRecorderServiceProtocol: AnyObject {
     func startCountdownAndRecord(countdownSeconds: Int, completion: @escaping (URL?, Double) -> Void)
     func stopRecording()
     func triggerFramingFeedbackVoice()
-    @MainActor func handleRecognizedTranscript(_ transcript: String, isFinal: Bool)
+    func handleRecognizedTranscript(_ transcript: String, isFinal: Bool)
+}
+
+// MARK: - Thread-Safe Cross-Queue State
+
+nonisolated private final class RecorderStateBox: @unchecked Sendable {
+    private let lock = NSLock()
+
+    private var _isRecording = false
+    private var _isCountingDown = false
+    private var _isSessionRunning = false
+    private var _latestRMS: Float = 0.0
+    private var _latestTranscript = ""
+    private var _recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var _activeRecognitionTaskID: UUID?
+    private var _isRestartingRecognition = false
+    private var _isAudioTapInstalled = false
+    private var _isAnalyzingFrame = false
+    private var _cameraPosition: AVCaptureDevice.Position = .front
+    private var _mirrorFrontCamera = true
+    private var _lastMicDispatchTime: CFAbsoluteTime = 0
+    private var _lastDispatchedRMS: Float = 0
+    private var _activeTapSampleRate: Double = 0
+    private var _activeTapChannelCount: AVAudioChannelCount = 0
+    private var _hasMovieFileOutput = false
+
+    func withLock<T>(_ body: (RecorderStateBox) -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body(self)
+    }
+
+    var isRecording: Bool {
+        get { withLock { $0._isRecording } }
+        set { withLock { $0._isRecording = newValue } }
+    }
+
+    var isCountingDown: Bool {
+        get { withLock { $0._isCountingDown } }
+        set { withLock { $0._isCountingDown = newValue } }
+    }
+
+    var isSessionRunning: Bool {
+        get { withLock { $0._isSessionRunning } }
+        set { withLock { $0._isSessionRunning = newValue } }
+    }
+
+    var latestRMS: Float {
+        get { withLock { $0._latestRMS } }
+        set { withLock { $0._latestRMS = newValue } }
+    }
+
+    var latestTranscript: String {
+        get { withLock { $0._latestTranscript } }
+        set { withLock { $0._latestTranscript = newValue } }
+    }
+
+    var recognitionRequest: SFSpeechAudioBufferRecognitionRequest? {
+        get { withLock { $0._recognitionRequest } }
+        set { withLock { $0._recognitionRequest = newValue } }
+    }
+
+    var activeRecognitionTaskID: UUID? {
+        get { withLock { $0._activeRecognitionTaskID } }
+        set { withLock { $0._activeRecognitionTaskID = newValue } }
+    }
+
+    var isRestartingRecognition: Bool {
+        get { withLock { $0._isRestartingRecognition } }
+        set { withLock { $0._isRestartingRecognition = newValue } }
+    }
+
+    var isAudioTapInstalled: Bool {
+        get { withLock { $0._isAudioTapInstalled } }
+        set { withLock { $0._isAudioTapInstalled = newValue } }
+    }
+
+    var cameraPosition: AVCaptureDevice.Position {
+        get { withLock { $0._cameraPosition } }
+        set { withLock { $0._cameraPosition = newValue } }
+    }
+
+    var mirrorFrontCamera: Bool {
+        get { withLock { $0._mirrorFrontCamera } }
+        set { withLock { $0._mirrorFrontCamera = newValue } }
+    }
+
+    var hasMovieFileOutput: Bool {
+        get { withLock { $0._hasMovieFileOutput } }
+        set { withLock { $0._hasMovieFileOutput = newValue } }
+    }
+
+    func tryBeginFrameAnalysis() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !_isAnalyzingFrame, !_isRecording else { return false }
+        _isAnalyzingFrame = true
+        return true
+    }
+
+    func endFrameAnalysis() {
+        lock.lock()
+        _isAnalyzingFrame = false
+        lock.unlock()
+    }
+
+    func setTapFormat(sampleRate: Double, channelCount: AVAudioChannelCount) {
+        lock.lock()
+        _activeTapSampleRate = sampleRate
+        _activeTapChannelCount = channelCount
+        lock.unlock()
+    }
+
+    func tapFormatMatches(sampleRate: Double, channelCount: AVAudioChannelCount) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _activeTapSampleRate == sampleRate && _activeTapChannelCount == channelCount
+    }
+
+    /// Appends audio to the active request and throttles MainActor UI updates (~15 Hz unless RMS changes meaningfully).
+    func processAudioTapBuffer(_ buffer: AVAudioPCMBuffer, rms: Float) -> (shouldDispatch: Bool, transcript: String) {
+        lock.lock()
+        _latestRMS = rms
+        let request = _recognitionRequest
+        let transcript = _latestTranscript
+        let now = CFAbsoluteTimeGetCurrent()
+        let elapsed = now - _lastMicDispatchTime
+        let delta = abs(rms - _lastDispatchedRMS)
+        let shouldDispatch = elapsed >= (1.0 / 15.0) || delta >= 0.03
+        if shouldDispatch {
+            _lastMicDispatchTime = now
+            _lastDispatchedRMS = rms
+        }
+        lock.unlock()
+
+        request?.append(buffer)
+        return (shouldDispatch, transcript)
+    }
 }
 
 // MARK: - Implementation
 
+@MainActor
 @Observable
-final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServiceProtocol, SFSpeechRecognizerDelegate, @unchecked Sendable {
+final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServiceProtocol, SFSpeechRecognizerDelegate {
     static let shared = TeleprompterRecorderService()
 
     var isRecording: Bool = false
@@ -67,6 +210,28 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     var countdownOutLoud: Bool = true
     var isVoiceListening: Bool = false
     var voiceStatus: LiveSpeechStatus = .idle
+    var cameraPermissionDenied: Bool = false
+    var cameraErrorMessage: String? = nil
+    var isUsingFrontCamera: Bool = true
+    var isDemoMode: Bool = false
+    var mirrorFrontCamera: Bool = true {
+        didSet {
+            stateBox.mirrorFrontCamera = mirrorFrontCamera
+            let mirror = mirrorFrontCamera
+            sessionQueue.async { [weak self] in
+                guard let self else { return }
+                let pos = self.stateBox.cameraPosition
+                if let conn = self.sessionMovieFileOutput?.connection(with: .video), conn.isVideoMirroringSupported {
+                    conn.automaticallyAdjustsVideoMirroring = false
+                    conn.isVideoMirrored = (pos == .front) && mirror
+                }
+                if let conn = self.sessionVideoDataOutput?.connection(with: .video), conn.isVideoMirroringSupported {
+                    conn.automaticallyAdjustsVideoMirroring = false
+                    conn.isVideoMirrored = (pos == .front) && mirror
+                }
+            }
+        }
+    }
 
     @ObservationIgnored var onLiveMicData: ((_ rms: Float, _ transcript: String, _ isFinal: Bool) -> Void)?
     @ObservationIgnored var onVoiceActionTriggered: (() -> Void)?
@@ -83,34 +248,34 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
 
     // State tracking
     private(set) var isSessionRunning: Bool = false
-    private var lastCommandTriggerTime: Date = .distantPast
-    private var isRestartingRecognition: Bool = false
-    private var taskRestartTimer: Timer?
-    private var activeRecognitionTaskID: UUID?
-    private var latestRMS: Float = 0.0
-    private var latestTranscript: String = ""
-    private var isAudioTapInstalled: Bool = false
-    @ObservationIgnored private var audioSessionObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private let stateBox = RecorderStateBox()
+    @ObservationIgnored private let sessionQueue = DispatchQueue(label: "com.onetake.teleprompter.session")
+    @ObservationIgnored private let visionQueue = DispatchQueue(label: "com.onetake.teleprompter.vision.queue")
+    @ObservationIgnored private var taskRestartTimer: Timer?
+    @ObservationIgnored private var recognitionRestartWorkItem: DispatchWorkItem?
+    @ObservationIgnored private var sessionObservers: [NSObjectProtocol] = []
 
-    // Capture Infrastructure
+    // Capture Infrastructure (session-queue owned references + MainActor published session)
     private(set) var captureSession: AVCaptureSession?
-    private var videoDevice: AVCaptureDevice?
-    private var movieFileOutput: AVCaptureMovieFileOutput?
-    private var videoDataOutput: AVCaptureVideoDataOutput?
-    private var outputFileURL: URL?
-    private var isAnalyzingFrame = false
+    @ObservationIgnored nonisolated(unsafe) private var sessionCaptureSession: AVCaptureSession?
+    @ObservationIgnored nonisolated(unsafe) private var sessionVideoDevice: AVCaptureDevice?
+    @ObservationIgnored nonisolated(unsafe) private var sessionMovieFileOutput: AVCaptureMovieFileOutput?
+    @ObservationIgnored nonisolated(unsafe) private var sessionVideoDataOutput: AVCaptureVideoDataOutput?
+    @ObservationIgnored private weak var previewLayer: AVCaptureVideoPreviewLayer?
+    @ObservationIgnored private var outputFileURL: URL?
 
     // Subsystems
-    private let motionManager = CMMotionManager()
-    private let speechSynthesizer = AVSpeechSynthesizer()
-    private var speechRecognizer: SFSpeechRecognizer?
-    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-    private var recognitionTask: SFSpeechRecognitionTask?
-    private let speechAudioEngine = AVAudioEngine()
+    @ObservationIgnored private let motionManager = CMMotionManager()
+    @ObservationIgnored private let speechSynthesizer = AVSpeechSynthesizer()
+    @ObservationIgnored private var speechRecognizer: SFSpeechRecognizer?
+    @ObservationIgnored private var recognitionTask: SFSpeechRecognitionTask?
+    @ObservationIgnored private let speechAudioEngine = AVAudioEngine()
 
     // Timers & Callbacks
-    private var recordTimer: Timer?
-    private var recordingStartTime: Date?
+    @ObservationIgnored private var recordTimer: Timer?
+    @ObservationIgnored private var recordingStartTime: Date?
+    @ObservationIgnored private var countdownToken: UUID?
+    @ObservationIgnored private var simulatorRecordTask: Task<Void, Never>?
     @ObservationIgnored private var recordCompletion: ((URL?, Double) -> Void)?
     @ObservationIgnored private lazy var voiceCommandController: LiveVoiceCommandController = { [weak self] in
         LiveVoiceCommandController(
@@ -131,7 +296,13 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     override init() {
         super.init()
         setupMotion()
-        observeAudioSessionChanges()
+        observeSystemNotifications()
+    }
+
+    deinit {
+        for observer in sessionObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     // MARK: - Motion Monitoring
@@ -151,12 +322,33 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
 
     // MARK: - Session Setup
 
+    func attachPreviewLayer(_ layer: AVCaptureVideoPreviewLayer) {
+        self.previewLayer = layer
+        applyPreviewLayerConfiguration(for: stateBox.cameraPosition)
+    }
+
+    private func applyPreviewLayerConfiguration(for position: AVCaptureDevice.Position) {
+        guard let conn = previewLayer?.connection else { return }
+        if conn.isVideoRotationAngleSupported(90) {
+            conn.videoRotationAngle = 90
+        }
+        if conn.isVideoMirroringSupported {
+            conn.automaticallyAdjustsVideoMirroring = false
+            conn.isVideoMirrored = (position == .front)
+        }
+    }
+
     func startSession() {
         isSessionRunning = true
+        stateBox.isSessionRunning = true
+        cameraErrorMessage = nil
+
         #if targetEnvironment(simulator)
         applySimulatorMetrics()
         #else
+        prepareCameraSession()
         #endif
+
         setupVoiceCommands()
     }
 
@@ -176,73 +368,170 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
 
     func stopSession() {
         isSessionRunning = false
-        #if !targetEnvironment(simulator)
-        captureSession?.stopRunning()
-        #endif
+        stateBox.isSessionRunning = false
+        cancelCountdown()
         stopVoiceCommands()
         stopRecordingTimer()
-        isRecording = false
-        isCountingDown = false
-        countdownRemaining = 0
+        simulatorRecordTask?.cancel()
+        simulatorRecordTask = nil
+
+        if isRecording {
+            setRecordingState(false)
+            sessionQueue.async { [weak self] in
+                self?.sessionMovieFileOutput?.stopRecording()
+            }
+            finishRecording(url: nil, duration: recordingDurationSeconds)
+        }
+
+        #if !targetEnvironment(simulator)
+        sessionQueue.async { [weak self] in
+            self?.sessionCaptureSession?.stopRunning()
+        }
+        #endif
+    }
+
+    private func prepareCameraSession() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            cameraPermissionDenied = false
+            setupCameraSession()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.cameraPermissionDenied = !granted
+                    if granted {
+                        self.cameraErrorMessage = nil
+                        if self.isSessionRunning {
+                            self.setupCameraSession()
+                        }
+                    } else {
+                        self.cameraErrorMessage = "Camera access is denied. Enable camera access in Settings to record."
+                    }
+                }
+            }
+        case .denied, .restricted:
+            cameraPermissionDenied = true
+            cameraErrorMessage = "Camera access is denied. Enable camera access in Settings to record."
+        @unknown default:
+            cameraPermissionDenied = true
+            cameraErrorMessage = "Camera access is unavailable."
+        }
     }
 
     private func setupCameraSession() {
-        if let existing = captureSession {
-            if !existing.isRunning {
-                DispatchQueue.global(qos: .userInitiated).async {
+        let mirrorFront = mirrorFrontCamera
+        stateBox.mirrorFrontCamera = mirrorFront
+
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+
+            if let existing = self.sessionCaptureSession {
+                if !existing.isRunning, self.stateBox.isSessionRunning {
                     existing.startRunning()
                 }
-            }
-            return
-        }
-
-        let session = AVCaptureSession()
-        session.sessionPreset = .high
-        session.automaticallyConfiguresApplicationAudioSession = false
-
-        guard let frontCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else {
-            return
-        }
-        self.videoDevice = frontCamera
-
-        do {
-            let videoInput = try AVCaptureDeviceInput(device: frontCamera)
-            if session.canAddInput(videoInput) {
-                session.addInput(videoInput)
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if self.captureSession !== existing {
+                        self.captureSession = existing
+                    }
+                    self.applyPreviewLayerConfiguration(for: self.stateBox.cameraPosition)
+                }
+                return
             }
 
-            if let audioDevice = AVCaptureDevice.default(for: .audio),
-               let audioInput = try? AVCaptureDeviceInput(device: audioDevice),
-               session.canAddInput(audioInput) {
-                session.addInput(audioInput)
+            let session = AVCaptureSession()
+            session.beginConfiguration()
+            session.sessionPreset = .high
+            session.automaticallyConfiguresApplicationAudioSession = false
+
+            guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
+                ?? AVCaptureDevice.default(for: .video) else {
+                session.commitConfiguration()
+                Task { @MainActor [weak self] in
+                    self?.cameraErrorMessage = "No camera device available."
+                }
+                return
             }
 
-            let fileOutput = AVCaptureMovieFileOutput()
-            fileOutput.maxRecordedDuration = CMTime(seconds: 600, preferredTimescale: 600)
-            if session.canAddOutput(fileOutput) {
-                session.addOutput(fileOutput)
-                self.movieFileOutput = fileOutput
+            let initialPosition: AVCaptureDevice.Position = (camera.position == .back) ? .back : .front
+            self.stateBox.cameraPosition = initialPosition
+            self.sessionVideoDevice = camera
 
-                if let conn = fileOutput.connection(with: .video), conn.isVideoMirroringSupported {
-                    conn.automaticallyAdjustsVideoMirroring = false
-                    conn.isVideoMirrored = true
+            do {
+                let videoInput = try AVCaptureDeviceInput(device: camera)
+                if session.canAddInput(videoInput) {
+                    session.addInput(videoInput)
+                }
+
+                if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
+                   let audioDevice = AVCaptureDevice.default(for: .audio),
+                   let audioInput = try? AVCaptureDeviceInput(device: audioDevice),
+                   session.canAddInput(audioInput) {
+                    session.addInput(audioInput)
+                }
+
+                let fileOutput = AVCaptureMovieFileOutput()
+                fileOutput.maxRecordedDuration = CMTime(seconds: 600, preferredTimescale: 600)
+                if session.canAddOutput(fileOutput) {
+                    session.addOutput(fileOutput)
+                    self.sessionMovieFileOutput = fileOutput
+                    self.stateBox.hasMovieFileOutput = true
+                    self.configureVideoConnection(
+                        fileOutput.connection(with: .video),
+                        position: initialPosition,
+                        mirrorFront: mirrorFront
+                    )
+                }
+
+                let videoDataOut = AVCaptureVideoDataOutput()
+                videoDataOut.alwaysDiscardsLateVideoFrames = true
+                videoDataOut.setSampleBufferDelegate(self, queue: self.visionQueue)
+                if session.canAddOutput(videoDataOut) {
+                    session.addOutput(videoDataOut)
+                    self.sessionVideoDataOutput = videoDataOut
+                    self.configureVideoConnection(
+                        videoDataOut.connection(with: .video),
+                        position: initialPosition,
+                        mirrorFront: mirrorFront
+                    )
+                }
+
+                session.commitConfiguration()
+                self.sessionCaptureSession = session
+
+                if self.stateBox.isSessionRunning {
+                    session.startRunning()
+                }
+
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.captureSession = session
+                    self.isUsingFrontCamera = (initialPosition == .front)
+                    self.currentZoomFactor = 1.0
+                    self.applyPreviewLayerConfiguration(for: initialPosition)
+                }
+            } catch {
+                session.commitConfiguration()
+                Task { @MainActor [weak self] in
+                    self?.cameraErrorMessage = "Camera setup failed: \(error.localizedDescription)"
                 }
             }
+        }
+    }
 
-            let videoDataOut = AVCaptureVideoDataOutput()
-            videoDataOut.alwaysDiscardsLateVideoFrames = true
-            videoDataOut.setSampleBufferDelegate(self, queue: DispatchQueue(label: "com.onetake.teleprompter.vision.queue"))
-            if session.canAddOutput(videoDataOut) {
-                session.addOutput(videoDataOut)
-                self.videoDataOutput = videoDataOut
-            }
-
-            self.captureSession = session
-            DispatchQueue.global(qos: .userInitiated).async {
-                session.startRunning()
-            }
-        } catch {
-            print("Teleprompter camera session configuration error: \(error)")
+    nonisolated private func configureVideoConnection(
+        _ connection: AVCaptureConnection?,
+        position: AVCaptureDevice.Position,
+        mirrorFront: Bool
+    ) {
+        guard let connection else { return }
+        if connection.isVideoRotationAngleSupported(90) {
+            connection.videoRotationAngle = 90
+        }
+        if connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = (position == .front) && mirrorFront
         }
     }
 
@@ -260,54 +549,84 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     }
 
     func flipCamera() {
-        guard !isRecording, !isCountingDown, let session = captureSession else { return }
-        session.beginConfiguration()
-        guard let currentInput = session.inputs.first(where: { ($0 as? AVCaptureDeviceInput)?.device.hasMediaType(.video) == true }) as? AVCaptureDeviceInput else {
-            session.commitConfiguration()
-            return
-        }
-        session.removeInput(currentInput)
-        let newPosition: AVCaptureDevice.Position = (currentInput.device.position == .front) ? .back : .front
-        if let newDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: newPosition),
-           let newInput = try? AVCaptureDeviceInput(device: newDevice),
-           session.canAddInput(newInput) {
-            session.addInput(newInput)
-            self.videoDevice = newDevice
-            if let conn = movieFileOutput?.connection(with: .video), conn.isVideoMirroringSupported {
-                conn.automaticallyAdjustsVideoMirroring = false
-                conn.isVideoMirrored = (newPosition == .front)
+        guard !isRecording, !isCountingDown else { return }
+        let mirrorFront = mirrorFrontCamera
+
+        sessionQueue.async { [weak self] in
+            guard let self, let session = self.sessionCaptureSession else { return }
+            session.beginConfiguration()
+            guard let currentInput = session.inputs.first(where: {
+                ($0 as? AVCaptureDeviceInput)?.device.hasMediaType(.video) == true
+            }) as? AVCaptureDeviceInput else {
+                session.commitConfiguration()
+                return
             }
-        } else {
-            session.addInput(currentInput)
+
+            session.removeInput(currentInput)
+            let newPosition: AVCaptureDevice.Position = (currentInput.device.position == .front) ? .back : .front
+            var activePosition = currentInput.device.position
+
+            if let newDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: newPosition),
+               let newInput = try? AVCaptureDeviceInput(device: newDevice),
+               session.canAddInput(newInput) {
+                session.addInput(newInput)
+                self.sessionVideoDevice = newDevice
+                activePosition = newPosition
+                self.stateBox.cameraPosition = newPosition
+
+                self.configureVideoConnection(
+                    self.sessionMovieFileOutput?.connection(with: .video),
+                    position: newPosition,
+                    mirrorFront: mirrorFront
+                )
+                self.configureVideoConnection(
+                    self.sessionVideoDataOutput?.connection(with: .video),
+                    position: newPosition,
+                    mirrorFront: mirrorFront
+                )
+
+                do {
+                    try newDevice.lockForConfiguration()
+                    newDevice.videoZoomFactor = 1.0
+                    newDevice.unlockForConfiguration()
+                } catch {
+                    print("Flip camera zoom reset error: \(error)")
+                }
+            } else {
+                session.addInput(currentInput)
+            }
+
+            session.commitConfiguration()
+
+            let finalPosition = activePosition
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.currentZoomFactor = 1.0
+                self.isUsingFrontCamera = (finalPosition == .front)
+                self.applyPreviewLayerConfiguration(for: finalPosition)
+            }
         }
-        session.commitConfiguration()
     }
 
     private func setZoom(_ factor: CGFloat) {
         currentZoomFactor = factor
-        guard let device = videoDevice else { return }
-        do {
-            try device.lockForConfiguration()
-            device.videoZoomFactor = max(1.0, min(factor, device.activeFormat.videoMaxZoomFactor))
-            device.unlockForConfiguration()
-        } catch {
-            print("Zoom error: \(error)")
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.sessionVideoDevice else { return }
+            do {
+                try device.lockForConfiguration()
+                let clamped = max(1.0, min(factor, device.activeFormat.videoMaxZoomFactor))
+                device.videoZoomFactor = clamped
+                device.unlockForConfiguration()
+                Task { @MainActor [weak self] in
+                    self?.currentZoomFactor = clamped
+                }
+            } catch {
+                print("Zoom error: \(error)")
+            }
         }
     }
 
     // MARK: - Permission-Gated Voice Command Setup: "Action", "Cut", "How do I look?"
-
-    private func requestMicrophonePermission(_ completion: @escaping (Bool) -> Void) {
-        if #available(iOS 17.0, *) {
-            AVAudioApplication.requestRecordPermission { granted in
-                DispatchQueue.main.async { completion(granted) }
-            }
-        } else {
-            AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                DispatchQueue.main.async { completion(granted) }
-            }
-        }
-    }
 
     private func configureRecordingAudioSession() -> Bool {
         VoiceAudioSessionCoordinator.shared.activate()
@@ -325,9 +644,6 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
                 self.voiceStatus = .failed
                 return
             }
-            #if !targetEnvironment(simulator)
-            self.setupCameraSession()
-            #endif
             self.startVoiceListening()
         }
     }
@@ -338,6 +654,7 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
             return
         }
         guard !isVoiceListening else { return }
+
         speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
         speechRecognizer?.delegate = self
         guard let speechRecognizer, speechRecognizer.isAvailable else {
@@ -350,53 +667,53 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
             voiceStatus = .failed
             return
         }
+
         let inputNode = speechAudioEngine.inputNode
         let inputFormat = inputNode.inputFormat(forBus: 0)
         let outputFormat = inputNode.outputFormat(forBus: 0)
-            guard let tapFormat = [inputFormat, outputFormat].first(where: { $0.sampleRate > 0 && $0.channelCount > 0 }) else {
-                print("Invalid audio input formats in TeleprompterRecorderService")
+        guard let tapFormat = [inputFormat, outputFormat].first(where: { $0.sampleRate > 0 && $0.channelCount > 0 }) else {
+            print("Invalid audio input formats in TeleprompterRecorderService")
+            voiceStatus = .failed
+            return
+        }
+
+        if !stateBox.isAudioTapInstalled {
+            inputNode.removeTap(onBus: 0)
+            let box = stateBox
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: tapFormat) { [weak self] readOnlyBuffer, _ in
+                var rms: Float = 0.0
+                if let channelData = readOnlyBuffer.floatChannelData?[0] {
+                    let frameLength = Int(readOnlyBuffer.frameLength)
+                    if frameLength > 0 {
+                        var sumSquares: Float = 0.0
+                        for i in 0..<frameLength {
+                            let sample = channelData[i]
+                            sumSquares += sample * sample
+                        }
+                        rms = sqrt(sumSquares / Float(frameLength))
+                    }
+                }
+
+                let dispatchDecision = box.processAudioTapBuffer(readOnlyBuffer, rms: rms)
+                if dispatchDecision.shouldDispatch {
+                    Task { @MainActor [weak self] in
+                        self?.onLiveMicData?(rms, dispatchDecision.transcript, false)
+                    }
+                }
+            }
+            stateBox.setTapFormat(sampleRate: tapFormat.sampleRate, channelCount: tapFormat.channelCount)
+            stateBox.isAudioTapInstalled = true
+        }
+
+        if !speechAudioEngine.isRunning {
+            do {
+                try speechAudioEngine.start()
+            } catch {
+                print("Failed to start speechAudioEngine: \(error)")
                 voiceStatus = .failed
                 return
             }
-
-            if !isAudioTapInstalled {
-                inputNode.removeTap(onBus: 0)
-                inputNode.installTap(onBus: 0, bufferSize: 1024, format: tapFormat) { [weak self] readOnlyBuffer, _ in
-                    guard let self = self else { return }
-
-                    var rms: Float = 0.0
-                    if let channelData = readOnlyBuffer.floatChannelData?[0] {
-                        let frameLength = Int(readOnlyBuffer.frameLength)
-                        if frameLength > 0 {
-                            var sumSquares: Float = 0.0
-                            for i in 0..<frameLength {
-                                let sample = channelData[i]
-                                sumSquares += sample * sample
-                            }
-                            rms = sqrt(sumSquares / Float(frameLength))
-                        }
-                    }
-
-                    self.latestRMS = rms
-                    self.recognitionRequest?.append(readOnlyBuffer)
-
-                    let currentTranscript = self.latestTranscript
-                    DispatchQueue.main.async { [weak self] in
-                        self?.onLiveMicData?(rms, currentTranscript, false)
-                    }
-                }
-                isAudioTapInstalled = true
-            }
-
-            if !speechAudioEngine.isRunning {
-                do {
-                    try speechAudioEngine.start()
-                } catch {
-                    print("Failed to start speechAudioEngine: \(error)")
-                    voiceStatus = .failed
-                    return
-                }
-            }
+        }
 
         guard isSessionRunning else { return }
         startRecognitionTask()
@@ -415,44 +732,50 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
 
         // Invalidate before cancelling: cancellation reports an error
         // asynchronously, and that stale callback must not restart the new task.
-        activeRecognitionTaskID = nil
-        recognitionRequest?.endAudio()
+        stateBox.activeRecognitionTaskID = nil
+        stateBox.recognitionRequest?.endAudio()
         recognitionTask?.cancel()
         recognitionTask = nil
-        latestTranscript = ""
+        stateBox.latestTranscript = ""
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.taskHint = .dictation
         request.requiresOnDeviceRecognition = false
-        self.recognitionRequest = request
+        stateBox.recognitionRequest = request
+
         let taskID = UUID()
-        activeRecognitionTaskID = taskID
+        stateBox.activeRecognitionTaskID = taskID
+        let box = stateBox
 
         self.recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
-            guard let self = self,
-                  self.isSessionRunning,
-                  self.activeRecognitionTaskID == taskID else { return }
+            guard box.isSessionRunning, box.activeRecognitionTaskID == taskID else { return }
 
             if let result = result {
                 let transcript = result.bestTranscription.formattedString
                 let isFinal = result.isFinal
+                box.latestTranscript = transcript
 
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    self.latestTranscript = transcript
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          self.isSessionRunning,
+                          self.stateBox.activeRecognitionTaskID == taskID else { return }
                     self.handleRecognizedTranscript(transcript, isFinal: isFinal)
-                }
-
-                if isFinal {
-                    self.restartRecognitionTaskSeamlessly()
+                    if isFinal {
+                        self.restartRecognitionTaskSeamlessly()
+                    }
                 }
             }
 
             if error != nil {
                 // A recognition request naturally ends or is rolled over every
                 // so often. Keep the UI stable while its replacement starts.
-                self.restartRecognitionTaskSeamlessly()
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          self.isSessionRunning,
+                          self.stateBox.activeRecognitionTaskID == taskID else { return }
+                    self.restartRecognitionTaskSeamlessly()
+                }
             }
         }
 
@@ -460,22 +783,26 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         voiceStatus = .listening
 
         taskRestartTimer = Timer.scheduledTimer(withTimeInterval: 50.0, repeats: false) { [weak self] _ in
-            guard let self = self, self.isSessionRunning else { return }
-            self.restartRecognitionTaskSeamlessly()
+            Task { @MainActor [weak self] in
+                guard let self = self, self.isSessionRunning else { return }
+                self.restartRecognitionTaskSeamlessly()
+            }
         }
     }
 
     private func restartRecognitionTaskSeamlessly() {
-        guard isSessionRunning, !isRestartingRecognition else { return }
-        isRestartingRecognition = true
+        guard isSessionRunning, !stateBox.isRestartingRecognition else { return }
+        stateBox.isRestartingRecognition = true
 
         taskRestartTimer?.invalidate()
         taskRestartTimer = nil
-        latestTranscript = ""
+        recognitionRestartWorkItem?.cancel()
+        stateBox.latestTranscript = ""
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self = self, self.isSessionRunning else { return }
-            self.isRestartingRecognition = false
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.stateBox.isRestartingRecognition = false
+            guard self.isSessionRunning else { return }
             guard self.configureRecordingAudioSession() else {
                 self.voiceStatus = .failed
                 return
@@ -486,16 +813,18 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
             }
             self.startRecognitionTask()
         }
+        recognitionRestartWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
     }
 
     // MARK: - Single Transcript Entry Point
 
     /// `SFSpeechRecognizer` partial and final results, Simulator injections, and
     /// XCTest all reach commands and cue ingestion through this one method.
-    @MainActor
     func handleRecognizedTranscript(_ transcript: String, isFinal: Bool) {
+        stateBox.latestTranscript = transcript
         guard !(shouldIgnoreRecognizedTranscript?() ?? false) else { return }
-        onLiveMicData?(latestRMS, transcript, isFinal)
+        onLiveMicData?(stateBox.latestRMS, transcript, isFinal)
         voiceCommandController.handleRecognizedTranscript(transcript, isFinal: isFinal)
     }
 
@@ -504,49 +833,149 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         voiceStatus = .idle
         taskRestartTimer?.invalidate()
         taskRestartTimer = nil
+        recognitionRestartWorkItem?.cancel()
+        recognitionRestartWorkItem = nil
+        stateBox.isRestartingRecognition = false
 
-        recognitionRequest?.endAudio()
-        activeRecognitionTaskID = nil
+        stateBox.activeRecognitionTaskID = nil
+        stateBox.recognitionRequest?.endAudio()
+        stateBox.recognitionRequest = nil
         recognitionTask?.cancel()
         recognitionTask = nil
-        recognitionRequest = nil
+        stateBox.latestTranscript = ""
 
-        if isAudioTapInstalled {
+        if stateBox.isAudioTapInstalled {
             speechAudioEngine.inputNode.removeTap(onBus: 0)
-            isAudioTapInstalled = false
+            stateBox.isAudioTapInstalled = false
+            stateBox.setTapFormat(sampleRate: 0, channelCount: 0)
         }
         if speechAudioEngine.isRunning {
             speechAudioEngine.stop()
         }
     }
 
-    private func observeAudioSessionChanges() {
+    // MARK: - Notifications & Interruption Recovery
+
+    private func observeSystemNotifications() {
         let center = NotificationCenter.default
-        audioSessionObservers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
-            guard let self, self.isSessionRunning else { return }
-            let type = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init(rawValue:))
-            if type == .began {
-                self.isVoiceListening = false
-                self.voiceStatus = .interrupted
-            } else {
-                self.restartRecognitionTaskSeamlessly()
+
+        sessionObservers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+            let typeRaw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            let optionsRaw = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            Task { @MainActor [weak self] in
+                guard let self, self.isSessionRunning else { return }
+                let type = typeRaw.flatMap(AVAudioSession.InterruptionType.init(rawValue:))
+                if type == .began {
+                    self.isVoiceListening = false
+                    self.voiceStatus = .interrupted
+                } else if type == .ended {
+                    let options = AVAudioSession.InterruptionOptions(rawValue: optionsRaw)
+                    if options.contains(.shouldResume) {
+                        self.restartRecognitionTaskSeamlessly()
+                    } else {
+                        self.isVoiceListening = false
+                        self.voiceStatus = .interrupted
+                    }
+                }
             }
         })
-        audioSessionObservers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.restartRecognitionTaskSeamlessly()
+
+        sessionObservers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
+            let reasonRaw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            Task { @MainActor [weak self] in
+                guard let self, self.isSessionRunning else { return }
+                let reason = reasonRaw.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
+                guard reason == .newDeviceAvailable
+                    || reason == .oldDeviceUnavailable
+                    || reason == .override else {
+                    return
+                }
+
+                let inputNode = self.speechAudioEngine.inputNode
+                let inputFmt = inputNode.inputFormat(forBus: 0)
+                let outputFmt = inputNode.outputFormat(forBus: 0)
+                let activeFormat = [inputFmt, outputFmt].first(where: { $0.sampleRate > 0 && $0.channelCount > 0 })
+                let formatChanged = activeFormat.map {
+                    !self.stateBox.tapFormatMatches(sampleRate: $0.sampleRate, channelCount: $0.channelCount)
+                } ?? true
+
+                if formatChanged || !self.speechAudioEngine.isRunning {
+                    self.restartVoicePipeline()
+                } else {
+                    self.restartRecognitionTaskSeamlessly()
+                }
+            }
         })
-        audioSessionObservers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
-            guard let self else { return }
-            self.isAudioTapInstalled = false
-            self.speechAudioEngine.reset()
-            self.isVoiceListening = false
-            self.restartVoicePipeline()
+
+        sessionObservers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.stateBox.isAudioTapInstalled = false
+                self.stateBox.setTapFormat(sampleRate: 0, channelCount: 0)
+                self.speechAudioEngine.reset()
+                self.isVoiceListening = false
+                self.restartVoicePipeline()
+            }
+        })
+
+        sessionObservers.append(center.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isSessionRunning else { return }
+                self.cancelCountdown()
+                if self.isRecording {
+                    self.cameraErrorMessage = "Recording was interrupted by the system."
+                }
+            }
+        })
+
+        sessionObservers.append(center.addObserver(forName: AVCaptureSession.interruptionEndedNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isSessionRunning else { return }
+                self.cameraErrorMessage = nil
+                self.sessionQueue.async { [weak self] in
+                    guard let self,
+                          self.stateBox.isSessionRunning,
+                          let session = self.sessionCaptureSession,
+                          !session.isRunning else { return }
+                    session.startRunning()
+                }
+            }
+        })
+
+        sessionObservers.append(center.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: nil, queue: .main) { [weak self] note in
+            let err = note.userInfo?[AVCaptureSessionErrorKey] as? NSError
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.cancelCountdown()
+                if self.isRecording {
+                    self.setRecordingState(false)
+                    self.stopRecordingTimer()
+                    self.finishRecording(url: nil, duration: self.recordingDurationSeconds)
+                }
+                self.cameraErrorMessage = err?.localizedDescription ?? "Camera session encountered a runtime error."
+                if self.isSessionRunning, err?.code == AVError.mediaServicesWereReset.rawValue {
+                    self.sessionQueue.async { [weak self] in
+                        guard let self, self.stateBox.isSessionRunning else { return }
+                        self.sessionCaptureSession?.startRunning()
+                    }
+                }
+            }
+        })
+
+        sessionObservers.append(center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.cancelCountdown()
+                if self.isRecording {
+                    self.stopRecording()
+                }
+            }
         })
     }
 
     private func restartVoicePipeline() {
         guard isSessionRunning else { return }
-        isRestartingRecognition = false
+        stateBox.isRestartingRecognition = false
         stopVoiceCommands()
         if isSessionRunning {
             voiceStatus = .starting
@@ -554,13 +983,15 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         }
     }
 
-    func speechRecognizer(_ speechRecognizer: SFSpeechRecognizer, availabilityDidChange available: Bool) {
-        guard isSessionRunning else { return }
-        if available {
-            if !isVoiceListening { restartRecognitionTaskSeamlessly() }
-        } else {
-            isVoiceListening = false
-            voiceStatus = .unavailable
+    nonisolated func speechRecognizer(_ speechRecognizer: SFSpeechRecognizer, availabilityDidChange available: Bool) {
+        Task { @MainActor [weak self] in
+            guard let self, self.isSessionRunning else { return }
+            if available {
+                if !self.isVoiceListening { self.restartRecognitionTaskSeamlessly() }
+            } else {
+                self.isVoiceListening = false
+                self.voiceStatus = .unavailable
+            }
         }
     }
 
@@ -593,17 +1024,40 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     // MARK: - Countdown and Record
 
     func startCountdownAndRecord(countdownSeconds: Int = 3, completion: @escaping (URL?, Double) -> Void) {
+        startCountdownAndRecord(countdownSeconds: countdownSeconds, isDemoMode: nil, completion: completion)
+    }
+
+    func startCountdownAndRecord(
+        countdownSeconds: Int = 3,
+        isDemoMode: Bool?,
+        completion: @escaping (URL?, Double) -> Void
+    ) {
+        if let isDemoMode {
+            self.isDemoMode = isDemoMode
+        }
         guard !isRecording, !isCountingDown else { return }
-        isCountingDown = true
+        cameraErrorMessage = nil
+
+        let token = UUID()
+        countdownToken = token
+        setCountingDownState(true)
         countdownRemaining = countdownSeconds
         recordCompletion = completion
 
-        speakCountdownStep(seconds: countdownSeconds)
+        speakCountdownStep(seconds: countdownSeconds, token: token)
     }
 
-    private func speakCountdownStep(seconds: Int) {
+    private func cancelCountdown() {
+        countdownToken = nil
+        setCountingDownState(false)
+        countdownRemaining = 0
+    }
+
+    private func speakCountdownStep(seconds: Int, token: UUID) {
+        guard isCountingDown, countdownToken == token else { return }
         guard seconds > 0 else {
-            isCountingDown = false
+            countdownToken = nil
+            setCountingDownState(false)
             countdownRemaining = 0
             if countdownOutLoud {
                 speak("Action!", forceSpeak: true)
@@ -618,8 +1072,8 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            guard let self = self, self.isCountingDown else { return }
-            self.speakCountdownStep(seconds: seconds - 1)
+            guard let self = self, self.isCountingDown, self.countdownToken == token else { return }
+            self.speakCountdownStep(seconds: seconds - 1, token: token)
         }
     }
 
@@ -635,32 +1089,62 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     }
 
     private func beginRecordingNow() {
-        isRecording = true
-        recordingDurationSeconds = 0.0
-        recordingStartTime = Date()
-        startRecordingTimer()
-
         #if targetEnvironment(simulator)
+        guard isDemoMode else {
+            cameraErrorMessage = "Camera recording requires a physical device, or enable Demo Mode in Profile."
+            finishRecording(url: nil, duration: 0)
+            return
+        }
+
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("onetake_take_\(UUID().uuidString).mp4")
         self.outputFileURL = tempURL
+        setRecordingState(true)
+        recordingDurationSeconds = 0.0
+        recordingStartTime = Date()
+        startRecordingTimer()
         #else
-        guard let output = movieFileOutput else {
-            let tempURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("onetake_take_\(UUID().uuidString).mp4")
-            self.outputFileURL = tempURL
+        guard stateBox.hasMovieFileOutput else {
+            cameraErrorMessage = cameraPermissionDenied
+                ? "Camera access is denied. Enable camera access in Settings to record."
+                : "Camera recording output is not ready yet."
+            finishRecording(url: nil, duration: 0)
             return
         }
 
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("onetake_take_\(UUID().uuidString).mov")
         self.outputFileURL = tempURL
-        output.startRecording(to: tempURL, recordingDelegate: self)
+        setRecordingState(true)
+        recordingDurationSeconds = 0.0
+        recordingStartTime = Date()
+        startRecordingTimer()
+
+        sessionQueue.async { [weak self] in
+            guard let self, let output = self.sessionMovieFileOutput else {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.setRecordingState(false)
+                    self.stopRecordingTimer()
+                    self.cameraErrorMessage = "Camera recording output is unavailable."
+                    self.finishRecording(url: nil, duration: 0)
+                }
+                return
+            }
+            self.configureVideoConnection(
+                output.connection(with: .video),
+                position: self.stateBox.cameraPosition,
+                mirrorFront: self.stateBox.mirrorFrontCamera
+            )
+            output.startRecording(to: tempURL, recordingDelegate: self)
+        }
         #endif
 
         // Ensure voice recognition stays active throughout recording for "Cut" and "How do I look?"
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            guard let self = self, self.isSessionRunning else { return }
+            guard let self = self,
+                  self.isSessionRunning,
+                  VoiceAuthorizationService.shared.isAuthorized else { return }
             if !self.speechAudioEngine.isRunning {
                 try? self.speechAudioEngine.start()
             }
@@ -669,94 +1153,149 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
 
     func stopRecording() {
         guard isRecording else { return }
-        isRecording = false
+        setRecordingState(false)
         stopRecordingTimer()
 
         #if targetEnvironment(simulator)
         let duration = recordingDurationSeconds
-        if let url = outputFileURL {
-            createSimulatedVideoFile(at: url, durationSeconds: duration)
-            finishRecording(url: url, duration: duration)
+        let targetURL = outputFileURL
+        outputFileURL = nil
+
+        guard isDemoMode, let url = targetURL else {
+            cameraErrorMessage = "Camera recording requires a physical device, or enable Demo Mode in Profile."
+            finishRecording(url: nil, duration: duration)
+            return
+        }
+
+        simulatorRecordTask?.cancel()
+        simulatorRecordTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let ok = await DemoMediaGenerator.writeQuickSimulatedClip(
+                to: url,
+                title: "Simulated Take",
+                subtitle: "OneTake Demo",
+                durationSeconds: max(1.0, duration)
+            )
+            guard !Task.isCancelled else {
+                try? FileManager.default.removeItem(at: url)
+                return
+            }
+            if ok {
+                self.finishRecording(url: url, duration: max(1.0, duration))
+            } else {
+                self.cameraErrorMessage = "Failed to generate simulated demo video."
+                self.finishRecording(url: nil, duration: duration)
+            }
         }
         #else
-        movieFileOutput?.stopRecording()
+        sessionQueue.async { [weak self] in
+            self?.sessionMovieFileOutput?.stopRecording()
+        }
         #endif
     }
 
+    private func setRecordingState(_ recording: Bool) {
+        isRecording = recording
+        stateBox.isRecording = recording
+    }
+
+    private func setCountingDownState(_ countingDown: Bool) {
+        isCountingDown = countingDown
+        stateBox.isCountingDown = countingDown
+    }
+
     private func startRecordingTimer() {
+        recordTimer?.invalidate()
         recordTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            guard let self = self, let start = self.recordingStartTime else { return }
-            self.recordingDurationSeconds = Date().timeIntervalSince(start)
+            Task { @MainActor [weak self] in
+                guard let self = self, let start = self.recordingStartTime else { return }
+                self.recordingDurationSeconds = Date().timeIntervalSince(start)
+            }
         }
     }
 
-    /// Delivers exactly one result on the main thread.  The former dual
+    /// Delivers exactly one result on the main thread. The former dual
     /// `recordCompletion`/`onTakeRecorded` design could recursively invoke its
     /// own callback when a recording began through the voice command.
     private func finishRecording(url: URL?, duration: Double) {
         let completion = recordCompletion
         recordCompletion = nil
-        DispatchQueue.main.async {
-            completion?(url, duration)
-        }
+        completion?(url, duration)
     }
 
     private func stopRecordingTimer() {
         recordTimer?.invalidate()
         recordTimer = nil
     }
-
-    private func createSimulatedVideoFile(at url: URL, durationSeconds: Double) {
-        let dummyData = "ONETAKE_SIMULATED_VIDEO_DATA".data(using: .utf8) ?? Data()
-        try? dummyData.write(to: url)
-    }
 }
 
 // MARK: - AVCaptureFileOutputRecordingDelegate
 
 extension TeleprompterRecorderService: AVCaptureFileOutputRecordingDelegate {
-    func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
-        let duration = recordingDurationSeconds
-        finishRecording(url: error == nil ? outputFileURL : nil, duration: duration)
+    nonisolated func fileOutput(
+        _ output: AVCaptureFileOutput,
+        didFinishRecordingTo outputFileURL: URL,
+        from connections: [AVCaptureConnection],
+        error: Error?
+    ) {
+        let successfullyFinished = error == nil
+            || ((error as NSError?)?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool ?? false)
+        let errorDescription = error?.localizedDescription
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.setRecordingState(false)
+            self.stopRecordingTimer()
+            let duration = self.recordingDurationSeconds
+
+            if successfullyFinished {
+                self.finishRecording(url: outputFileURL, duration: duration)
+            } else {
+                try? FileManager.default.removeItem(at: outputFileURL)
+                self.cameraErrorMessage = errorDescription ?? "Recording failed to save."
+                self.finishRecording(url: nil, duration: duration)
+            }
+        }
     }
 }
 
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
 
 extension TeleprompterRecorderService: AVCaptureVideoDataOutputSampleBufferDelegate {
-    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        guard !isAnalyzingFrame, !isRecording else { return }
-        isAnalyzingFrame = true
-        defer { isAnalyzingFrame = false }
+    nonisolated func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard stateBox.tryBeginFrameAnalysis() else { return }
+        defer { stateBox.endFrameAnalysis() }
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        let lumStatus = evaluateLuminance(of: pixelBuffer)
+        let lumStatus = Self.evaluateLuminance(of: pixelBuffer)
         let isLightOk = (lumStatus == "Good")
 
         let faceRequest = VNDetectFaceLandmarksRequest { [weak self] req, _ in
-            guard let self = self, let results = req.results as? [VNFaceObservation], let face = results.first else {
-                DispatchQueue.main.async {
-                    self?.qualityMetrics.isAlignmentPassed = false
-                    self?.qualityMetrics.isFramingEvaluated = true
-                }
-                return
+            guard let self else { return }
+            let centered: Bool
+            if let results = req.results as? [VNFaceObservation], let face = results.first {
+                let box = face.boundingBox
+                centered = (box.midX >= 0.30 && box.midX <= 0.70) && (box.midY >= 0.25 && box.midY <= 0.75)
+            } else {
+                centered = false
             }
-            let box = face.boundingBox
-            let midX = box.midX
-            let midY = box.midY
-            let centered = (midX >= 0.30 && midX <= 0.70) && (midY >= 0.25 && midY <= 0.75)
-            DispatchQueue.main.async {
-                self.qualityMetrics.isAlignmentPassed = centered
-                self.qualityMetrics.isFramingEvaluated = true
+            Task { @MainActor [weak self] in
+                self?.qualityMetrics.isAlignmentPassed = centered
+                self?.qualityMetrics.isFramingEvaluated = true
             }
         }
 
         let segRequest = VNGeneratePersonSegmentationRequest { [weak self] req, _ in
-            guard let self = self,
+            guard let self,
                   let result = req.results?.first as? VNPixelBufferObservation else { return }
-            let isPlain = self.evaluateBackgroundClutter(maskBuffer: result.pixelBuffer, frameBuffer: pixelBuffer)
-            DispatchQueue.main.async {
+            let isPlain = Self.evaluateBackgroundClutter(maskBuffer: result.pixelBuffer, frameBuffer: pixelBuffer)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
                 self.qualityMetrics.isBackgroundPassed = isPlain
                 self.qualityMetrics.backgroundStatus = isPlain ? "Clean" : "Cluttered"
                 self.qualityMetrics.isBackgroundEvaluated = true
@@ -767,11 +1306,19 @@ extension TeleprompterRecorderService: AVCaptureVideoDataOutputSampleBufferDeleg
         }
         segRequest.qualityLevel = .fast
 
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .upMirrored, options: [:])
+        let isFront = (stateBox.cameraPosition == .front)
+        let orientation: CGImagePropertyOrientation
+        if connection.isVideoRotationAngleSupported(90) && connection.videoRotationAngle == 90 {
+            orientation = isFront ? (connection.isVideoMirrored ? .up : .upMirrored) : .up
+        } else {
+            orientation = isFront ? .leftMirrored : .right
+        }
+
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         try? handler.perform([faceRequest, segRequest])
     }
 
-    private func evaluateLuminance(of pixelBuffer: CVPixelBuffer) -> String {
+    nonisolated private static func evaluateLuminance(of pixelBuffer: CVPixelBuffer) -> String {
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
 
@@ -827,7 +1374,7 @@ extension TeleprompterRecorderService: AVCaptureVideoDataOutputSampleBufferDeleg
         }
     }
 
-    private func evaluateBackgroundClutter(maskBuffer: CVPixelBuffer, frameBuffer: CVPixelBuffer) -> Bool {
+    nonisolated private static func evaluateBackgroundClutter(maskBuffer: CVPixelBuffer, frameBuffer: CVPixelBuffer) -> Bool {
         CVPixelBufferLockBaseAddress(maskBuffer, .readOnly)
         CVPixelBufferLockBaseAddress(frameBuffer, .readOnly)
         defer {

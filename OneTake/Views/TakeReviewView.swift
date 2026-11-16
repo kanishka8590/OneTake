@@ -3,6 +3,7 @@ import AVKit
 
 struct TakeReviewView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppState.self) private var appState
 
     let audition: Audition
     let rawVideoURL: URL
@@ -11,16 +12,30 @@ struct TakeReviewView: View {
     /// Imported and older takes may not have live-analysis metadata; in that
     /// case the review deliberately shows only validations we can verify.
     let qualityMetrics: PreTakeQualityMetrics
+    var usedFrontCamera: Bool = true
     let onTakeApproved: (VideoTake) -> Void
     let onRetake: () -> Void
 
+    @State private var postProcessor = VideoPostProcessingService.shared
     @State private var player: AVPlayer?
+    @State private var observedPlayer: AVPlayer?
+    @State private var timeObserverToken: Any?
     @State private var trimStart: Double = 0.0
     @State private var trimEnd: Double = 0.0
     @State private var isNoiseCleaned: Bool = false
     @State private var isExporting: Bool = false
-    @State private var exportProgress: Double = 0.0
-    @State private var isPlaying: Bool = false
+    @State private var exportErrorMessage: String?
+    @State private var showingExportError: Bool = false
+    @State private var didApproveTake: Bool = false
+
+    private var safeDuration: Double {
+        guard totalDurationSeconds.isFinite, totalDurationSeconds > 0 else { return 1.0 }
+        return max(0.5, totalDurationSeconds)
+    }
+
+    private var minTrimGap: Double {
+        min(0.5, safeDuration * 0.25)
+    }
 
     var body: some View {
         NavigationStack {
@@ -63,13 +78,13 @@ struct TakeReviewView: View {
                                     .foregroundStyle(Theme.Colors.accent)
                             }
 
-                            // Range Slider Simulation
                             VStack(spacing: 8) {
                                 HStack {
                                     Text("Start:")
                                         .font(Theme.Typography.captionBadge)
                                         .frame(width: 44, alignment: .leading)
-                                    Slider(value: $trimStart, in: 0...max(0.1, trimEnd - 0.5))
+                                    let startUpper = max(0.05, trimEnd - minTrimGap)
+                                    Slider(value: $trimStart, in: 0...startUpper)
                                         .tint(Theme.Colors.accent)
                                         .onChange(of: trimStart) { _, newVal in
                                             seekPlayer(to: newVal)
@@ -80,7 +95,8 @@ struct TakeReviewView: View {
                                     Text("End:")
                                         .font(Theme.Typography.captionBadge)
                                         .frame(width: 44, alignment: .leading)
-                                    Slider(value: $trimEnd, in: min(totalDurationSeconds, trimStart + 0.5)...max(1.0, totalDurationSeconds))
+                                    let endLower = min(safeDuration - 0.05, trimStart + minTrimGap)
+                                    Slider(value: $trimEnd, in: endLower...safeDuration)
                                         .tint(Theme.Colors.accent)
                                         .onChange(of: trimEnd) { _, newVal in
                                             seekPlayer(to: newVal)
@@ -117,14 +133,12 @@ struct TakeReviewView: View {
                         .cardStyle()
                         .padding(.horizontal, Theme.Layout.screenHPadding)
 
-                        // File Size & Compression Info
-
                         // Export Progress Indicator
                         if isExporting {
                             VStack(spacing: 6) {
-                                ProgressView(value: exportProgress, total: 1.0)
+                                ProgressView(value: postProcessor.exportProgress, total: 1.0)
                                     .tint(Theme.Colors.accent)
-                                Text("Processing Take (\(Int(exportProgress * 100))%)...")
+                                Text("Processing Take (\(Int(postProcessor.exportProgress * 100))%)...")
                                     .font(Theme.Typography.captionBadge)
                                     .foregroundStyle(Theme.Colors.textSecondary)
                             }
@@ -137,12 +151,14 @@ struct TakeReviewView: View {
                     // Action Buttons: Retake vs Use Take
                     HStack(spacing: 14) {
                         Button {
-                            player?.pause()
+                            teardownPlayer()
+                            cleanupTempRawVideoIfNeeded()
                             onRetake()
                         } label: {
                             Text("Retake")
                                 .secondaryLavenderButton()
                         }
+                        .disabled(isExporting)
 
                         Button {
                             finalizeAndSaveTake()
@@ -167,28 +183,36 @@ struct TakeReviewView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") {
-                        player?.pause()
+                        teardownPlayer()
+                        cleanupTempRawVideoIfNeeded()
                         dismiss()
                     }
+                    .disabled(isExporting)
                 }
             }
+            .alert("Export Failed", isPresented: $showingExportError) {
+                Button("Retry") {
+                    finalizeAndSaveTake()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(exportErrorMessage ?? "Could not export this take. Please try again.")
+            }
             .onAppear {
+                isNoiseCleaned = appState.settings.noiseReductionDefault
                 setupPlayer()
             }
             .onDisappear {
-                player?.pause()
+                teardownPlayer()
+                if !didApproveTake {
+                    cleanupTempRawVideoIfNeeded()
+                }
             }
         }
     }
 
     private var maxAllowedSeconds: Double {
         isSlate ? audition.validationRules.maxSlateSeconds : audition.validationRules.maxClipSeconds
-    }
-
-    private var estimatedSizeMB: Int {
-        let dur = max(1.0, trimEnd - trimStart)
-        // ~1.2 MB per second for 1080p
-        return min(Int(audition.validationRules.maxPerClipSizeMB), max(4, Int(dur * 1.1)))
     }
 
     private func qualityBadge(title: String, isPassed: Bool) -> some View {
@@ -207,53 +231,99 @@ struct TakeReviewView: View {
     }
 
     private func setupPlayer() {
+        teardownPlayer()
+        trimStart = 0.0
+        trimEnd = safeDuration
+
         let playerItem = AVPlayerItem(url: rawVideoURL)
-        self.player = AVPlayer(playerItem: playerItem)
-        self.trimStart = 0.0
-        self.trimEnd = max(1.0, totalDurationSeconds)
+        let newPlayer = AVPlayer(playerItem: playerItem)
+        self.player = newPlayer
+        self.observedPlayer = newPlayer
+
+        let interval = CMTime(seconds: 0.05, preferredTimescale: 600)
+        timeObserverToken = newPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak newPlayer] time in
+            guard let newPlayer else { return }
+            let seconds = time.seconds
+            guard seconds.isFinite else { return }
+
+            if seconds >= trimEnd {
+                newPlayer.pause()
+                newPlayer.seek(
+                    to: CMTime(seconds: trimStart, preferredTimescale: 600),
+                    toleranceBefore: .zero,
+                    toleranceAfter: .zero
+                )
+            } else if seconds < trimStart - 0.05 {
+                newPlayer.seek(
+                    to: CMTime(seconds: trimStart, preferredTimescale: 600),
+                    toleranceBefore: .zero,
+                    toleranceAfter: .zero
+                )
+            }
+        }
+    }
+
+    private func teardownPlayer() {
+        if let token = timeObserverToken, let observed = observedPlayer {
+            observed.removeTimeObserver(token)
+        }
+        timeObserverToken = nil
+        observedPlayer = nil
+        player?.pause()
+        player?.replaceCurrentItem(with: nil)
+        player = nil
     }
 
     private func seekPlayer(to seconds: Double) {
-        player?.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        let clamped = max(0.0, min(seconds, safeDuration))
+        player?.seek(
+            to: CMTime(seconds: clamped, preferredTimescale: 600),
+            toleranceBefore: .zero,
+            toleranceAfter: .zero
+        )
+    }
+
+    private func cleanupTempRawVideoIfNeeded() {
+        let tempRoot = FileManager.default.temporaryDirectory.standardizedFileURL.path
+        let rawPath = rawVideoURL.standardizedFileURL.path
+        if rawPath.hasPrefix(tempRoot), FileManager.default.fileExists(atPath: rawPath) {
+            try? FileManager.default.removeItem(at: rawVideoURL)
+        }
     }
 
     private func finalizeAndSaveTake() {
         isExporting = true
+        exportErrorMessage = nil
         player?.pause()
 
-        Task {
-            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            let outputDir = docs.appendingPathComponent("Takes_\(audition.id)", isDirectory: true)
-            try? FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        let mirrorSetting = appState.settings.mirrorFrontCamera
+        let frontUsed = usedFrontCamera
+        let start = trimStart
+        let end = trimEnd
+        let cleanupAudio = isNoiseCleaned
 
+        Task {
+            let outputDir = MediaStorage.documentsDirectory
+                .appendingPathComponent("Takes_\(audition.id)", isDirectory: true)
             let filename = "\(isSlate ? "Slate" : "Audition")_Take_\(UUID().uuidString.prefix(6)).mp4"
             let destinationURL = outputDir.appendingPathComponent(filename)
 
             do {
-                // Apply trimming
-                let trimmedURL = try await VideoPostProcessingService.shared.trimVideo(
+                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+
+                let finalURL = try await postProcessor.trimAndProcessVideo(
                     sourceURL: rawVideoURL,
-                    startSeconds: trimStart,
-                    endSeconds: trimEnd,
+                    startSeconds: start,
+                    endSeconds: end,
+                    applyAudioCleanup: cleanupAudio,
                     destinationURL: destinationURL
                 )
 
-                // Apply audio cleanup if enabled
-                let finalURL: URL
-                if isNoiseCleaned {
-                    let cleanedDest = outputDir.appendingPathComponent("Cleaned_\(filename)")
-                    finalURL = try await VideoPostProcessingService.shared.exportWithAudioCleanup(
-                        sourceURL: trimmedURL,
-                        enableNoiseSuppression: true,
-                        destinationURL: cleanedDest
-                    )
-                } else {
-                    finalURL = trimmedURL
-                }
-
-                let finalDuration = max(0.5, trimEnd - trimStart)
-                let fileSize = (try? FileManager.default.attributesOfItem(atPath: finalURL.path)[.size] as? Double) ?? 15_000_000.0
-                let sizeMB = fileSize / (1024.0 * 1024.0)
+                let metadata = await VideoPostProcessingService.inspectTrackMetadata(at: finalURL)
+                let finalDuration = metadata.durationSeconds > 0
+                    ? metadata.durationSeconds
+                    : max(0.1, end - start)
+                let storedPath = MediaStorage.storedRelativePath(for: finalURL.path)
 
                 let takeCount = isSlate ? audition.slateTakes.count + 1 : audition.auditionTakes.count + 1
                 let takeTitle = "Take \(takeCount)"
@@ -261,15 +331,15 @@ struct TakeReviewView: View {
                 let videoTake = VideoTake(
                     id: UUID(),
                     title: takeTitle,
-                    filePath: finalURL.path,
+                    filePath: storedPath,
                     durationSeconds: finalDuration,
-                    fileSizeMB: sizeMB,
-                    aspectRatioString: "16:9",
-                    isPortrait: false,
-                    isMirrored: true,
-                    noiseCleaned: isNoiseCleaned,
-                    trimStartSeconds: trimStart,
-                    trimEndSeconds: trimEnd,
+                    fileSizeMB: metadata.fileSizeMB,
+                    aspectRatioString: metadata.aspectRatioString,
+                    isPortrait: metadata.isPortrait,
+                    isMirrored: frontUsed && mirrorSetting,
+                    noiseCleaned: cleanupAudio,
+                    trimStartSeconds: start,
+                    trimEndSeconds: end,
                     lightingPassed: qualityMetrics.isLightingEvaluated && qualityMetrics.isLightPassed,
                     framingPassed: qualityMetrics.isFramingEvaluated && qualityMetrics.isAlignmentPassed,
                     soundPassed: false,
@@ -277,24 +347,18 @@ struct TakeReviewView: View {
                 )
 
                 await MainActor.run {
+                    self.didApproveTake = true
                     self.isExporting = false
+                    self.teardownPlayer()
+                    self.cleanupTempRawVideoIfNeeded()
                     self.onTakeApproved(videoTake)
                 }
             } catch {
-                print("Export take error: \(error)")
+                try? FileManager.default.removeItem(at: destinationURL)
                 await MainActor.run {
                     self.isExporting = false
-                    // Fallback to saving take directly
-                    let videoTake = VideoTake(
-                        title: "Take 1",
-                        filePath: rawVideoURL.path,
-                        durationSeconds: totalDurationSeconds,
-                        fileSizeMB: 12.0,
-                        noiseCleaned: isNoiseCleaned,
-                        trimStartSeconds: trimStart,
-                        trimEndSeconds: trimEnd
-                    )
-                    self.onTakeApproved(videoTake)
+                    self.exportErrorMessage = error.localizedDescription
+                    self.showingExportError = true
                 }
             }
         }
@@ -302,7 +366,7 @@ struct TakeReviewView: View {
 
     @ViewBuilder
     private var qualityChecks: some View {
-        let duration = trimEnd - trimStart
+        let duration = max(0.0, trimEnd - trimStart)
         HStack(spacing: 8) {
             if qualityMetrics.isLightingEvaluated {
                 qualityBadge(title: "Light: \(qualityMetrics.lightStatus)", isPassed: qualityMetrics.isLightPassed)

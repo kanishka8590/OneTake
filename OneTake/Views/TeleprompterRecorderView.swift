@@ -1,12 +1,12 @@
 import SwiftUI
 import AVFoundation
-import PhotosUI
 
 private struct TakeReviewRoute: Identifiable {
     let id = UUID()
     let videoURL: URL
     let duration: Double
     let qualityMetrics: PreTakeQualityMetrics
+    let usedFrontCamera: Bool
 }
 
 struct TeleprompterRecorderView: View {
@@ -26,6 +26,8 @@ struct TeleprompterRecorderView: View {
     // Teleprompter Scroll State
     @State private var scrollSpeed: Double = 1.0
     @State private var scrollOffset: CGFloat = 0.0
+    @State private var prompterViewportHeight: CGFloat = 0.0
+    @State private var prompterContentHeight: CGFloat = 0.0
     @State private var scrollTimer: Timer?
     @State private var isShowingSpeedControl = false
     @State private var selectedCountdownSeconds: Int = 3
@@ -33,13 +35,14 @@ struct TeleprompterRecorderView: View {
 
     // Post-recording review transition
     @State private var takeReviewRoute: TakeReviewRoute?
-
-    // Upfront "Choose from Photos"
-    @State private var showingVideoPhotosPicker = false
-    @State private var selectedVideoItem: PhotosPickerItem?
+    @State private var didSaveApprovedTake = false
 
     private var effectiveScriptLines: [String] {
         scriptLines.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    private var maxScrollOffset: CGFloat {
+        max(0, prompterContentHeight - prompterViewportHeight)
     }
 
     var body: some View {
@@ -58,6 +61,19 @@ struct TeleprompterRecorderView: View {
                         teleprompterOverlay
                             .frame(maxHeight: 280)
                             .padding(.horizontal, 16)
+                            .padding(.top, 10)
+                    }
+
+                    if let cameraError = recorderService.cameraErrorMessage {
+                        Text(cameraError)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(Color.red.opacity(0.75))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .padding(.horizontal, 20)
                             .padding(.top, 10)
                     }
 
@@ -87,6 +103,7 @@ struct TeleprompterRecorderView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         stopAllOperations()
+                        scrollOffset = 0.0
                         dismiss()
                         onRecorderCancelled?()
                     } label: {
@@ -132,22 +149,23 @@ struct TeleprompterRecorderView: View {
                                 .clipShape(Capsule())
                                 .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
                         }
-                        .disabled(recorderService.isRecording || recorderService.isCountingDown)
+                        .disabled(recorderService.isRecording || recorderService.isCountingDown || recorderService.cameraPermissionDenied)
                     }
                 }
             }
             .onAppear {
+                didSaveApprovedTake = false
                 // This is reached directly for a retake/import and is a safe fallback
                 // in addition to the briefing screen's upfront request.
                 VoiceAuthorizationService.shared.requestAccess()
                 selectedCountdownSeconds = appState.settings.countdownSeconds
                 scrollSpeed = appState.settings.teleprompterScrollSpeed
+                cueTimingMode = appState.settings.cueTriggerMode
                 recorderService.defaultCountdownSeconds = selectedCountdownSeconds
                 recorderService.voiceGuidanceEnabled = appState.settings.framingTipsOutLoud
                 recorderService.countdownOutLoud = appState.settings.countdownOutLoud
-                if !audition.cueLines.isEmpty {
-                    cueTimingMode = .afterMyLine
-                }
+                recorderService.isDemoMode = appState.isDemoMode
+                recorderService.mirrorFrontCamera = appState.settings.mirrorFrontCamera
 
                 recorderService.onVoiceActionTriggered = {
                     startCountdownAndRecord()
@@ -172,37 +190,40 @@ struct TeleprompterRecorderView: View {
                         startPrompterScroll()
                     }
                     if !isSlate && !audition.cueLines.isEmpty {
-                        cueEngine.startListening(cues: audition.cueLines, mode: .afterMyLine, responseDelay: appState.settings.cueDelaySeconds)
+                        cueEngine.startListening(
+                            cues: audition.cueLines,
+                            mode: cueTimingMode,
+                            responseDelay: appState.settings.cueDelaySeconds
+                        )
                     }
                 } else {
                     stopPrompterScroll()
                     cueEngine.stopListening()
                 }
             }
-            .photosPicker(
-                isPresented: $showingVideoPhotosPicker,
-                selection: $selectedVideoItem,
-                matching: .videos
-            )
-            .onChange(of: selectedVideoItem) { _, item in
-                guard let item = item else { return }
-                selectedVideoItem = nil
-                loadImportedVideo(from: item)
-            }
-            .fullScreenCover(item: $takeReviewRoute) { route in
+            .fullScreenCover(item: $takeReviewRoute, onDismiss: {
+                if !didSaveApprovedTake && !recorderService.isSessionRunning {
+                    scrollOffset = 0.0
+                    recorderService.startSession()
+                }
+            }) { route in
                 TakeReviewView(
                     audition: audition,
                     rawVideoURL: route.videoURL,
                     totalDurationSeconds: route.duration,
                     isSlate: isSlate,
-                    qualityMetrics: route.qualityMetrics
+                    qualityMetrics: route.qualityMetrics,
+                    usedFrontCamera: route.usedFrontCamera
                 ) { approvedTake in
+                    didSaveApprovedTake = true
                     takeReviewRoute = nil
                     onTakeSaved(approvedTake)
                 } onRetake: {
                     takeReviewRoute = nil
                     scrollOffset = 0.0
-                    recorderService.startSession()
+                    if !recorderService.isSessionRunning {
+                        recorderService.startSession()
+                    }
                 }
             }
         }
@@ -222,15 +243,33 @@ struct TeleprompterRecorderView: View {
 
             VStack {
                 Spacer()
-                Text("Camera Active (16:9 • 1080p • Mirror On)")
+                Text(appState.isDemoMode
+                     ? "Camera Simulated (Demo Mode • 16:9 • 1080p)"
+                     : "Simulator Camera Unavailable (Enable Demo Mode in Profile)")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.35))
+                    .foregroundStyle(Color.white.opacity(0.45))
                     .padding(.bottom, 160)
             }
             #else
-            if let session = recorderService.captureSession {
-                LiveCameraPreview(session: session)
-                    .ignoresSafeArea()
+            if recorderService.cameraPermissionDenied {
+                VStack(spacing: 12) {
+                    Image(systemName: "video.slash.fill")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.white.opacity(0.75))
+                    Text("Camera Access Required")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(.white)
+                    Text("Enable Camera access in Settings to record your take.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.white.opacity(0.75))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                }
+            } else if let session = recorderService.captureSession {
+                LiveCameraPreview(session: session) { previewLayer in
+                    recorderService.attachPreviewLayer(previewLayer)
+                }
+                .ignoresSafeArea()
             } else {
                 Color.black.ignoresSafeArea()
             }
@@ -295,21 +334,31 @@ struct TeleprompterRecorderView: View {
                     .fill(Color.black.opacity(0.55))
                     .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.12), lineWidth: 1))
 
-                ScrollViewReader { _ in
-                    ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 14) {
-                            ForEach(Array(effectiveScriptLines.enumerated()), id: \.offset) { idx, line in
-                                Text(line)
-                                    .font(prompterFont)
-                                    .foregroundStyle(lineColor(for: line))
-                                    .lineSpacing(6)
-                                    .id(idx)
-                            }
-                            Spacer().frame(height: 120)
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(Array(effectiveScriptLines.enumerated()), id: \.offset) { idx, line in
+                            Text(line)
+                                .font(prompterFont)
+                                .foregroundStyle(lineColor(for: line))
+                                .lineSpacing(6)
+                                .id(idx)
                         }
-                        .padding(16)
-                        .offset(y: -scrollOffset)
+                        Spacer().frame(height: 120)
                     }
+                    .padding(16)
+                    .onGeometryChange(for: CGFloat.self) { proxy in
+                        proxy.size.height
+                    } action: { newHeight in
+                        prompterContentHeight = newHeight
+                        scrollOffset = min(scrollOffset, max(0, newHeight - prompterViewportHeight))
+                    }
+                    .offset(y: -scrollOffset)
+                }
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.height
+                } action: { newHeight in
+                    prompterViewportHeight = newHeight
+                    scrollOffset = min(scrollOffset, max(0, prompterContentHeight - newHeight))
                 }
             }
         }
@@ -324,8 +373,20 @@ struct TeleprompterRecorderView: View {
     }
 
     private func lineColor(for line: String) -> Color {
-        if line.hasPrefix("[READER]") || line.hasPrefix("[CUE]") {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("[READER]") || trimmed.hasPrefix("[CUE]") {
             return Theme.Colors.cameraTeleprompterHighlight
+        }
+        let upper = trimmed.uppercased()
+        let cueSpeakers = Set(
+            audition.cueLines
+                .map { $0.speaker.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() }
+                .filter { !$0.isEmpty }
+        )
+        for speaker in cueSpeakers {
+            if upper.hasPrefix("\(speaker):") || upper.hasPrefix("[\(speaker)]") {
+                return Theme.Colors.cameraTeleprompterHighlight
+            }
         }
         return Color.white
     }
@@ -442,7 +503,7 @@ struct TeleprompterRecorderView: View {
                         }
                     }
                 }
-                .disabled(recorderService.isCountingDown)
+                .disabled(recorderService.isCountingDown || recorderService.cameraPermissionDenied)
 
                 Spacer()
 
@@ -460,7 +521,7 @@ struct TeleprompterRecorderView: View {
                             .foregroundStyle(Color.white)
                     }
                 }
-                .disabled(recorderService.isRecording || recorderService.isCountingDown)
+                .disabled(recorderService.isRecording || recorderService.isCountingDown || recorderService.cameraPermissionDenied)
                 .accessibilityLabel("Flip camera")
             }
             .padding(.horizontal, 24)
@@ -470,14 +531,19 @@ struct TeleprompterRecorderView: View {
     // MARK: - Recording Actions
 
     private func startCountdownAndRecord() {
-        recorderService.startCountdownAndRecord(countdownSeconds: selectedCountdownSeconds) { url, duration in
-            if let outputURL = url {
-                self.takeReviewRoute = TakeReviewRoute(
-                    videoURL: outputURL,
-                    duration: duration,
-                    qualityMetrics: recorderService.qualityMetrics
-                )
-            }
+        let frontUsed = recorderService.isUsingFrontCamera
+        recorderService.startCountdownAndRecord(
+            countdownSeconds: selectedCountdownSeconds,
+            isDemoMode: appState.isDemoMode
+        ) { url, duration in
+            guard let outputURL = url else { return }
+            stopAllOperations()
+            self.takeReviewRoute = TakeReviewRoute(
+                videoURL: outputURL,
+                duration: duration,
+                qualityMetrics: recorderService.qualityMetrics,
+                usedFrontCamera: frontUsed
+            )
         }
     }
 
@@ -491,8 +557,11 @@ struct TeleprompterRecorderView: View {
         guard !effectiveScriptLines.isEmpty else { return }
         scrollTimer?.invalidate()
         scrollTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
-            guard recorderService.isRecording else { return }
-            scrollOffset += CGFloat(scrollSpeed * 0.9)
+            Task { @MainActor in
+                guard recorderService.isRecording else { return }
+                let nextOffset = scrollOffset + CGFloat(scrollSpeed * 0.9)
+                scrollOffset = min(maxScrollOffset, nextOffset)
+            }
         }
     }
 
@@ -507,23 +576,6 @@ struct TeleprompterRecorderView: View {
         recorderService.stopSession()
     }
 
-    private func loadImportedVideo(from item: PhotosPickerItem) {
-        Task {
-            if let movie = try? await item.loadTransferable(type: MovieTransferable.self) {
-                let asset = AVURLAsset(url: movie.url)
-                let dur = (try? await asset.load(.duration).seconds) ?? 15.0
-                await MainActor.run {
-                    stopAllOperations()
-                    self.takeReviewRoute = TakeReviewRoute(
-                        videoURL: movie.url,
-                        duration: dur,
-                        qualityMetrics: PreTakeQualityMetrics()
-                    )
-                }
-            }
-        }
-    }
-
     private func formattedDuration(_ seconds: Double) -> String {
         let mins = Int(seconds) / 60
         let secs = Int(seconds) % 60
@@ -535,11 +587,13 @@ struct TeleprompterRecorderView: View {
 
 struct LiveCameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
+    var onLayerReady: ((AVCaptureVideoPreviewLayer) -> Void)? = nil
 
     func makeUIView(context: Context) -> PreviewUIView {
         let view = PreviewUIView()
         view.previewLayer.session = session
         view.previewLayer.videoGravity = .resizeAspectFill
+        onLayerReady?(view.previewLayer)
         return view
     }
 
@@ -547,6 +601,7 @@ struct LiveCameraPreview: UIViewRepresentable {
         if uiView.previewLayer.session !== session {
             uiView.previewLayer.session = session
         }
+        onLayerReady?(uiView.previewLayer)
     }
 
     final class PreviewUIView: UIView {

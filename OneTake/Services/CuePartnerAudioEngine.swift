@@ -4,6 +4,7 @@ import Speech
 
 // MARK: - Protocol
 
+@MainActor
 protocol CuePartnerAudioEngineProtocol: AnyObject {
     var isRecordingCue: Bool { get }
     var isCuePlaying: Bool { get }
@@ -19,15 +20,21 @@ protocol CuePartnerAudioEngineProtocol: AnyObject {
     func stopPlayback()
     func startListening(cues: [CueLine], mode: CueTriggerMode, responseDelay: Double)
     func stopListening()
-    @MainActor func ingestLiveMicInput(rms: Float, transcript: String, isFinal: Bool)
-    func startAuditionScenePartner(cues: [CueLine], onCueTriggered: @escaping (Int) -> Void)
+    func ingestLiveMicInput(rms: Float, transcript: String, isFinal: Bool)
+    func startAuditionScenePartner(
+        cues: [CueLine],
+        mode: CueTriggerMode,
+        responseDelay: Double,
+        onCueTriggered: @escaping (Int) -> Void
+    )
     func stopAuditionScenePartner()
 }
 
 // MARK: - Implementation
 
+@MainActor
 @Observable
-final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol, @unchecked Sendable {
+final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
     static let shared = CuePartnerAudioEngine()
 
     var isRecordingCue: Bool = false
@@ -37,33 +44,26 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol, @unc
     var currentCueIndex: Int = 0
 
     // Recording & Playback
-    private var audioRecorder: AVAudioRecorder?
-    private var audioPlayer: AVAudioPlayer?
-    private var activeCuePlayer: AVAudioPlayer?
-    private var recordingStartTime: Date?
-    private var activeRecordingURL: URL?
+    @ObservationIgnored private var audioRecorder: AVAudioRecorder?
+    @ObservationIgnored private var audioPlayer: AVAudioPlayer?
+    @ObservationIgnored private var activeCuePlayer: AVAudioPlayer?
+    @ObservationIgnored private var recordingStartTime: Date?
+    @ObservationIgnored private var activeRecordingURL: URL?
+    @ObservationIgnored private var playbackGeneration: Int = 0
+    @ObservationIgnored private var hasConfiguredAudioSession: Bool = false
 
     // Shared state
-    private var activeCues: [CueLine] = []
-    private var cueTriggerCallback: ((Int) -> Void)?
-    private var pendingCueWorkItem: DispatchWorkItem?
-    private var pendingPlaybackCompletion: (() -> Void)?
+    @ObservationIgnored private var activeCues: [CueLine] = []
+    @ObservationIgnored private var cueTriggerCallback: ((Int) -> Void)?
+    @ObservationIgnored private var pendingPlaybackCompletion: (() -> Void)?
+    @ObservationIgnored private var pendingManualCueIndex: Int?
+    @ObservationIgnored private var ignoreMicUntil: Date = .distantPast
+    @ObservationIgnored private var scriptCueCoordinator: ScriptSyncedCuePlaybackCoordinator?
+    @ObservationIgnored private var meterTimer: Timer?
 
-    // Speech & RMS state (driven by TeleprompterRecorderService's single mic stream)
-    private var currentListeningForCueIndex: Int = 0
-    private var lineMatchDebounceWorkItem: DispatchWorkItem?
-    private var lineSpeechDuration: TimeInterval = 0.0
-    private var lineSilenceDuration: TimeInterval = 0.0
-    private var lineHasDetectedSpeech: Bool = false
-    private var lineHasTranscriptEvidence: Bool = false
-    private var lineRMSTriggered: Bool = false
-    private var lastMicInputTimestamp: Date?
-    private var ignoreMicUntil: Date = .distantPast
-    private var baselineTranscriptForCurrentTurn: String = ""
-    private var currentCueTimingMode: CueTriggerMode = .afterMyLine
-    private var scriptCueCoordinator: ScriptSyncedCuePlaybackCoordinator?
-
-    private var meterTimer: Timer?
+    // TTS Fallback
+    @ObservationIgnored let fallbackSynthesizer = AVSpeechSynthesizer()
+    @ObservationIgnored private(set) var activeUtterance: AVSpeechUtterance?
 
     override init() {
         super.init()
@@ -75,10 +75,28 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol, @unc
     func setupAudioSession() {
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothHFP])
-            try session.setActive(true)
+            if !hasConfiguredAudioSession || session.category != .playAndRecord {
+                try session.setCategory(
+                    .playAndRecord,
+                    mode: .default,
+                    options: [.defaultToSpeaker, .allowBluetoothHFP, .mixWithOthers]
+                )
+                try session.setActive(true)
+                hasConfiguredAudioSession = true
+            }
+            routeToSpeakerIfNoExternalOutput(session)
         } catch {
             print("Failed to configure AVAudioSession: \(error)")
+        }
+    }
+
+    nonisolated private func routeToSpeakerIfNoExternalOutput(_ session: AVAudioSession) {
+        let externalOutputPorts: Set<AVAudioSession.Port> = [
+            .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .headphones, .airPlay, .carAudio, .usbAudio
+        ]
+        let hasExternalOutput = session.currentRoute.outputs.contains { externalOutputPorts.contains($0.portType) }
+        if !hasExternalOutput {
+            try? session.overrideOutputAudioPort(.speaker)
         }
     }
 
@@ -89,13 +107,9 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol, @unc
         case .denied:
             completion(false)
         case .undetermined:
-            if #available(iOS 17.0, *) {
-                AVAudioApplication.requestRecordPermission { granted in
-                    DispatchQueue.main.async { completion(granted) }
-                }
-            } else {
-                AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                    DispatchQueue.main.async { completion(granted) }
+            AVAudioApplication.requestRecordPermission { granted in
+                Task { @MainActor in
+                    completion(granted)
                 }
             }
         @unknown default:
@@ -107,12 +121,15 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol, @unc
 
     func startRecordingCue(orderIndex: Int) throws -> URL {
         guard AVAudioApplication.shared.recordPermission == .granted else {
-            throw NSError(domain: "OneTake.Audio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Microphone access is required to record a cue."])
+            throw NSError(
+                domain: "OneTake.Audio",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Microphone access is required to record a cue."]
+            )
         }
         setupAudioSession()
-        let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let cuesDir = docsDir.appendingPathComponent("Cues", isDirectory: true)
-        try? FileManager.default.createDirectory(at: cuesDir, withIntermediateDirectories: true)
+        let cuesDir = MediaStorage.documentsDirectory.appendingPathComponent("Cues", isDirectory: true)
+        try FileManager.default.createDirectory(at: cuesDir, withIntermediateDirectories: true)
 
         let fileURL = cuesDir.appendingPathComponent("cue_\(orderIndex)_\(UUID().uuidString).m4a")
         self.activeRecordingURL = fileURL
@@ -130,7 +147,11 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol, @unc
 
         recorder.prepareToRecord()
         guard recorder.record() else {
-            throw NSError(domain: "OneTake.Audio", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unable to start cue recording."])
+            throw NSError(
+                domain: "OneTake.Audio",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Unable to start cue recording."]
+            )
         }
         self.audioRecorder = recorder
         self.isRecordingCue = true
@@ -159,11 +180,13 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol, @unc
     private func startMeteringTimer() {
         meterTimer?.invalidate()
         meterTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            guard let self = self, let recorder = self.audioRecorder, recorder.isRecording else { return }
-            recorder.updateMeters()
-            let power = recorder.averagePower(forChannel: 0)
-            let normalized = max(0.0, min(1.0, (power + 60.0) / 60.0))
-            self.currentAudioLevel = normalized
+            Task { @MainActor [weak self] in
+                guard let self = self, let recorder = self.audioRecorder, recorder.isRecording else { return }
+                recorder.updateMeters()
+                let power = recorder.averagePower(forChannel: 0)
+                let normalized = max(0.0, min(1.0, (power + 60.0) / 60.0))
+                self.currentAudioLevel = normalized
+            }
         }
     }
 
@@ -183,40 +206,44 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol, @unc
 
         isCuePlaying = true
         ignoreMicUntil = .distantFuture
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let session = AVAudioSession.sharedInstance()
-            do {
-                try session.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothHFP])
-                try session.setActive(true)
-                try session.overrideOutputAudioPort(.speaker)
-            } catch {
-                print("playCue: AVAudioSession setup failed: \(error)")
-            }
+        let generation = playbackGeneration
+        setupAudioSession()
 
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 let player = try AVAudioPlayer(contentsOf: url)
                 player.volume = 1.0
                 player.prepareToPlay()
 
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
+                Task { @MainActor [weak self] in
+                    guard let self, self.playbackGeneration == generation else { return }
                     player.delegate = self
                     self.audioPlayer = player
-                    player.play()
+                    if !player.play() {
+                        self.isCuePlaying = false
+                        self.ignoreMicUntil = Date().addingTimeInterval(0.4)
+                        let done = self.pendingPlaybackCompletion
+                        self.pendingPlaybackCompletion = nil
+                        done?()
+                    }
                 }
             } catch {
                 print("Failed to play cue line: \(error)")
-                DispatchQueue.main.async { [weak self] in
-                    self?.isCuePlaying = false
-                    self?.ignoreMicUntil = Date().addingTimeInterval(0.6)
-                    self?.pendingPlaybackCompletion?()
-                    self?.pendingPlaybackCompletion = nil
+                Task { @MainActor [weak self] in
+                    guard let self, self.playbackGeneration == generation else { return }
+                    self.isCuePlaying = false
+                    self.ignoreMicUntil = Date().addingTimeInterval(0.4)
+                    let done = self.pendingPlaybackCompletion
+                    self.pendingPlaybackCompletion = nil
+                    done?()
                 }
             }
         }
     }
 
     func stopPlayback() {
+        playbackGeneration += 1
+        pendingManualCueIndex = nil
         audioPlayer?.stop()
         audioPlayer = nil
         activeCuePlayer?.stop()
@@ -224,20 +251,22 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol, @unc
         if fallbackSynthesizer.isSpeaking {
             fallbackSynthesizer.stopSpeaking(at: .immediate)
         }
+        activeUtterance = nil
         isCuePlaying = false
         pendingPlaybackCompletion = nil
+        scriptCueCoordinator?.cuePlaybackDidFinish()
+        if let coordinator = scriptCueCoordinator {
+            currentCueIndex = coordinator.currentCueIndex
+        }
     }
 
     // MARK: - Live Mic Stream Ingestion (Shared from TeleprompterRecorderService)
 
-    @MainActor
     func ingestLiveMicInput(rms: Float, transcript: String, isFinal: Bool) {
         currentAudioLevel = min(1.0, rms * 8.0)
 
         // Cue playback must never be interpreted as the next actor turn.
         guard isListening, !isCuePlaying, Date() >= ignoreMicUntil else {
-            resetTurnSpeechState()
-            baselineTranscriptForCurrentTurn = transcript
             return
         }
 
@@ -249,89 +278,48 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol, @unc
         }
     }
 
-    @MainActor
-    private func processLiveMicRMS(rms: Float, hasCredibleWords: Bool) {
-        let now = Date()
-        let dt: TimeInterval = lastMicInputTimestamp.map { min(0.2, now.timeIntervalSince($0)) } ?? 0.03
-        lastMicInputTimestamp = now
-
-        let micSpeechThreshold: Float = 0.045
-        let requiredSpeechDuration: TimeInterval = 0.75
-        let requiredSilenceDuration: TimeInterval = 1.7
-
-        if rms > micSpeechThreshold {
-            // Actor is actively speaking: reset silence timer & cancel any premature scheduled cue
-            lineSpeechDuration += dt
-            lineSilenceDuration = 0.0
-            lineMatchDebounceWorkItem?.cancel()
-            lineMatchDebounceWorkItem = nil
-
-            if lineSpeechDuration >= requiredSpeechDuration && (hasCredibleWords || lineHasTranscriptEvidence) {
-                lineHasDetectedSpeech = true
-            }
-        } else if lineHasDetectedSpeech {
-            // Only a real actor turn followed by sustained silence can advance the scene.
-            lineSilenceDuration += dt
-            if lineSilenceDuration >= requiredSilenceDuration && !lineRMSTriggered {
-                lineRMSTriggered = true
-                triggerCue(at: currentListeningForCueIndex)
-            }
-        } else {
-            // Transient ambient noise below 0.45s: decay back to 0
-            lineSpeechDuration = max(0.0, lineSpeechDuration - dt)
-        }
-    }
-
-    private func resetTurnSpeechState() {
-        lineSpeechDuration = 0.0
-        lineSilenceDuration = 0.0
-        lineHasDetectedSpeech = false
-        lineHasTranscriptEvidence = false
-        lineRMSTriggered = false
-        lastMicInputTimestamp = nil
-        lineMatchDebounceWorkItem?.cancel()
-        lineMatchDebounceWorkItem = nil
-    }
-
     // MARK: - Start and Stop Listening
 
     func startListening(cues: [CueLine], mode: CueTriggerMode = .afterMyLine, responseDelay: Double = 0) {
+        stopPlayback()
         self.activeCues = cues.sorted { $0.orderIndex < $1.orderIndex }
         self.currentCueIndex = 0
-        self.currentListeningForCueIndex = 0
-        self.currentCueTimingMode = mode
-        self.isListening = true
+        self.isListening = !self.activeCues.isEmpty
         self.isCuePlaying = false
-        self.baselineTranscriptForCurrentTurn = ""
-        self.pendingCueWorkItem?.cancel()
-        self.pendingCueWorkItem = nil
+        self.pendingManualCueIndex = nil
+        self.ignoreMicUntil = .distantPast
+        let effectiveDelay = (mode == .fixedDelay) ? max(0.0, responseDelay) : responseDelay
         self.scriptCueCoordinator = ScriptSyncedCuePlaybackCoordinator(
             cues: self.activeCues,
-            responseDelay: responseDelay,
-            onCueReady: { [weak self] index in self?.triggerCue(at: index) }
+            responseDelay: effectiveDelay,
+            onCueReady: { [weak self] index in
+                guard let self else { return }
+                let force = (self.pendingManualCueIndex == index)
+                self.triggerCue(at: index, force: force)
+            }
         )
-        resetTurnSpeechState()
     }
 
     func stopListening() {
         self.isListening = false
-        self.pendingCueWorkItem?.cancel()
-        self.pendingCueWorkItem = nil
         stopPlayback()
         self.activeCues = []
         self.currentCueIndex = 0
-        self.currentListeningForCueIndex = 0
         self.scriptCueCoordinator = nil
-        self.baselineTranscriptForCurrentTurn = ""
-        resetTurnSpeechState()
+        self.pendingManualCueIndex = nil
+        self.ignoreMicUntil = .distantPast
     }
 
     // MARK: - Audition Scene Partner
 
-    func startAuditionScenePartner(cues: [CueLine], onCueTriggered: @escaping (Int) -> Void) {
+    func startAuditionScenePartner(
+        cues: [CueLine],
+        mode: CueTriggerMode = .afterMyLine,
+        responseDelay: Double = 2.0,
+        onCueTriggered: @escaping (Int) -> Void
+    ) {
         self.cueTriggerCallback = onCueTriggered
-        let settings = AppSettings()
-        startListening(cues: cues, mode: settings.cueTriggerMode, responseDelay: settings.cueDelaySeconds)
+        startListening(cues: cues, mode: mode, responseDelay: responseDelay)
     }
 
     func stopAuditionScenePartner() {
@@ -339,140 +327,200 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol, @unc
         cueTriggerCallback = nil
     }
 
-    /// Fuzzy match: lowercased contains, or word overlap >= 60%
-    private func textSimilar(_ transcript: String, to target: String) -> Bool {
-        let t = transcript.lowercased()
-        let g = target.lowercased()
-        if g.isEmpty { return false }
-        if t.contains(g) { return true }
-        let targetWords = Set(g.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty })
-        let transcriptWords = Set(t.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty })
-        guard !targetWords.isEmpty else { return false }
-        let overlap = targetWords.intersection(transcriptWords).count
-        return Double(overlap) / Double(targetWords.count) >= 0.6
-    }
-
     // MARK: - Manual Cue Advance
 
     func playNextCue() {
         guard let coordinator = scriptCueCoordinator,
-              coordinator.requestManualCue() != nil else { return }
-        pendingCueWorkItem?.cancel()
-        pendingCueWorkItem = nil
-        isCuePlaying = true
+              let index = coordinator.requestManualCue() else { return }
+        pendingManualCueIndex = index
+    }
+
+    /// Exposes coordinator lock state for diagnostics and unit tests.
+    var isCoordinatorPlayingCue: Bool {
+        scriptCueCoordinator?.isPlayingCue ?? false
     }
 
     // MARK: - Trigger Cue
 
     private func triggerCue(at index: Int, force: Bool = false) {
-        guard index < activeCues.count, currentCueIndex == index else { return }
-        guard force || scriptCueCoordinator?.isPlayingCue == true else { return }
+        pendingManualCueIndex = nil
+        guard index < activeCues.count, currentCueIndex == index else {
+            isCuePlaying = false
+            scriptCueCoordinator?.cuePlaybackDidFinish()
+            return
+        }
+        guard force || scriptCueCoordinator?.isPlayingCue == true else {
+            isCuePlaying = false
+            return
+        }
         let cueToPlay = activeCues[index]
-        guard force || !cueToPlay.precedingActorLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard force || !cueToPlay.precedingActorLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            isCuePlaying = false
+            scriptCueCoordinator?.cuePlaybackDidFinish()
+            return
+        }
+
         // Block the shared microphone stream before starting output, not after a player is created.
         isCuePlaying = true
         ignoreMicUntil = .distantFuture
-        pendingCueWorkItem?.cancel()
-        pendingCueWorkItem = nil
-        resetTurnSpeechState()
-
         cueTriggerCallback?(index)
 
+        let generation = playbackGeneration
         let onDone: () -> Void = { [weak self] in
             guard let self = self else { return }
             self.isCuePlaying = false
             self.activeCuePlayer = nil
+            self.activeUtterance = nil
             self.ignoreMicUntil = Date().addingTimeInterval(0.4)
-            self.resetTurnSpeechState()
             self.scriptCueCoordinator?.cuePlaybackDidFinish()
             self.currentCueIndex = self.scriptCueCoordinator?.currentCueIndex ?? (index + 1)
-            self.currentListeningForCueIndex = self.currentCueIndex
             if self.currentCueIndex >= self.activeCues.count {
                 self.isListening = false
             }
         }
 
-        if let audioPath = cueToPlay.audioFilePath, !audioPath.isEmpty,
-           FileManager.default.fileExists(atPath: audioPath) {
-            let url = URL(fileURLWithPath: audioPath)
+        if let audioURL = MediaStorage.resolveURL(for: cueToPlay.audioFilePath),
+           FileManager.default.fileExists(atPath: audioURL.path) {
+            // Avoid reconfiguring the active AVAudioSession category while TeleprompterRecorderService is recording.
+            routeToSpeakerIfNoExternalOutput(AVAudioSession.sharedInstance())
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                let session = AVAudioSession.sharedInstance()
                 do {
-                    try session.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothHFP])
-                    try session.setActive(true)
-                    try session.overrideOutputAudioPort(.speaker)
-                } catch {
-                    print("triggerCue: AVAudioSession setup failed: \(error)")
-                }
-
-                do {
-                    let player = try AVAudioPlayer(contentsOf: url)
+                    let player = try AVAudioPlayer(contentsOf: audioURL)
                     player.volume = 1.0
                     player.prepareToPlay()
 
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
+                    Task { @MainActor [weak self] in
+                        guard let self, self.playbackGeneration == generation else { return }
                         player.delegate = self
                         self.activeCuePlayer = player
-                        self.pendingPlaybackCompletion = { onDone() }
-                        player.play()
+                        self.pendingPlaybackCompletion = onDone
+                        if !player.play() {
+                            self.pendingPlaybackCompletion = nil
+                            onDone()
+                        }
                     }
                 } catch {
                     print("triggerCue: AVAudioPlayer failed: \(error)")
-                    DispatchQueue.main.async { [weak self] in
-                        self?.isCuePlaying = false
+                    Task { @MainActor [weak self] in
+                        guard let self, self.playbackGeneration == generation else { return }
                         onDone()
                     }
                 }
             }
         } else {
-            speakFallbackCue(text: cueToPlay.cueText) { onDone() }
+            speakFallbackCue(text: cueToPlay.cueText, completion: onDone)
         }
     }
 
     // MARK: - TTS Fallback
 
-    private let fallbackSynthesizer = AVSpeechSynthesizer()
-
     private func speakFallbackCue(text: String, completion: @escaping () -> Void) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            completion()
+            return
+        }
         isCuePlaying = true
         pendingPlaybackCompletion = completion
-        let utterance = AVSpeechUtterance(string: text)
+        let utterance = AVSpeechUtterance(string: trimmed)
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        activeUtterance = utterance
         fallbackSynthesizer.speak(utterance)
+    }
+
+    // MARK: - Delegate Handlers
+
+    private func handleAudioRecorderFinished() {
+        isRecordingCue = false
+    }
+
+    private func handleAudioPlayerFinished() {
+        isCuePlaying = false
+        let completion = pendingPlaybackCompletion
+        pendingPlaybackCompletion = nil
+        completion?()
+    }
+
+    private func handleSpeechDidFinish(synthesizer: AVSpeechSynthesizer, utterance: AVSpeechUtterance) {
+        guard synthesizer === fallbackSynthesizer else { return }
+        if let active = activeUtterance, active !== utterance { return }
+        activeUtterance = nil
+        isCuePlaying = false
+        let completion = pendingPlaybackCompletion
+        pendingPlaybackCompletion = nil
+        completion?()
+    }
+
+    private func handleSpeechDidCancel(synthesizer: AVSpeechSynthesizer, utterance: AVSpeechUtterance) {
+        guard synthesizer === fallbackSynthesizer else { return }
+        if let active = activeUtterance, active !== utterance { return }
+        activeUtterance = nil
+        isCuePlaying = false
+        pendingPlaybackCompletion = nil
+        ignoreMicUntil = Date().addingTimeInterval(0.4)
+        scriptCueCoordinator?.cuePlaybackDidFinish()
+        if let coordinator = scriptCueCoordinator {
+            currentCueIndex = coordinator.currentCueIndex
+            if currentCueIndex >= activeCues.count {
+                isListening = false
+            }
+        }
     }
 }
 
 // MARK: - AVAudioRecorderDelegate
 
 extension CuePartnerAudioEngine: AVAudioRecorderDelegate {
-    func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
-        isRecordingCue = false
+    nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { handleAudioRecorderFinished() }
+        } else {
+            Task { @MainActor [weak self] in self?.handleAudioRecorderFinished() }
+        }
     }
 }
 
 // MARK: - AVAudioPlayerDelegate
 
 extension CuePartnerAudioEngine: AVAudioPlayerDelegate {
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        isCuePlaying = false
-        pendingPlaybackCompletion?()
-        pendingPlaybackCompletion = nil
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { handleAudioPlayerFinished() }
+        } else {
+            Task { @MainActor [weak self] in self?.handleAudioPlayerFinished() }
+        }
     }
 }
 
+// MARK: - AVSpeechSynthesizerDelegate
+
+nonisolated private struct UncheckedSpeechBox<Value>: @unchecked Sendable {
+    let value: Value
+}
+
 extension CuePartnerAudioEngine: AVSpeechSynthesizerDelegate {
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        guard synthesizer === fallbackSynthesizer else { return }
-        isCuePlaying = false
-        pendingPlaybackCompletion?()
-        pendingPlaybackCompletion = nil
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { handleSpeechDidFinish(synthesizer: synthesizer, utterance: utterance) }
+        } else {
+            let synthBox = UncheckedSpeechBox(value: synthesizer)
+            let uttBox = UncheckedSpeechBox(value: utterance)
+            Task { @MainActor [weak self] in
+                self?.handleSpeechDidFinish(synthesizer: synthBox.value, utterance: uttBox.value)
+            }
+        }
     }
 
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        guard synthesizer === fallbackSynthesizer else { return }
-        isCuePlaying = false
-        pendingPlaybackCompletion = nil
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { handleSpeechDidCancel(synthesizer: synthesizer, utterance: utterance) }
+        } else {
+            let synthBox = UncheckedSpeechBox(value: synthesizer)
+            let uttBox = UncheckedSpeechBox(value: utterance)
+            Task { @MainActor [weak self] in
+                self?.handleSpeechDidCancel(synthesizer: synthBox.value, utterance: uttBox.value)
+            }
+        }
     }
 }
