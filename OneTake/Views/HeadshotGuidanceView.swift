@@ -203,48 +203,73 @@ struct HeadshotGuidanceView: View {
         }
     }
 
-    // MARK: - Top Camera Bar (Single-layer, no double Liquid Glass rings)
+    // MARK: - Top Camera Bar (Native Liquid Glass + Top Gesture & Auto Controls)
 
     private var topCameraBar: some View {
-        HStack(spacing: 10) {
-            Button {
-                guidanceService.stopSession()
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(.black.opacity(0.45), in: Circle())
-                    .overlay(Circle().stroke(.white.opacity(0.18), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .disabled(guidanceService.isCapturing)
-            .accessibilityLabel("Close camera")
-
-            Spacer(minLength: 4)
-
-            angleSegmentedPicker
-
-            Spacer(minLength: 4)
-
-            Button {
-                showingMatchGuide = true
-            } label: {
-                HStack(spacing: 4) {
-                    Text("Match this")
-                        .font(.system(size: 11, weight: .semibold))
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Button {
+                    guidanceService.stopSession()
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 24, height: 24)
                 }
-                .foregroundStyle(Theme.Colors.cameraGuideGold)
-                .padding(.horizontal, 12)
-                .frame(height: 36)
-                .background(.black.opacity(0.45), in: Capsule())
-                .overlay(Capsule().stroke(Theme.Colors.cameraGuideGoldStroke.opacity(0.45), lineWidth: 1))
+                .nativeGlassCircleButton()
+                .disabled(guidanceService.isCapturing)
+                .accessibilityLabel("Close camera")
+
+                Spacer(minLength: 4)
+
+                angleSegmentedPicker
+
+                Spacer(minLength: 4)
+
+                Button {
+                    showingMatchGuide = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("Match this")
+                            .font(.system(size: 12, weight: .semibold))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .bold))
+                    }
+                    .foregroundStyle(Theme.Colors.cameraGuideGold)
+                }
+                .nativeGlassCapsuleButton()
+                .disabled(guidanceService.isCapturing)
             }
-            .buttonStyle(.plain)
-            .disabled(guidanceService.isCapturing)
+
+            HStack(spacing: 10) {
+                Button {
+                    guidanceService.gesturesEnabled.toggle()
+                } label: {
+                    Label(
+                        guidanceService.gesturesEnabled ? "Gesture On" : "Gesture Off",
+                        systemImage: guidanceService.gesturesEnabled ? "hand.raised" : "hand.raised.slash"
+                    )
+                    .font(.system(size: 12, weight: .semibold))
+                }
+                .nativeGlassCapsuleButton(
+                    tint: guidanceService.gesturesEnabled ? Theme.Colors.cameraGuideGold : nil
+                )
+                .accessibilityLabel("Toggle open palm gesture capture")
+
+                Button {
+                    guidanceService.autoCaptureEnabled.toggle()
+                } label: {
+                    Label(
+                        guidanceService.autoCaptureEnabled ? "Auto On" : "Auto Off",
+                        systemImage: guidanceService.autoCaptureEnabled ? "sparkles" : "camera.metering.spot"
+                    )
+                    .font(.system(size: 12, weight: .semibold))
+                }
+                .nativeGlassCapsuleButton(
+                    tint: guidanceService.autoCaptureEnabled ? .green : nil
+                )
+                .accessibilityLabel("Toggle automatic capture when aligned")
+            }
         }
     }
 
@@ -255,9 +280,8 @@ struct HeadshotGuidanceView: View {
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 14)
-                .frame(height: 36)
-                .background(.black.opacity(0.45), in: Capsule())
-                .overlay(Capsule().stroke(.white.opacity(0.18), lineWidth: 1))
+                .padding(.vertical, 8)
+                .nativeGlassCapsuleSurface()
         } else {
             Picker("Angle", selection: Binding(
                 get: { currentAngle },
@@ -339,6 +363,7 @@ struct HeadshotGuidanceView: View {
             }
             #endif
         }
+        .ignoresSafeArea()
     }
 
     private func cameraUnavailableCard(title: String, message: String, showSettingsButton: Bool) -> some View {
@@ -427,6 +452,7 @@ struct HeadshotGuidanceView: View {
                 .stroke(strokeColor, lineWidth: 2)
             }
         }
+        .ignoresSafeArea()
         .allowsHitTesting(false)
     }
 
@@ -434,7 +460,6 @@ struct HeadshotGuidanceView: View {
 
     private var bottomCinemaHUD: some View {
         VStack(spacing: 12) {
-            // Row 1: Telemetry status pills
             HStack(spacing: 8) {
                 HStack(spacing: 5) {
                     Circle()
@@ -446,8 +471,7 @@ struct HeadshotGuidanceView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Color.black.opacity(0.6), in: Capsule())
-                .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+                .nativeGlassCapsuleSurface()
 
                 HStack(spacing: 5) {
                     Circle()
@@ -459,27 +483,8 @@ struct HeadshotGuidanceView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Color.black.opacity(0.6), in: Capsule())
-                .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+                .nativeGlassCapsuleSurface()
 
-                if guidanceService.openPalmDetected && guidanceService.gesturesEnabled {
-                    HStack(spacing: 5) {
-                        Image(systemName: "hand.raised.fill")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(Color.green)
-                        Text("Hold palm")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.white)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.black.opacity(0.75), in: Capsule())
-                    .overlay(Capsule().stroke(Color.green.opacity(0.7), lineWidth: 1))
-                }
-            }
-
-            // Row 2: Hands-free controls (Voice, Palm Gesture, Auto-Click)
-            HStack(spacing: 8) {
                 Button {
                     if !guidanceService.isVoiceListening {
                         guidanceService.enableVoiceTriggers()
@@ -489,55 +494,26 @@ struct HeadshotGuidanceView: View {
                         Circle()
                             .fill(guidanceService.isVoiceListening ? Color.green : Color.orange)
                             .frame(width: 6, height: 6)
-                        Text(guidanceService.isVoiceListening ? guidanceService.voiceStatus.label : "Enable Voice")
+                        Text(guidanceService.isVoiceListening ? guidanceService.voiceStatus.label : "Voice")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                }
+                .nativeGlassCapsuleButton()
+                .accessibilityLabel("Voice command status")
+
+                if guidanceService.openPalmDetected && guidanceService.gesturesEnabled {
+                    HStack(spacing: 5) {
+                        Image(systemName: "hand.raised")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.green)
+                        Text("Hold")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.white)
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .background(Color.black.opacity(0.6), in: Capsule())
-                    .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 1))
+                    .nativeGlassCapsuleSurface()
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Voice command status")
-
-                Button {
-                    guidanceService.gesturesEnabled.toggle()
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: guidanceService.gesturesEnabled ? "hand.raised.fill" : "hand.raised.slash")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(guidanceService.gesturesEnabled ? Theme.Colors.cameraGuideGold : Color.white.opacity(0.55))
-                        Text("Gesture")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(guidanceService.gesturesEnabled ? .white : Color.white.opacity(0.6))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.black.opacity(0.6), in: Capsule())
-                    .overlay(Capsule().stroke(guidanceService.gesturesEnabled ? Theme.Colors.cameraGuideGoldStroke.opacity(0.45) : Color.white.opacity(0.12), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Toggle open palm gesture capture")
-
-                Button {
-                    guidanceService.autoCaptureEnabled.toggle()
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: guidanceService.autoCaptureEnabled ? "sparkles" : "camera.metering.spot")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(guidanceService.autoCaptureEnabled ? Color.green : Color.white.opacity(0.65))
-                        Text(guidanceService.autoCaptureEnabled ? "Auto On" : "Auto Off")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(guidanceService.autoCaptureEnabled ? .white : Color.white.opacity(0.65))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.black.opacity(0.6), in: Capsule())
-                    .overlay(Capsule().stroke(guidanceService.autoCaptureEnabled ? Color.green.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Toggle automatic capture when aligned")
             }
 
             VStack(spacing: 4) {
@@ -561,18 +537,12 @@ struct HeadshotGuidanceView: View {
                 Button {
                     guidanceService.voiceGuidanceEnabled.toggle()
                 } label: {
-                    ZStack {
-                        Circle()
-                            .fill(Color.black.opacity(0.55))
-                            .frame(width: 50, height: 50)
-                            .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
-
-                        Image(systemName: guidanceService.voiceGuidanceEnabled ? "speaker.wave.2" : "speaker.slash")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(guidanceService.voiceGuidanceEnabled ? Color.white : Color.white.opacity(0.45))
-                    }
+                    Image(systemName: guidanceService.voiceGuidanceEnabled ? "speaker.wave.2" : "speaker.slash")
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 30, height: 30)
+                        .foregroundStyle(guidanceService.voiceGuidanceEnabled ? Color.white : Color.white.opacity(0.45))
                 }
-                .buttonStyle(.plain)
+                .nativeGlassCircleButton()
                 .accessibilityLabel(guidanceService.voiceGuidanceEnabled ? "Disable voice guidance" : "Enable voice guidance")
 
                 Spacer()
@@ -599,18 +569,12 @@ struct HeadshotGuidanceView: View {
                 Button {
                     guidanceService.flipCamera()
                 } label: {
-                    ZStack {
-                        Circle()
-                            .fill(Color.black.opacity(0.55))
-                            .frame(width: 50, height: 50)
-                            .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
-
-                        Image(systemName: "camera.rotate")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(Color.white)
-                    }
+                    Image(systemName: "camera.rotate")
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 30, height: 30)
+                        .foregroundStyle(Color.white)
                 }
-                .buttonStyle(.plain)
+                .nativeGlassCircleButton()
                 .disabled(guidanceService.isCapturing)
                 .accessibilityLabel("Flip camera")
             }
@@ -736,19 +700,10 @@ struct HeadshotGuidanceView: View {
                     } label: {
                         Text("Enable Voice Triggers")
                             .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 15)
-                            .background(
-                                LinearGradient(
-                                    colors: [Theme.Colors.primaryPlum, Theme.Colors.primaryPlum.opacity(0.85)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .clipShape(Capsule())
-                            .shadow(color: Theme.Colors.primaryPlum.opacity(0.4), radius: 10, y: 4)
+                            .padding(.vertical, 8)
                     }
+                    .nativeProminentGlassButton(tint: Theme.Colors.primaryPlum)
 
                     Button {
                         withAnimation(.easeInOut(duration: 0.25)) {
@@ -758,9 +713,10 @@ struct HeadshotGuidanceView: View {
                     } label: {
                         Text("Continue Without Voice")
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Color.white.opacity(0.8))
+                            .foregroundStyle(Color.white.opacity(0.85))
                             .padding(.vertical, 8)
                     }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(24)
@@ -866,12 +822,10 @@ struct HeadshotGuidanceView: View {
                         } label: {
                             Text("Done")
                                 .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .background(Theme.Colors.primaryPlum)
-                                .clipShape(Capsule())
+                                .padding(.vertical, 8)
                         }
+                        .nativeProminentGlassButton(tint: Theme.Colors.primaryPlum)
                         .padding(.top, 10)
                     }
                     .padding(24)
@@ -937,3 +891,62 @@ struct HeadshotGuidanceView: View {
 
 // MARK: - Compatibility Typealias
 typealias HeadshotCaptureView = HeadshotGuidanceView
+
+private extension View {
+    @ViewBuilder
+    func nativeGlassCircleButton() -> some View {
+        if #available(iOS 26.0, *) {
+            self
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+        } else {
+            self
+                .padding(8)
+                .background(.ultraThinMaterial, in: Circle())
+        }
+    }
+
+    @ViewBuilder
+    func nativeGlassCapsuleButton(tint: Color? = nil) -> some View {
+        if #available(iOS 26.0, *) {
+            if let tint {
+                self
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.capsule)
+                    .tint(tint)
+            } else {
+                self
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.capsule)
+            }
+        } else {
+            self
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background((tint ?? .black).opacity(tint == nil ? 0.45 : 0.28), in: Capsule())
+        }
+    }
+
+    @ViewBuilder
+    func nativeGlassCapsuleSurface() -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular, in: .capsule)
+        } else {
+            self.background(.ultraThinMaterial, in: Capsule())
+        }
+    }
+
+    @ViewBuilder
+    func nativeProminentGlassButton(tint: Color) -> some View {
+        if #available(iOS 26.0, *) {
+            self
+                .buttonStyle(.glassProminent)
+                .buttonBorderShape(.capsule)
+                .tint(tint)
+        } else {
+            self
+                .foregroundStyle(.white)
+                .background(tint, in: Capsule())
+        }
+    }
+}
