@@ -38,16 +38,7 @@ struct PracticeHubView: View {
     var body: some View {
         NavigationStack {
             List {
-                if !appState.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    GlobalSearchSections(appState: appState)
-                } else if appState.practiceScripts.isEmpty {
-                    Section {
-                        emptyStateView
-                            .listRowInsets(EdgeInsets())
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                    }
-                } else {
+                if !appState.practiceScripts.isEmpty {
                     Section {
                         practiceHero
                             .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
@@ -114,14 +105,15 @@ struct PracticeHubView: View {
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
-            .expandLargeNavigationTitleOnAppear()
+            .overlay {
+                if appState.practiceScripts.isEmpty {
+                    emptyStateView
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
+                }
+            }
             .navigationTitle("Practice")
             .navigationBarTitleDisplayMode(.large)
-            .searchable(
-                text: Bindable(appState).globalSearchQuery,
-                placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Search auditions & script sides"
-            )
             .toolbar {
                 if #available(iOS 26.0, *) {
                     ToolbarItem(placement: .topBarTrailing) {

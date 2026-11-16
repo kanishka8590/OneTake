@@ -76,83 +76,72 @@ struct AuditionsListView: View {
     var body: some View {
         NavigationStack {
             List {
-                if !appState.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    GlobalSearchSections(appState: appState)
-                } else if filteredAuditions.isEmpty {
-                    Section {
-                        emptyStateView
-                            .listRowInsets(EdgeInsets())
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
+                ForEach(filteredAuditions) { audition in
+                    NavigationLink {
+                        AuditionPackageHubView(audition: audition)
+                    } label: {
+                        AuditionCardRow(audition: audition)
                     }
-                } else {
-                    ForEach(filteredAuditions) { audition in
-                        NavigationLink {
-                            AuditionPackageHubView(audition: audition)
+                    .contextMenu {
+                        Button {
+                            auditionToEdit = audition
                         } label: {
-                            AuditionCardRow(audition: audition)
+                            Label("Edit Details", systemImage: "pencil")
                         }
-                        .contextMenu {
+
+                        if audition.status == .active {
                             Button {
-                                auditionToEdit = audition
-                            } label: {
-                                Label("Edit Details", systemImage: "pencil")
-                            }
-
-                            if audition.status == .active {
-                                Button {
-                                    withAnimation {
-                                        appState.updateAuditionStatus(audition, to: .sent)
-                                    }
-                                } label: {
-                                    Label("Mark as Sent", systemImage: "paperplane")
+                                withAnimation {
+                                    appState.updateAuditionStatus(audition, to: .sent)
                                 }
-                            } else {
-                                Button {
-                                    withAnimation {
-                                        appState.updateAuditionStatus(audition, to: .active)
-                                    }
-                                } label: {
-                                    Label("Reactivate", systemImage: "arrow.uturn.backward")
-                                }
-                            }
-
-                            Divider()
-
-                            Button(role: .destructive) {
-                                auditionToDelete = audition
-                                showingDeleteConfirmation = true
                             } label: {
-                                Label("Delete Audition", systemImage: "trash")
+                                Label("Mark as Sent", systemImage: "paperplane")
+                            }
+                        } else {
+                            Button {
+                                withAnimation {
+                                    appState.updateAuditionStatus(audition, to: .active)
+                                }
+                            } label: {
+                                Label("Reactivate", systemImage: "arrow.uturn.backward")
                             }
                         }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button(role: .destructive) {
-                                auditionToDelete = audition
-                                showingDeleteConfirmation = true
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
 
-                            if audition.status == .active {
-                                Button {
-                                    withAnimation {
-                                        appState.updateAuditionStatus(audition, to: .sent)
-                                    }
-                                } label: {
-                                    Label("Mark Sent", systemImage: "paperplane")
+                        Divider()
+
+                        Button(role: .destructive) {
+                            auditionToDelete = audition
+                            showingDeleteConfirmation = true
+                        } label: {
+                            Label("Delete Audition", systemImage: "trash")
+                        }
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) {
+                            auditionToDelete = audition
+                            showingDeleteConfirmation = true
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+
+                        if audition.status == .active {
+                            Button {
+                                withAnimation {
+                                    appState.updateAuditionStatus(audition, to: .sent)
                                 }
-                                .tint(Theme.Colors.successGreen)
-                            } else {
-                                Button {
-                                    withAnimation {
-                                        appState.updateAuditionStatus(audition, to: .active)
-                                    }
-                                } label: {
-                                    Label("Reactivate", systemImage: "arrow.uturn.backward")
-                                }
-                                .tint(Theme.Colors.accent)
+                            } label: {
+                                Label("Mark Sent", systemImage: "paperplane")
                             }
+                            .tint(Theme.Colors.successGreen)
+                        } else {
+                            Button {
+                                withAnimation {
+                                    appState.updateAuditionStatus(audition, to: .active)
+                                }
+                            } label: {
+                                Label("Reactivate", systemImage: "arrow.uturn.backward")
+                            }
+                            .tint(Theme.Colors.accent)
                         }
                     }
                 }
@@ -160,19 +149,17 @@ struct AuditionsListView: View {
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
-            .expandLargeNavigationTitleOnAppear()
             .overlay {
                 if isParsingCall {
                     parsingOverlay
+                } else if filteredAuditions.isEmpty {
+                    emptyStateView
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
                 }
             }
             .navigationTitle("Auditions")
             .navigationBarTitleDisplayMode(.large)
-            .searchable(
-                text: Bindable(appState).globalSearchQuery,
-                placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Search auditions & script sides"
-            )
             .toolbar {
                 if #available(iOS 26.0, *) {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -286,17 +273,12 @@ struct AuditionsListView: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
-                Text(selectedFilter.rawValue)
-                    .font(Theme.Typography.captionBadge.bold())
-                    .foregroundStyle(Theme.Colors.textPrimary)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Theme.Colors.accent)
-            }
-            .padding(.horizontal, 4)
+            Image(systemName: selectedFilter == .active ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Theme.Colors.accent)
         }
         .accessibilityLabel("Filter auditions")
+        .accessibilityValue(selectedFilter.rawValue)
     }
 
     private var addAuditionToolbarButton: some View {
