@@ -26,13 +26,21 @@ final class LiveVoiceCommandController {
     @ObservationIgnored var capturePhoto: () -> Void
     @ObservationIgnored var speakFramingFeedback: () -> Void
 
+    @ObservationIgnored private var consumedWordCount = 0
+    @ObservationIgnored private var lastWords: [String] = []
+    @ObservationIgnored private var lastFramingFeedbackAt: Date = .distantPast
+    @ObservationIgnored private let now: () -> Date
+    @ObservationIgnored private let framingDebounceInterval: TimeInterval
+
     init(
         mode: LiveVoiceCommandMode,
         state: @escaping () -> LiveVoiceCommandState,
         startRecording: @escaping () -> Void = {},
         stopRecording: @escaping () -> Void = {},
         capturePhoto: @escaping () -> Void = {},
-        speakFramingFeedback: @escaping () -> Void = {}
+        speakFramingFeedback: @escaping () -> Void = {},
+        framingDebounceInterval: TimeInterval = 2.0,
+        now: @escaping () -> Date = Date.init
     ) {
         self.mode = mode
         self.state = state
@@ -40,37 +48,94 @@ final class LiveVoiceCommandController {
         self.stopRecording = stopRecording
         self.capturePhoto = capturePhoto
         self.speakFramingFeedback = speakFramingFeedback
+        self.framingDebounceInterval = framingDebounceInterval
+        self.now = now
+    }
+
+    func resetTranscriptCursor() {
+        consumedWordCount = 0
+        lastWords = []
     }
 
     /// The sole transcript entry point. `isFinal` is accepted intentionally so
-    /// Speech.framework partial and final results share exactly one route; state
-    /// guards make repeated partial results harmless.
+    /// Speech.framework partial and final results share exactly one route; a word
+    /// cursor prevents cumulative replay while allowing multiple commands in one utterance.
     func handleRecognizedTranscript(_ transcript: String, isFinal: Bool) {
         let normalized = transcript.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return }
-        let tokens = Set(normalized.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
-        let captureState = state()
 
-        if normalized.contains("how do i look") || normalized.contains("check framing") {
-            speakFramingFeedback()
+        let words = normalized.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        guard !words.isEmpty else { return }
+
+        let isContinuation = consumedWordCount > 0
+            && words.count >= consumedWordCount
+            && lastWords.count >= consumedWordCount
+            && (Array(words.prefix(consumedWordCount)) == Array(lastWords.prefix(consumedWordCount))
+                || (words.count > lastWords.count && words[consumedWordCount - 1] == lastWords[consumedWordCount - 1]))
+        let startIndex = isContinuation ? consumedWordCount : 0
+        let newWords = Array(words[startIndex...])
+        lastWords = words
+        guard !newWords.isEmpty else {
+            consumedWordCount = startIndex
             return
         }
 
+        var newConsumed = startIndex
+
+        if let framingEnd = framingMatchEnd(in: newWords) {
+            let currentTime = now()
+            if currentTime.timeIntervalSince(lastFramingFeedbackAt) >= framingDebounceInterval {
+                lastFramingFeedbackAt = currentTime
+                speakFramingFeedback()
+            }
+            newConsumed = max(newConsumed, startIndex + framingEnd)
+        }
+
+        let captureState = state()
         switch mode {
         case .headshots:
-            guard !captureState.isCapturingPhoto else { return }
-            if tokens.contains("action") || tokens.contains("now") {
+            if !captureState.isCapturingPhoto,
+               let offset = newWords.firstIndex(where: { $0 == "action" || $0 == "now" }) {
                 capturePhoto()
+                newConsumed = max(newConsumed, startIndex + offset + 1)
             }
             // "Cut" intentionally has no Headshots behavior.
 
         case .slate, .audition:
-            if tokens.contains("action"), !captureState.isRecording, !captureState.isCountingDown {
+            if !captureState.isRecording && !captureState.isCountingDown,
+               let offset = newWords.firstIndex(of: "action") {
                 startRecording()
-            } else if tokens.contains("cut"), captureState.isRecording {
+                newConsumed = max(newConsumed, startIndex + offset + 1)
+            } else if captureState.isRecording, newWords.last == "cut" {
+                // Only treat "cut" as a stop command at a standalone/trailing boundary.
                 stopRecording()
+                newConsumed = max(newConsumed, words.count)
             }
         }
+
+        if isFinal {
+            newConsumed = max(newConsumed, words.count)
+        }
+        consumedWordCount = newConsumed
+    }
+
+    private func framingMatchEnd(in words: [String]) -> Int? {
+        let patterns: [[String]] = [
+            ["how", "do", "i", "look"],
+            ["check", "framing"]
+        ]
+        var earliestEnd: Int?
+        for pattern in patterns {
+            guard pattern.count <= words.count else { continue }
+            for index in 0...(words.count - pattern.count) where Array(words[index..<(index + pattern.count)]) == pattern {
+                let end = index + pattern.count
+                if earliestEnd == nil || end < earliestEnd! {
+                    earliestEnd = end
+                }
+                break
+            }
+        }
+        return earliestEnd
     }
 }
 
@@ -102,20 +167,41 @@ final class ScriptSyncedCuePlaybackCoordinator {
         self.onCueReady = onCueReady
     }
 
-    /// Returns true only when a full actor line has unlocked its next cue.
+    func resetTranscriptSearch() {
+        searchStart = 0
+    }
+
+    /// Returns true only when a full actor line has unlocked its next cue (or an
+    /// empty-preceding cue becomes auto-ready once speech arrives).
     @discardableResult
     func handleRecognizedTranscript(_ transcript: String, isFinal: Bool) -> Bool {
         guard !isPlayingCue, currentCueIndex < cues.count else { return false }
-        let expected = words(in: cues[currentCueIndex].precedingActorLine)
-        guard !expected.isEmpty else { return false }
         let spoken = words(in: transcript)
+        guard !spoken.isEmpty else { return false }
+
+        let expected = words(in: cues[currentCueIndex].precedingActorLine)
+        if expected.isEmpty {
+            isPlayingCue = true
+            let cueIndex = currentCueIndex
+            schedule(0) { [weak self] in
+                guard let self, self.isPlayingCue, self.currentCueIndex == cueIndex else { return }
+                self.onCueReady(cueIndex)
+            }
+            return true
+        }
+
         // Speech recognition may roll over to a fresh transcript between turns.
         // Retain position for cumulative results, but safely restart matching when
         // a new request produces a shorter transcript.
         let start = min(searchStart, spoken.count)
-        let end = contiguousMatch(expected, in: spoken, startingAt: start)
+        let exactEnd = contiguousMatch(expected, in: spoken, startingAt: start)
             ?? (start > 0 ? contiguousMatch(expected, in: spoken, startingAt: 0) : nil)
-        guard let end else { return false }
+        let tolerantEnd: Int? = exactEnd == nil && expected.count >= 4
+            ? (tolerantMatch(expected, in: spoken, startingAt: start)
+                ?? (start > 0 ? tolerantMatch(expected, in: spoken, startingAt: 0) : nil))
+            : nil
+
+        guard let end = exactEnd ?? tolerantEnd else { return false }
 
         searchStart = end
         isPlayingCue = true // lock before the configured response delay begins
@@ -146,7 +232,9 @@ final class ScriptSyncedCuePlaybackCoordinator {
     }
 
     private func words(in text: String) -> [String] {
-        text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        let splitWords = text.split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "'" && $0 != "’" }).map(String.init)
+        return PracticeSpeechDeliveryAnalyzer.coalesceSplitStrings(splitWords)
+            .flatMap(PracticeSpeechDeliveryAnalyzer.normalizedComparisonTokens)
     }
 
     private func contiguousMatch(_ expected: [String], in spoken: [String], startingAt start: Int) -> Int? {
@@ -155,5 +243,50 @@ final class ScriptSyncedCuePlaybackCoordinator {
             return index + expected.count
         }
         return nil
+    }
+
+    /// Tolerates one missed or misheard word on lines of 4+ words while
+    /// requiring the trailing word to match on shortened spans so partial speech
+    /// does not trigger early.
+    private func tolerantMatch(_ expected: [String], in spoken: [String], startingAt start: Int) -> Int? {
+        let m = expected.count
+        guard m >= 4, start < spoken.count else { return nil }
+
+        for candidate in start..<spoken.count {
+            let remaining = spoken.count - candidate
+            guard remaining >= m - 1 else { break }
+
+            let maxPrefix = min(remaining, m + 1)
+            for sLen in (m - 1)...maxPrefix {
+                if sLen == m - 1, expected[m - 1] != spoken[candidate + sLen - 1] {
+                    continue
+                }
+                if editDistance(expected, Array(spoken[candidate..<(candidate + sLen)])) <= 1 {
+                    return candidate + sLen
+                }
+            }
+        }
+        return nil
+    }
+
+    private func editDistance(_ lhs: [String], _ rhs: [String]) -> Int {
+        let m = lhs.count
+        let n = rhs.count
+        if abs(m - n) > 1 { return 2 }
+        var dp = Array(0...n)
+        for i in 1...m {
+            var prev = dp[0]
+            dp[0] = i
+            for j in 1...n {
+                let temp = dp[j]
+                if lhs[i - 1] == rhs[j - 1] {
+                    dp[j] = prev
+                } else {
+                    dp[j] = 1 + min(prev, dp[j], dp[j - 1])
+                }
+                prev = temp
+            }
+        }
+        return dp[n]
     }
 }

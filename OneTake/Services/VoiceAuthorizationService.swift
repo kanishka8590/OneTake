@@ -1,5 +1,6 @@
 import AVFoundation
 import Speech
+import UIKit
 
 /// The state shown by recording screens.  A green listening indicator now means
 /// the recognizer task was actually created, not merely that permission exists.
@@ -32,10 +33,18 @@ final class VoiceAudioSessionCoordinator {
     @discardableResult
     func activate() -> Bool {
         let session = AVAudioSession.sharedInstance()
+        let requiredOptions: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetoothHFP]
+        let desiredOptions: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetoothHFP, .mixWithOthers]
         do {
-            try session.setCategory(.playAndRecord,
-                                    mode: .default,
-                                    options: [.defaultToSpeaker, .allowBluetoothHFP])
+            if session.category != .playAndRecord ||
+                session.mode != .default ||
+                !session.categoryOptions.isSuperset(of: requiredOptions) {
+                try session.setCategory(
+                    .playAndRecord,
+                    mode: .default,
+                    options: desiredOptions
+                )
+            }
             try session.setActive(true)
             return true
         } catch {
@@ -48,6 +57,7 @@ final class VoiceAudioSessionCoordinator {
 /// Owns the user-visible microphone and speech-recognition authorization flow.
 /// Keeping this outside capture services prevents a camera/session lifecycle from
 /// accidentally making permission prompts unreachable.
+@MainActor
 @Observable
 final class VoiceAuthorizationService {
     static let shared = VoiceAuthorizationService()
@@ -64,6 +74,12 @@ final class VoiceAuthorizationService {
     private var pendingCompletions: [(Bool) -> Void] = []
 
     var isAuthorized: Bool { state == .authorized }
+
+    static func openAppSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString),
+              UIApplication.shared.canOpenURL(url) else { return }
+        UIApplication.shared.open(url)
+    }
 
     func requestAccess(completion: @escaping (Bool) -> Void = { _ in }) {
         if state == .requesting {
@@ -87,17 +103,20 @@ final class VoiceAuthorizationService {
                 return
             }
 
-            let currentSpeechStatus = SFSpeechRecognizer.authorizationStatus()
-            if currentSpeechStatus == .authorized {
+            switch SFSpeechRecognizer.authorizationStatus() {
+            case .authorized:
                 self.finish(.authorized)
-                return
-            }
-
-            SFSpeechRecognizer.requestAuthorization { [weak self] status in
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    self.finish(status == .authorized ? .authorized : .speechDenied)
+            case .denied, .restricted:
+                self.finish(.speechDenied)
+            case .notDetermined:
+                SFSpeechRecognizer.requestAuthorization { [weak self] status in
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        self.finish(status == .authorized ? .authorized : .speechDenied)
+                    }
                 }
+            @unknown default:
+                self.finish(.speechDenied)
             }
         }
     }

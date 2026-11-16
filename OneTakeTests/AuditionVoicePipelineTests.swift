@@ -109,4 +109,139 @@ final class AuditionVoicePipelineTests: XCTestCase {
         scheduled.removeFirst()()
         XCTAssertEqual(fired, [0, 1])
     }
+
+    func testHowDoILookDoesNotBlockActionAndDebounces() {
+        var currentTime = Date(timeIntervalSince1970: 1_000)
+        var isRecording = false
+        var starts = 0
+        var feedbacks = 0
+
+        let controller = LiveVoiceCommandController(
+            mode: .audition,
+            state: { LiveVoiceCommandState(isRecording: isRecording, isCountingDown: false, isCapturingPhoto: false) },
+            startRecording: { starts += 1; isRecording = true },
+            speakFramingFeedback: { feedbacks += 1 },
+            framingDebounceInterval: 2.0,
+            now: { currentTime }
+        )
+
+        controller.handleRecognizedTranscript("How do I look? Action", isFinal: false)
+        XCTAssertEqual(feedbacks, 1)
+        XCTAssertEqual(starts, 1, "\"how do i look\" must not block \"action\" later in the same transcript.")
+
+        // Rapidly repeating "how do i look" even after cursor reset is debounced within 2s.
+        controller.resetTranscriptCursor()
+        currentTime = currentTime.addingTimeInterval(0.5)
+        controller.handleRecognizedTranscript("How do I look?", isFinal: true)
+        XCTAssertEqual(feedbacks, 1, "Repeated framing query within debounce interval must be ignored.")
+
+        // Once debounce expires and cursor resets, framing feedback fires again.
+        controller.resetTranscriptCursor()
+        currentTime = currentTime.addingTimeInterval(2.5)
+        controller.handleRecognizedTranscript("How do I look?", isFinal: true)
+        XCTAssertEqual(feedbacks, 2)
+    }
+
+    func testActionDoesNotRetriggerAfterResetFromStaleCumulativeTranscript() {
+        var isRecording = false
+        var starts = 0
+        let controller = LiveVoiceCommandController(
+            mode: .slate,
+            state: { LiveVoiceCommandState(isRecording: isRecording, isCountingDown: false, isCapturingPhoto: false) },
+            startRecording: { starts += 1; isRecording = true }
+        )
+
+        controller.handleRecognizedTranscript("Action hello world", isFinal: false)
+        XCTAssertEqual(starts, 1)
+
+        // Take stops and state returns to idle, but recognizer replays cumulative transcript.
+        isRecording = false
+        controller.handleRecognizedTranscript("Action hello world", isFinal: true)
+        XCTAssertEqual(starts, 1, "Stale cumulative transcript must not re-trigger Action after take reset.")
+
+        // After a new task rollover resets the cursor, a fresh Action triggers normally.
+        controller.resetTranscriptCursor()
+        controller.handleRecognizedTranscript("Action", isFinal: true)
+        XCTAssertEqual(starts, 2)
+    }
+
+    func testCutInsideDialogueDoesNotStopWhileTrailingCutDoes() {
+        var isRecording = true
+        var stops = 0
+        let controller = LiveVoiceCommandController(
+            mode: .audition,
+            state: { LiveVoiceCommandState(isRecording: isRecording, isCountingDown: false, isCapturingPhoto: false) },
+            stopRecording: { stops += 1; isRecording = false }
+        )
+
+        controller.handleRecognizedTranscript("You cut me deep", isFinal: true)
+        XCTAssertEqual(stops, 0)
+        XCTAssertTrue(isRecording)
+
+        controller.handleRecognizedTranscript("You cut me deep. Cut.", isFinal: true)
+        XCTAssertEqual(stops, 1)
+        XCTAssertFalse(isRecording)
+    }
+
+    func testCueCoordinatorContractionsMisheardWordEmptyLineAndSearchReset() {
+        let cues = [
+            CueLine(orderIndex: 0, speaker: "READER", cueText: "Opening cue.", precedingActorLine: ""),
+            CueLine(orderIndex: 1, speaker: "READER", cueText: "Cue two.", precedingActorLine: "I'm ready to go."),
+            CueLine(orderIndex: 2, speaker: "READER", cueText: "Cue three.", precedingActorLine: "Please tell me the truth now.")
+        ]
+        var scheduled: [() -> Void] = []
+        var fired: [Int] = []
+        let coordinator = ScriptSyncedCuePlaybackCoordinator(
+            cues: cues,
+            responseDelay: 0,
+            schedule: { _, work in scheduled.append(work) },
+            onCueReady: { fired.append($0) }
+        )
+
+        // Manual advance handles empty precedingActorLine cleanly.
+        XCTAssertEqual(coordinator.requestManualCue(), 0)
+        scheduled.removeFirst()()
+        XCTAssertEqual(fired, [0])
+        coordinator.cuePlaybackDidFinish()
+
+        // Contraction equivalence: "I am" matches "I'm".
+        XCTAssertTrue(coordinator.handleRecognizedTranscript("I am ready to go.", isFinal: true))
+        scheduled.removeFirst()()
+        XCTAssertEqual(fired, [0, 1])
+        coordinator.cuePlaybackDidFinish()
+
+        // Incomplete prefix must not fire early.
+        XCTAssertFalse(coordinator.handleRecognizedTranscript("Please tell me the", isFinal: false))
+
+        // Task rollover resets search position; 1 misheard word on 4+ word line still matches.
+        coordinator.resetTranscriptSearch()
+        XCTAssertTrue(coordinator.handleRecognizedTranscript("Please tell him the truth now.", isFinal: true))
+        scheduled.removeFirst()()
+        XCTAssertEqual(fired, [0, 1, 2])
+    }
+
+    func testEmptyPrecedingActorLineAutoReadiesOnSpeechWithoutStalling() {
+        let cues = [
+            CueLine(orderIndex: 0, speaker: "READER", cueText: "Opening cue.", precedingActorLine: ""),
+            CueLine(orderIndex: 1, speaker: "READER", cueText: "Next cue.", precedingActorLine: "Here we go.")
+        ]
+        var scheduled: [() -> Void] = []
+        var fired: [Int] = []
+        let coordinator = ScriptSyncedCuePlaybackCoordinator(
+            cues: cues,
+            responseDelay: 0,
+            schedule: { _, work in scheduled.append(work) },
+            onCueReady: { fired.append($0) }
+        )
+
+        XCTAssertFalse(coordinator.handleRecognizedTranscript("", isFinal: false))
+        XCTAssertTrue(coordinator.handleRecognizedTranscript("Here we go.", isFinal: true))
+        scheduled.removeFirst()()
+        XCTAssertEqual(fired, [0])
+
+        coordinator.cuePlaybackDidFinish()
+        XCTAssertTrue(coordinator.handleRecognizedTranscript("Here we go.", isFinal: true))
+        scheduled.removeFirst()()
+        XCTAssertEqual(fired, [0, 1])
+    }
 }

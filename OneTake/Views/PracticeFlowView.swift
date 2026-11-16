@@ -1,5 +1,8 @@
 import SwiftUI
 import AVFoundation
+import PhotosUI
+import UniformTypeIdentifiers
+import UIKit
 
 // MARK: - Script source and cue editor
 
@@ -7,56 +10,303 @@ struct PracticeASceneSheet: View {
     let appState: AppState
     @Binding var isPresented: Bool
     let onScriptReady: (PracticeScript) -> Void
+
     @State private var showingEntry = false
     @State private var entryTitle = ""
     @State private var entryText = ""
+    @State private var entryLanguage: ScriptLanguage = .english
     @State private var showingCueSelection = false
+
+    @State private var showingPhotoPicker = false
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    @State private var showingDocumentScanner = false
+    @State private var pendingScannedImages: [UIImage] = []
+    @State private var showingFileImporter = false
+
+    @State private var isImporting = false
+    @State private var importingSourceTitle = ""
+    @State private var importErrorMessage: String?
+    @State private var showingImportError = false
 
     var body: some View {
         NavigationStack {
-            List {
-                Section("Practice a scene") {
-                    sourceButton("Photos", icon: "photo.on.rectangle")
-                    sourceButton("Scan pages", icon: "doc.viewfinder")
-                    sourceButton("PDF or file", icon: "doc.badge.plus")
-                    sourceButton("Type it in", icon: "keyboard")
-                }
-                Section("From an audition") {
-                    if appState.auditions.filter({ !$0.scriptLines.isEmpty }).isEmpty { Text("No recent sides").foregroundStyle(Theme.Colors.textSecondary) }
-                    ForEach(appState.auditions.filter { !$0.scriptLines.isEmpty }) { audition in
+            ZStack {
+                List {
+                    Section("Practice a scene") {
                         Button {
-                            // Audition-side cues were already explicitly configured;
-                            // do not run heuristic detection over them again.
-                            let script = PracticeScript(title: "\(audition.projectName) — \(audition.roleName)", sourceAuditionID: audition.id, rawText: audition.scriptText ?? "", cueLines: audition.cueLines)
-                            appState.addPracticeScript(script)
-                            isPresented = false
-                            onScriptReady(script)
-                        } label: { Label(audition.projectName, systemImage: "film") }
+                            showingPhotoPicker = true
+                        } label: {
+                            Label("Photos", systemImage: "photo.on.rectangle")
+                        }
+
+                        Button {
+                            showingDocumentScanner = true
+                        } label: {
+                            Label("Scan pages", systemImage: "doc.viewfinder")
+                        }
+
+                        Button {
+                            showingFileImporter = true
+                        } label: {
+                            Label("PDF or file", systemImage: "doc.badge.plus")
+                        }
+
+                        Button {
+                            entryTitle = ""
+                            entryText = ""
+                            showingEntry = true
+                        } label: {
+                            Label("Type it in", systemImage: "keyboard")
+                        }
+                    }
+
+                    Section("Script language") {
+                        Picker("Language", selection: $entryLanguage) {
+                            ForEach(ScriptLanguage.allCases, id: \.self) { language in
+                                Text(language.rawValue).tag(language)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+
+                    Section("From an audition") {
+                        if appState.auditions.filter({ !$0.scriptLines.isEmpty }).isEmpty {
+                            Text("No recent sides").foregroundStyle(Theme.Colors.textSecondary)
+                        }
+                        ForEach(appState.auditions.filter { !$0.scriptLines.isEmpty }) { audition in
+                            Button {
+                                // Audition-side cues were already explicitly configured;
+                                // do not run heuristic detection over them again.
+                                let script = PracticeScript(
+                                    title: "\(audition.projectName) — \(audition.roleName)",
+                                    sourceAuditionID: audition.id,
+                                    languageRaw: entryLanguage.rawValue,
+                                    rawText: audition.scriptText ?? "",
+                                    cueLines: audition.cueLines
+                                )
+                                appState.addPracticeScript(script)
+                                isPresented = false
+                                onScriptReady(script)
+                            } label: {
+                                Label(audition.projectName, systemImage: "film")
+                            }
+                        }
+                    }
+                }
+
+                if isImporting {
+                    ZStack {
+                        Color.black.opacity(0.18).ignoresSafeArea()
+                        VStack(spacing: 12) {
+                            ProgressView().controlSize(.large).tint(Theme.Colors.accent)
+                            Text("Extracting Script…")
+                                .font(Theme.Typography.sectionHeader)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            Text(importingSourceTitle)
+                                .font(Theme.Typography.captionBadge)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                                .lineLimit(1)
+                        }
+                        .padding(24)
+                        .background(Theme.Colors.cardSurface, in: RoundedRectangle(cornerRadius: 20))
                     }
                 }
             }
             .navigationTitle("Practice a scene").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { isPresented = false } } }
+            .photosPicker(
+                isPresented: $showingPhotoPicker,
+                selection: $selectedPhotoItems,
+                maxSelectionCount: 10,
+                matching: .images
+            )
+            .onChange(of: selectedPhotoItems) { _, newItems in
+                guard !newItems.isEmpty else { return }
+                let items = newItems
+                selectedPhotoItems = []
+                loadSelectedPhotos(items)
+            }
+            .sheet(isPresented: $showingDocumentScanner, onDismiss: processPendingScannedImages) {
+                DocumentScannerRepresentable { scannedImages in
+                    pendingScannedImages = scannedImages
+                    showingDocumentScanner = false
+                } onCancel: {
+                    pendingScannedImages = []
+                    showingDocumentScanner = false
+                } onError: { error in
+                    pendingScannedImages = []
+                    showingDocumentScanner = false
+                    presentImportError(error.localizedDescription)
+                }
+            }
+            .fileImporter(
+                isPresented: $showingFileImporter,
+                allowedContentTypes: [.pdf, .plainText, .data],
+                allowsMultipleSelection: true
+            ) { result in
+                handleFileImport(result)
+            }
+            .alert("Import Failed", isPresented: $showingImportError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(importErrorMessage ?? "Unable to extract script text from the selected source.")
+            }
             .sheet(isPresented: $showingEntry) { entrySheet }
             .sheet(isPresented: $showingCueSelection) { cueSelectionSheet }
         }
     }
-    private func sourceButton(_ title: String, icon: String) -> some View {
-        Button { entryTitle = title == "Type it in" ? "" : "New scene"; entryText = ""; showingEntry = true } label: { Label(title, systemImage: icon) }
-    }
+
     private var entrySheet: some View {
         NavigationStack {
-            Form { TextField("Scene title", text: $entryTitle); TextField("Paste or type script", text: $entryText, axis: .vertical).lineLimit(8...16) }
-                .navigationTitle("Add practice script")
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showingEntry = false } }; ToolbarItem(placement: .confirmationAction) { Button("Continue") { showingEntry = false; showingCueSelection = true }.disabled(entryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) } }
+            Form {
+                Section("Scene details") {
+                    TextField("Scene title", text: $entryTitle)
+                    Picker("Language", selection: $entryLanguage) {
+                        ForEach(ScriptLanguage.allCases, id: \.self) { language in
+                            Text(language.rawValue).tag(language)
+                        }
+                    }
+                }
+                Section("Script") {
+                    TextField("Paste or type script", text: $entryText, axis: .vertical)
+                        .lineLimit(8...16)
+                }
+            }
+            .navigationTitle("Add practice script")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showingEntry = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Continue") {
+                        showingEntry = false
+                        showingCueSelection = true
+                    }
+                    .disabled(entryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
         }
     }
+
     private var cueSelectionSheet: some View {
         PracticeAuditionCueSelectionView(scriptText: entryText) { cues in
-            let script = PracticeScript(title: entryTitle.trimmingCharacters(in: .whitespaces).isEmpty ? "Untitled scene" : entryTitle, rawText: entryText, cueLines: cues)
+            let script = PracticeScript(
+                title: entryTitle.trimmingCharacters(in: .whitespaces).isEmpty ? "Untitled scene" : entryTitle,
+                languageRaw: entryLanguage.rawValue,
+                rawText: entryText,
+                cueLines: cues
+            )
             appState.addPracticeScript(script)
-            showingCueSelection = false; isPresented = false; onScriptReady(script)
+            showingCueSelection = false
+            isPresented = false
+            onScriptReady(script)
         }
+    }
+
+    private func loadSelectedPhotos(_ items: [PhotosPickerItem]) {
+        Task {
+            await MainActor.run {
+                importingSourceTitle = items.count > 1 ? "\(items.count) Photos" : "Photo"
+                isImporting = true
+            }
+            do {
+                var images: [UIImage] = []
+                for item in items {
+                    if let data = try await item.loadTransferable(type: Data.self),
+                       let image = UIImage(data: data) {
+                        images.append(image)
+                    }
+                }
+                guard !images.isEmpty else {
+                    await MainActor.run {
+                        isImporting = false
+                        presentImportError("Could not load any images from the selected photos.")
+                    }
+                    return
+                }
+                let parsed = try await CastingCallParserService.shared.parseImages(images)
+                await MainActor.run {
+                    finishImport(with: parsed, fallbackTitle: "Photo Scene")
+                }
+            } catch {
+                await MainActor.run {
+                    isImporting = false
+                    presentImportError(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    private func processPendingScannedImages() {
+        let images = pendingScannedImages
+        pendingScannedImages = []
+        guard !images.isEmpty else { return }
+        Task {
+            await MainActor.run {
+                importingSourceTitle = images.count > 1 ? "\(images.count) Scanned Pages" : "Scanned Page"
+                isImporting = true
+            }
+            do {
+                let parsed = try await CastingCallParserService.shared.parseImages(images)
+                await MainActor.run {
+                    finishImport(with: parsed, fallbackTitle: "Scanned Scene")
+                }
+            } catch {
+                await MainActor.run {
+                    isImporting = false
+                    presentImportError(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    private func handleFileImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard !urls.isEmpty else { return }
+            let fallbackTitle = urls.first?.deletingPathExtension().lastPathComponent ?? "Imported Scene"
+            importingSourceTitle = urls.count > 1 ? "\(urls.count) Files" : (urls.first?.lastPathComponent ?? "File")
+            isImporting = true
+
+            Task {
+                do {
+                    let parsed = try await CastingCallParserService.shared.parseMultipleFiles(urls: urls)
+                    await MainActor.run {
+                        finishImport(with: parsed, fallbackTitle: fallbackTitle)
+                    }
+                } catch {
+                    await MainActor.run {
+                        isImporting = false
+                        presentImportError(error.localizedDescription)
+                    }
+                }
+            }
+        case .failure(let error):
+            presentImportError(error.localizedDescription)
+        }
+    }
+
+    @MainActor
+    private func finishImport(with parsed: ParsedCastingCall, fallbackTitle: String) {
+        isImporting = false
+        let extracted = (parsed.detectedScriptText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+            ? (parsed.detectedScriptText ?? "")
+            : parsed.rawExtractedText
+        let trimmed = extracted.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            presentImportError("No readable script text was detected.")
+            return
+        }
+        let suggestedTitle = parsed.projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        entryTitle = (!suggestedTitle.isEmpty && suggestedTitle != "Untitled Audition") ? suggestedTitle : fallbackTitle
+        entryText = trimmed
+        showingEntry = true
+    }
+
+    @MainActor
+    private func presentImportError(_ message: String) {
+        importErrorMessage = message
+        showingImportError = true
     }
 }
 
@@ -121,8 +371,49 @@ struct PracticeAuditionCueSelectionView: View {
         }
         .buttonStyle(.plain)
     }
-    private func parseAndInitializeScript() { let paragraphs = scriptText.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }; var speakers: [String] = []; scriptLines = paragraphs.enumerated().map { index, paragraph in var speaker = ""; var text = paragraph; if let colon = paragraph.firstIndex(of: ":") { let candidate = String(paragraph[..<colon]).trimmingCharacters(in: .whitespaces); if candidate.count <= 25 && !candidate.contains(" ") { speaker = candidate; text = String(paragraph[paragraph.index(after: colon)...]).trimmingCharacters(in: .whitespaces); if !speakers.contains(candidate.uppercased()) { speakers.append(candidate.uppercased()) } } }; let existing = initialCues.contains { $0.cueText.trimmingCharacters(in: .whitespacesAndNewlines) == text.trimmingCharacters(in: .whitespacesAndNewlines) }; let autoCue = !existing && speakers.count > 1 && speaker.uppercased() != speakers.first; return ScriptDisplayLine(id: index, text: text.isEmpty ? paragraph : text, speaker: speaker, isAutoDetectedCue: existing || autoCue) }; isDialogueDetected = speakers.count >= 2 }
-    private func makeCues() -> [CueLine] { var cues: [CueLine] = []; for (index, line) in scriptLines.enumerated() where line.isCurrentlyActiveCue { let previous = index > 0 && !scriptLines[index - 1].isCurrentlyActiveCue ? scriptLines[index - 1].text : ""; cues.append(CueLine(orderIndex: cues.count, speaker: line.speaker.isEmpty ? "READER" : line.speaker, cueText: line.text, precedingActorLine: previous, isAutoDetected: false)) }; return cues }
+    private func parseAndInitializeScript() {
+        let parsedLines = PracticeScriptModel.parse(scriptText)
+        let dialogueLines = parsedLines.filter { !$0.isHeader && !$0.text.isEmpty }
+        var speakers: [String] = []
+        for line in dialogueLines {
+            let normalized = line.speaker.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            if !normalized.isEmpty && normalized != "SCRIPT" && !speakers.contains(normalized) {
+                speakers.append(normalized)
+            }
+        }
+        isDialogueDetected = speakers.count >= 2
+        let shouldAutoDetect = initialCues.isEmpty && isDialogueDetected
+
+        scriptLines = dialogueLines.enumerated().map { index, line in
+            let speakerLabel = line.speaker == "SCRIPT" ? "" : line.speaker
+            let existing = initialCues.contains {
+                $0.cueText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .caseInsensitiveCompare(line.text.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+            }
+            let autoCue = shouldAutoDetect && !speakerLabel.isEmpty && speakerLabel.uppercased() != speakers.first
+            return ScriptDisplayLine(
+                id: index,
+                text: line.text,
+                speaker: speakerLabel,
+                isAutoDetectedCue: existing || autoCue
+            )
+        }
+    }
+
+    private func makeCues() -> [CueLine] {
+        var cues: [CueLine] = []
+        for (index, line) in scriptLines.enumerated() where line.isCurrentlyActiveCue {
+            let previous = index > 0 && !scriptLines[index - 1].isCurrentlyActiveCue ? scriptLines[index - 1].text : ""
+            cues.append(CueLine(
+                orderIndex: cues.count,
+                speaker: line.speaker.isEmpty ? "READER" : line.speaker,
+                cueText: line.text,
+                precedingActorLine: previous,
+                isAutoDetected: false
+            ))
+        }
+        return cues
+    }
 }
 
 // MARK: - Script model and memorise levels
@@ -168,15 +459,34 @@ private struct ScriptPracticeCard: View {
     let recordRevealAsClue: Bool
     let onClueTokenRequested: (Int) -> Void
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(model.lines) { line in
-                if line.isHeader { Text(line.text).font(.system(size: 13, weight: .bold)).frame(maxWidth: .infinity).foregroundStyle(Theme.Colors.accent) }
-                // Cue lines are always visible: they are the actor's prompt,
-                // never material to memorise or mask in any practice mode.
-                else if line.isCue || model.cueLineIDs.contains(line.id) { cueLine(line).id(line.id) }
-                else if mode != 0 { actorLine(line).id(line.id) }
+                if line.isHeader {
+                    Text(line.text)
+                        .font(.system(size: 13, weight: .bold))
+                        .frame(maxWidth: .infinity)
+                        .foregroundStyle(Theme.Colors.accent)
+                        .padding(.vertical, 6)
+                } else if line.isCue || model.cueLineIDs.contains(line.id) {
+                    // Cue lines are always visible: they are the actor's prompt,
+                    // never material to memorise or mask in any practice mode.
+                    cueLine(line)
+                        .id(line.id)
+                        .padding(.vertical, 6)
+                } else if mode != 0 {
+                    actorLine(line)
+                        .id(line.id)
+                        .padding(.vertical, 6)
+                } else {
+                    // Keep a zero-height anchor so .nothing mode still auto-scrolls past cue lines.
+                    Color.clear
+                        .frame(height: 0)
+                        .id(line.id)
+                }
             }
-        }.padding(20).cardStyle()
+        }
+        .padding(20)
+        .cardStyle()
     }
     private func cueLine(_ line: PracticeLine) -> some View {
         HStack(alignment: .top, spacing: 7) {
@@ -200,7 +510,6 @@ private struct ScriptPracticeCard: View {
         }
     }
     private func reveal(_ token: PracticeToken) { guard mode > 1 else { return }; revealedTokenIDs.insert(token.id); if recordRevealAsClue { clueTokenIDs.insert(token.id); onClueTokenRequested(token.id) } }
-    private func isMasked(_ token: PracticeToken, position: Int, count: Int) -> Bool { mode > 1 && !revealedTokenIDs.contains(token.id) && (mode == 3 || shouldMask(position, count: count)) }
     private func display(_ token: PracticeToken, position: Int, count: Int) -> String {
         guard mode > 1, !revealedTokenIDs.contains(token.id) else { return token.word }
         if mode == 2, !shouldMask(position, count: count) { return token.word }
@@ -235,6 +544,8 @@ struct SayItAloudView: View {
     @State private var didStart = false
     @State private var paused = false
     @State private var hintLineID: Int?
+    @State private var hintText: String?
+    @State private var discardedAudioURL: URL?
     @State private var reviewSession: PracticeSession?
     @State private var showReview = false
     private var model: PracticeScriptModel { clueTracker.model }
@@ -250,6 +561,10 @@ struct SayItAloudView: View {
 
     var body: some View {
         VStack(spacing: 14) {
+            if !appState.isDemoMode && recorder.permissionDenied {
+                permissionDeniedCard
+            }
+
             ScrollViewReader { proxy in
                 ScrollView {
                     ScriptPracticeCard(model: model, mode: mode, revealedTokenIDs: $revealed, clueTokenIDs: $clueTokenIDs, recordRevealAsClue: didStart, onClueTokenRequested: requestClueForToken)
@@ -257,29 +572,197 @@ struct SayItAloudView: View {
                 }
                 .scrollIndicators(.visible)
                 .frame(maxHeight: .infinity)
-                .onChange(of: clueTracker.currentActorLineIndex) { _, _ in if let id = nextActorLine?.id { withAnimation(.easeInOut(duration: 0.5)) { proxy.scrollTo(id, anchor: .center) } } }
+                .onChange(of: clueTracker.currentActorLineIndex) { _, _ in
+                    if let id = nextActorLine?.id {
+                        withAnimation(.easeInOut(duration: 0.5)) { proxy.scrollTo(id, anchor: .center) }
+                    }
+                }
             }
             if help != .fullScript {
                 Button { requestNextSentence() } label: { Label("Need a clue?", systemImage: "lightbulb.fill").secondaryLavenderButton() }
-                if let hintLineID, let line = model.actorLines.first(where: { $0.id == hintLineID }) { Text("Next sentence: \"\(line.text)\"").font(.caption).foregroundStyle(Theme.Colors.accent).frame(maxWidth: .infinity, alignment: .leading) }
+                if let hintText {
+                    Text("Next sentence: \"\(hintText)\"")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.accent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if let hintLineID, let line = model.actorLines.first(where: { $0.id == hintLineID }) {
+                    Text("Next sentence: \"\(line.text)\"")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.accent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
-            ZStack { Circle().fill(Theme.Colors.primaryPlum.opacity(0.16)).frame(width: 148, height: 148); Circle().fill(Theme.Colors.primaryPlum.opacity(0.28)).frame(width: 112, height: 112); Button { toggleStart() } label: { Image(systemName: recorder.isRecording ? "mic.fill" : "mic.fill").font(.system(size: 42)).foregroundStyle(.white).frame(width: 82, height: 82).background(Theme.Colors.primaryPlum).clipShape(Circle()) }.accessibilityLabel(didStart ? "Recording microphone" : "Start recording") }
+            ZStack {
+                Circle().fill(Theme.Colors.primaryPlum.opacity(0.16)).frame(width: 148, height: 148)
+                Circle().fill(Theme.Colors.primaryPlum.opacity(0.28)).frame(width: 112, height: 112)
+                Button {
+                    didStart ? togglePause() : toggleStart()
+                } label: {
+                    Image(systemName: paused ? "pause.fill" : "mic.fill")
+                        .font(.system(size: 42))
+                        .foregroundStyle(.white)
+                        .frame(width: 82, height: 82)
+                        .background(Theme.Colors.primaryPlum)
+                        .clipShape(Circle())
+                }
+                .accessibilityLabel(didStart ? (paused ? "Resume recording" : "Pause recording") : "Start recording")
+            }
             WaveformBars(level: recorder.audioLevel).frame(height: 28)
-            Text(recorder.transcript.isEmpty ? recorder.statusText : recorder.transcript).font(.caption).foregroundStyle(Theme.Colors.textSecondary).lineLimit(2)
-            HStack { Button(didStart ? (paused ? "Resume" : "Pause") : "Start") { didStart ? togglePause() : toggleStart() }.secondaryLavenderButton(); Button("Stop") { stopAndReview() }.primaryCapsuleButton().disabled(!didStart) }
-        }.padding(16).background(Theme.Colors.canvasBackground)
-        .onChange(of: recorder.recognizedWords) { _, segments in clueTracker.processRecognizedSpeech(segments: segments) }
-        .onDisappear { recorder.stop() }
-        .navigationDestination(isPresented: $showReview) { if let reviewSession { PracticeReviewView(script: script, session: reviewSession, appState: appState) } }
+            if !appState.isDemoMode, let errorMessage = recorder.errorMessage, !recorder.permissionDenied {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.warningAmber)
+                    .multilineTextAlignment(.center)
+            }
+            Text(recorder.transcript.isEmpty ? recorder.statusText : recorder.transcript)
+                .font(.caption)
+                .foregroundStyle(Theme.Colors.textSecondary)
+                .lineLimit(2)
+            HStack {
+                Button(didStart ? (paused ? "Resume" : "Pause") : "Start") {
+                    didStart ? togglePause() : toggleStart()
+                }
+                .secondaryLavenderButton()
+                Button("Stop") { stopAndReview() }
+                    .primaryCapsuleButton()
+                    .disabled(!didStart)
+            }
+        }
+        .padding(16)
+        .background(Theme.Colors.canvasBackground)
+        .onChange(of: recorder.recognizedWords) { _, segments in
+            clueTracker.processRecognizedSpeech(segments: segments)
+        }
+        .onChange(of: recorder.permissionDenied) { _, denied in
+            if denied && !appState.isDemoMode {
+                didStart = false
+                paused = false
+            }
+        }
+        .onChange(of: recorder.errorMessage) { _, message in
+            if message != nil && !recorder.isRecording && !paused && !appState.isDemoMode {
+                didStart = false
+            }
+        }
+        .onChange(of: showReview) { wasShowing, isShowing in
+            if wasShowing && !isShowing {
+                deleteDiscardedAudioIfUnsaved()
+                resetSessionState()
+            }
+        }
+        .onDisappear {
+            if !showReview {
+                recorder.stop()
+            }
+        }
+        .navigationDestination(isPresented: $showReview) {
+            if let reviewSession {
+                PracticeReviewView(
+                    script: script,
+                    session: reviewSession,
+                    appState: appState,
+                    onRetake: {
+                        deleteDiscardedAudioIfUnsaved()
+                        resetSessionState()
+                    },
+                    onDone: {
+                        resetSessionState()
+                    }
+                )
+            }
+        }
     }
-    private func toggleStart() { if !didStart { didStart = true; recorder.start(language: script.language, script: script) } else if paused { paused = false; recorder.resume() } }
-    private func togglePause() { paused.toggle(); paused ? recorder.pause() : recorder.resume() }
-    private func requestNextSentence() { guard let range = clueTracker.requestNextSentence() else { return }; hintLineID = range.lineID; clueTokenIDs.formUnion(range.tokenIDs) }
-    private func requestClueForToken(_ tokenID: Int) { guard let range = clueTracker.requestClue(containingTokenID: tokenID) else { return }; clueTokenIDs.formUnion(range.tokenIDs) }
+
+    private var permissionDeniedCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Microphone & Speech Access Needed", systemImage: "mic.slash.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.Colors.textPrimary)
+            Text("Enable Microphone and Speech Recognition in Settings to record and analyze your practice run.")
+                .font(.caption)
+                .foregroundStyle(Theme.Colors.textSecondary)
+            Button("Open Settings") {
+                VoiceAuthorizationService.openAppSettings()
+            }
+            .secondaryLavenderButton()
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+    }
+
+    private func toggleStart() {
+        guard !didStart else { return }
+        didStart = true
+        paused = false
+        recorder.start(language: script.language, script: script, isDemoMode: appState.isDemoMode)
+    }
+
+    private func togglePause() {
+        guard didStart else { return }
+        paused.toggle()
+        if paused {
+            recorder.pause()
+        } else {
+            recorder.resume()
+        }
+    }
+
+    private func requestNextSentence() {
+        guard let range = clueTracker.requestNextSentence() else { return }
+        hintLineID = range.lineID
+        hintText = range.text
+        clueTokenIDs.formUnion(range.tokenIDs)
+    }
+
+    private func requestClueForToken(_ tokenID: Int) {
+        guard let range = clueTracker.requestClue(containingTokenID: tokenID) else { return }
+        clueTokenIDs.formUnion(range.tokenIDs)
+    }
+
     private func stopAndReview() {
         recorder.stop()
-        reviewSession = PracticeSpeechDeliveryAnalyzer.makeSession(script: script, transcript: recorder.transcript, words: recorder.recognizedWords, clueRequestedRanges: clueTracker.clueRequestedRanges, duration: recorder.duration, help: help, audioURL: recorder.recordedAudioURL)
+        discardedAudioURL = recorder.recordedAudioURL
+        reviewSession = PracticeSpeechDeliveryAnalyzer.makeSession(
+            script: script,
+            transcript: recorder.transcript,
+            words: recorder.recognizedWords,
+            clueRequestedRanges: clueTracker.clueRequestedRanges,
+            duration: recorder.duration,
+            help: help,
+            audioURL: recorder.recordedAudioURL
+        )
         showReview = true
+    }
+
+    private func deleteDiscardedAudioIfUnsaved() {
+        guard let session = reviewSession else {
+            if let url = discardedAudioURL {
+                try? FileManager.default.removeItem(at: url)
+                discardedAudioURL = nil
+            }
+            return
+        }
+        let isSaved = script.sessions.contains { $0.id == session.id }
+        if !isSaved {
+            if let url = discardedAudioURL ?? MediaStorage.resolveURL(for: session.audioFilePath) {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        discardedAudioURL = nil
+    }
+
+    private func resetSessionState() {
+        didStart = false
+        paused = false
+        clueTracker = PracticeSpeechClueTracker(script: script)
+        revealed = []
+        clueTokenIDs = []
+        hintLineID = nil
+        hintText = nil
+        reviewSession = nil
+        discardedAudioURL = nil
+        recorder.reset()
     }
 }
 
@@ -302,17 +785,28 @@ private struct WaveformBars: View {
 struct PracticeReviewView: View {
     let script: PracticeScript; let session: PracticeSession; let appState: AppState
     let isSavedReview: Bool
+    let onRetake: (() -> Void)?
+    let onDone: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
     @State private var playback = PracticeAudioPlayback()
     @State private var saveConfirmation = false
 
     private static let forgotBlue = Theme.Colors.annotationBlue
 
-    init(script: PracticeScript, session: PracticeSession, appState: AppState, isSavedReview: Bool = false) {
+    init(
+        script: PracticeScript,
+        session: PracticeSession,
+        appState: AppState,
+        isSavedReview: Bool = false,
+        onRetake: (() -> Void)? = nil,
+        onDone: (() -> Void)? = nil
+    ) {
         self.script = script
         self.session = session
         self.appState = appState
         self.isSavedReview = isSavedReview
+        self.onRetake = onRetake
+        self.onDone = onDone
     }
 
     private var scriptModel: PracticeScriptModel {
@@ -334,8 +828,11 @@ struct PracticeReviewView: View {
                 highlightedScriptCard
                 if !isSavedReview {
                     HStack(spacing: 12) {
-                        Button("Retake") { dismiss() }
-                            .secondaryLavenderButton()
+                        Button("Retake") {
+                            onRetake?()
+                            dismiss()
+                        }
+                        .secondaryLavenderButton()
                         Button("Save") { save() }
                             .primaryCapsuleButton()
                     }
@@ -347,9 +844,14 @@ struct PracticeReviewView: View {
         .background(Theme.Colors.canvasBackground)
         .navigationTitle("Your delivery")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { playback.load(url: session.audioFilePath.map(URL.init(fileURLWithPath:))) }
+        .onAppear { playback.load(url: MediaStorage.resolveURL(for: session.audioFilePath)) }
         .onDisappear { playback.stop() }
-        .alert("Practice saved", isPresented: $saveConfirmation) { Button("Done") { dismiss() } }
+        .alert("Practice saved", isPresented: $saveConfirmation) {
+            Button("Done") {
+                onDone?()
+                dismiss()
+            }
+        }
     }
 
     // MARK: Playback & Timeline Legend
@@ -371,6 +873,8 @@ struct PracticeReviewView: View {
                     currentTime: playback.currentTime,
                     duration: max(1, playback.available ? playback.duration : session.durationSeconds),
                     annotations: session.annotations,
+                    recognizedWords: session.recognizedWords,
+                    scriptModel: scriptModel,
                     isInteractive: playback.available,
                     onSeek: { playback.seek($0) }
                 )
@@ -505,15 +1009,26 @@ struct PracticeReviewView: View {
 
     private func highlightedAttributedText(for lineText: String) -> AttributedString {
         var attributed = AttributedString(lineText)
-        let lowerLine = lineText.lowercased()
+        let nsRange = NSRange(lineText.startIndex..., in: lineText)
 
         for annotation in inlineAnnotations {
             let needle = annotation.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !needle.isEmpty else { continue }
 
-            if let stringRange = lowerLine.range(of: needle.lowercased()),
-               let attrRange = Range(stringRange, in: attributed) {
-                attributed[attrRange].backgroundColor = highlightColor(annotation.kind)
+            let escaped = NSRegularExpression.escapedPattern(for: needle)
+            let startsWithWordChar = needle.unicodeScalars.first.map { CharacterSet.alphanumerics.contains($0) } ?? false
+            let endsWithWordChar = needle.unicodeScalars.last.map { CharacterSet.alphanumerics.contains($0) } ?? false
+            let prefix = startsWithWordChar ? "(?<![\\p{L}\\p{N}])" : ""
+            let suffix = endsWithWordChar ? "(?![\\p{L}\\p{N}])" : ""
+
+            guard let regex = try? NSRegularExpression(pattern: prefix + escaped + suffix, options: [.caseInsensitive]) else {
+                continue
+            }
+            for match in regex.matches(in: lineText, range: nsRange) {
+                if let stringRange = Range(match.range, in: lineText),
+                   let attrRange = Range(stringRange, in: attributed) {
+                    attributed[attrRange].backgroundColor = highlightColor(annotation.kind)
+                }
             }
         }
         return attributed
@@ -555,6 +1070,8 @@ private struct TimelineScrubber: View {
     let currentTime: Double
     let duration: Double
     let annotations: [DeliveryAnnotation]
+    let recognizedWords: [RecognizedPracticeWord]
+    let scriptModel: PracticeScriptModel
     let isInteractive: Bool
     let onSeek: (Double) -> Void
 
@@ -563,8 +1080,10 @@ private struct TimelineScrubber: View {
     var body: some View {
         GeometryReader { proxy in
             let width = max(1, proxy.size.width)
+            let safeDuration = max(1.0, duration)
             let progress = min(1, max(0, currentTime / max(0.1, duration)))
             let visibleMarkers = annotations.filter { color($0.kind) != .clear }
+            let markerFractions = computeMarkerFractions(for: visibleMarkers, duration: safeDuration)
 
             ZStack(alignment: .leading) {
                 Capsule()
@@ -575,8 +1094,8 @@ private struct TimelineScrubber: View {
                     .fill(Theme.Colors.primaryPlum.opacity(0.6))
                     .frame(width: width * progress, height: 5)
 
-                ForEach(Array(visibleMarkers.enumerated()), id: \.offset) { index, annotation in
-                    let fraction = CGFloat(index + 1) / CGFloat(visibleMarkers.count + 1)
+                ForEach(Array(zip(visibleMarkers, markerFractions).enumerated()), id: \.offset) { _, pair in
+                    let (annotation, fraction) = pair
                     RoundedRectangle(cornerRadius: 2.5, style: .continuous)
                         .fill(color(annotation.kind))
                         .frame(width: 5, height: 14)
@@ -605,6 +1124,47 @@ private struct TimelineScrubber: View {
         .accessibilityLabel("Annotated delivery timeline")
     }
 
+    private func computeMarkerFractions(for markers: [DeliveryAnnotation], duration: Double) -> [CGFloat] {
+        guard !markers.isEmpty else { return [] }
+        let safeDuration = max(1.0, duration)
+        let actorWords = scriptModel.actorTokens.map { PracticeSpeechDeliveryAnalyzer.normalize($0.word) }
+
+        return markers.enumerated().map { index, annotation in
+            let firstNeedle = annotation.text
+                .split(whereSeparator: \.isWhitespace)
+                .first
+                .map { PracticeSpeechDeliveryAnalyzer.normalize(String($0)) } ?? ""
+
+            if !recognizedWords.isEmpty, !firstNeedle.isEmpty {
+                if annotation.kind == .hesitated {
+                    // Prefer the occurrence that followed a hesitation gap (> 1.5s).
+                    for idx in recognizedWords.indices.dropFirst() {
+                        let gap = recognizedWords[idx].timestamp - (recognizedWords[idx - 1].timestamp + recognizedWords[idx - 1].duration)
+                        if gap > 1.5,
+                           PracticeSpeechDeliveryAnalyzer.normalize(recognizedWords[idx].text) == firstNeedle {
+                            let ratio = recognizedWords[idx].timestamp / safeDuration
+                            return CGFloat(min(0.98, max(0.02, ratio)))
+                        }
+                    }
+                }
+                if let matched = recognizedWords.first(where: {
+                    PracticeSpeechDeliveryAnalyzer.normalize($0.text) == firstNeedle
+                }) {
+                    let ratio = matched.timestamp / safeDuration
+                    return CGFloat(min(0.98, max(0.02, ratio)))
+                }
+            }
+
+            if !actorWords.isEmpty, !firstNeedle.isEmpty,
+               let scriptIdx = actorWords.firstIndex(of: firstNeedle) {
+                let ratio = Double(scriptIdx) / Double(max(1, actorWords.count))
+                return CGFloat(min(0.98, max(0.02, ratio)))
+            }
+
+            return CGFloat(index + 1) / CGFloat(markers.count + 1)
+        }
+    }
+
     private func color(_ kind: AnnotationKind) -> Color {
         switch kind {
         case .skipped: return Theme.Colors.studioYellow
@@ -622,7 +1182,19 @@ struct PracticeHistoryView: View { let scripts: [PracticeScript]; let appState: 
     var currentTime = 0.0; var duration = 0.0; var isPlaying = false; var available = false
     private var player: AVAudioPlayer?; private var timer: Timer?
     func load(url: URL?) { stop(); guard let url, let player = try? AVAudioPlayer(contentsOf: url) else { available = false; return }; self.player = player; player.delegate = self; duration = player.duration; available = true }
-    func toggle() { guard let player else { return }; if player.isPlaying { player.pause(); isPlaying = false } else { player.play(); isPlaying = true; startTimer() } }
+    func toggle() {
+        guard let player else { return }
+        if player.isPlaying {
+            player.pause()
+            timer?.invalidate()
+            timer = nil
+            isPlaying = false
+        } else {
+            player.play()
+            isPlaying = true
+            startTimer()
+        }
+    }
     func seek(_ time: Double) { player?.currentTime = time; currentTime = time }
     func stop() { player?.stop(); timer?.invalidate(); timer = nil; isPlaying = false; currentTime = 0 }
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { stop() }
