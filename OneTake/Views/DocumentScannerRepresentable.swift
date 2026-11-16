@@ -40,6 +40,7 @@ struct DocumentScannerRepresentable: UIViewControllerRepresentable {
         let onScanCompleted: ([UIImage]) -> Void
         let onCancel: () -> Void
         let onError: ((Error) -> Void)?
+        private var didComplete = false
 
         init(
             onScanCompleted: @escaping ([UIImage]) -> Void,
@@ -55,26 +56,45 @@ struct DocumentScannerRepresentable: UIViewControllerRepresentable {
             _ controller: VNDocumentCameraViewController,
             didFinishWith scan: VNDocumentCameraScan
         ) {
+            guard !didComplete else { return }
+            didComplete = true
+            let count = scan.pageCount
             var images: [UIImage] = []
-            images.reserveCapacity(scan.pageCount)
-            for i in 0..<scan.pageCount {
-                images.append(scan.imageOfPage(at: i))
+            images.reserveCapacity(count)
+            for i in 0..<count {
+                autoreleasepool {
+                    let raw = scan.imageOfPage(at: i)
+                    images.append(NoticeOCR.normalizedScanImage(raw))
+                }
             }
-            onScanCompleted(images)
+            controller.delegate = nil
+            DispatchQueue.main.async { [onScanCompleted] in
+                onScanCompleted(images)
+            }
         }
 
         func documentCameraViewControllerDidCancel(_ controller: VNDocumentCameraViewController) {
-            onCancel()
+            guard !didComplete else { return }
+            didComplete = true
+            controller.delegate = nil
+            DispatchQueue.main.async { [onCancel] in
+                onCancel()
+            }
         }
 
         func documentCameraViewController(
             _ controller: VNDocumentCameraViewController,
             didFailWithError error: Error
         ) {
-            if let onError {
-                onError(error)
-            } else {
-                onCancel()
+            guard !didComplete else { return }
+            didComplete = true
+            controller.delegate = nil
+            DispatchQueue.main.async { [onError, onCancel] in
+                if let onError {
+                    onError(error)
+                } else {
+                    onCancel()
+                }
             }
         }
     }

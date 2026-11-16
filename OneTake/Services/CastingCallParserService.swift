@@ -87,30 +87,13 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
     }
 
     func parseImages(_ images: [UIImage]) async throws -> ParsedCastingCall {
-        let snapshots = images.compactMap { image -> (CGImage, CGImagePropertyOrientation)? in
-            Self.cgImageAndOrientation(for: image)
-        }
-        return try await Task.detached(priority: .userInitiated) { [self] in
-            var combinedText = ""
-            for (cgImage, orientation) in snapshots {
-                let pageText = try Self.extractTextWithColumnReconstructionSync(
-                    from: cgImage,
-                    orientation: orientation
-                )
-                if !pageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    combinedText += (combinedText.isEmpty ? "" : "\n\n") + pageText
-                }
-            }
-            return self.parseTextSync(combinedText)
-        }.value
+        let combinedText = await NoticeOCR.recognizeText(in: images)
+        return await parseText(combinedText)
     }
 
     func extractRawText(from image: UIImage) async throws -> String {
-        guard let (cgImage, orientation) = Self.cgImageAndOrientation(for: image) else {
-            return ""
-        }
-        return try await Task.detached(priority: .userInitiated) {
-            try Self.extractTextWithColumnReconstructionSync(from: cgImage, orientation: orientation)
+        await Task.detached(priority: .userInitiated) {
+            NoticeOCR.recognizeText(in: image)
         }.value
     }
 
@@ -119,57 +102,11 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
         OCRLayoutReconstructor.reconstruct(boxes: boxes)
     }
 
-    private static func cgImageAndOrientation(for image: UIImage) -> (CGImage, CGImagePropertyOrientation)? {
-        let orientation = CGImagePropertyOrientation(image.imageOrientation)
-        if let cgImage = image.cgImage {
-            return (cgImage, orientation)
-        }
-        // Fallback for CIImage-backed or synthetic UIImages without a backing CGImage.
-        let size = image.size
-        guard size.width > 0, size.height > 0 else { return nil }
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = image.scale
-        let rendered = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-            image.draw(in: CGRect(origin: .zero, size: size))
-        }
-        guard let renderedCG = rendered.cgImage else { return nil }
-        return (renderedCG, .up)
-    }
-
     private static func extractTextWithColumnReconstructionSync(
         from cgImage: CGImage,
         orientation: CGImagePropertyOrientation
     ) throws -> String {
-        var recognizedBoxes: [OCRLayoutReconstructor.TextBoundingBox] = []
-        var recognitionError: Error?
-
-        let request = VNRecognizeTextRequest { request, error in
-            if let error {
-                recognitionError = error
-                return
-            }
-            guard let observations = request.results as? [VNRecognizedTextObservation], !observations.isEmpty else {
-                return
-            }
-            recognizedBoxes = observations.compactMap { obs in
-                guard let candidate = obs.topCandidates(1).first else { return nil }
-                return OCRLayoutReconstructor.TextBoundingBox(
-                    text: candidate.string,
-                    rect: obs.boundingBox,
-                    confidence: candidate.confidence
-                )
-            }
-        }
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
-
-        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: orientation, options: [:])
-        try handler.perform([request])
-
-        if let recognitionError {
-            throw recognitionError
-        }
-        return reconstructColumns(from: recognizedBoxes)
+        NoticeOCR.recognizeLayout(from: cgImage, orientation: orientation, pageIndex: 0).text
     }
 
     // MARK: - PDF Parsing with Geometry & Vision OCR Fallback
@@ -291,7 +228,7 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
     // MARK: - Multi-File Import Support
 
     func parseMultipleFiles(urls: [URL]) async throws -> ParsedCastingCall {
-        try await Task.detached(priority: .userInitiated) { [self] in
+        let extractedCombined = try await Task.detached(priority: .userInitiated) {
             var combinedText = ""
             var firstError: Error?
 
@@ -312,9 +249,8 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
                         extracted = try Self.extractRawTextFromPDFSync(data)
                     } else if filename.hasSuffix(".docx") {
                         extracted = try Self.extractRawTextFromDocxSync(data)
-                    } else if let image = UIImage(data: data),
-                              let (cgImage, orientation) = Self.cgImageAndOrientation(for: image) {
-                        extracted = try Self.extractTextWithColumnReconstructionSync(from: cgImage, orientation: orientation)
+                    } else if let image = UIImage(data: data) {
+                        extracted = NoticeOCR.recognizeText(in: image)
                     } else {
                         extracted = String(data: data, encoding: .utf8)
                             ?? String(data: data, encoding: .unicode)
@@ -334,16 +270,18 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
             if combinedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let firstError {
                 throw firstError
             }
-            return self.parseTextSync(combinedText)
+            return combinedText
         }.value
+        return await self.parseText(extractedCombined)
     }
 
     // MARK: - Deterministic + ML-Assisted Parser
 
     func parseText(_ text: String) async -> ParsedCastingCall {
-        await Task.detached(priority: .userInitiated) { [self] in
+        let deterministic = await Task.detached(priority: .userInitiated) { [self] in
             self.parseTextSync(text)
         }.value
+        return await OnDeviceIntelligence.refineParsedCall(deterministic, sourceText: text)
     }
 
     private func parseTextSync(_ text: String) -> ParsedCastingCall {
