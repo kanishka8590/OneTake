@@ -54,12 +54,21 @@ final class PhysicalDeviceAuditTests: XCTestCase {
         return (state, container)
     }
 
+    private func findScrollView(in view: UIView) -> UIScrollView? {
+        if let sv = view as? UIScrollView { return sv }
+        for sub in view.subviews {
+            if let found = findScrollView(in: sub) { return found }
+        }
+        return nil
+    }
+
     private func captureView<V: View>(
         _ view: V,
         name: String,
         appState: AppState,
         style: UIUserInterfaceStyle = .dark,
-        waitSeconds: TimeInterval = 0.45
+        waitSeconds: TimeInterval = 0.45,
+        scrollDownOffset: CGFloat = 0
     ) {
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
@@ -81,6 +90,13 @@ final class PhysicalDeviceAuditTests: XCTestCase {
         let deadline = Date().addingTimeInterval(waitSeconds)
         while Date() < deadline {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        if scrollDownOffset > 0, let sv = findScrollView(in: hosting.view) {
+            sv.setContentOffset(CGPoint(x: 0, y: -sv.adjustedContentInset.top + scrollDownOffset), animated: false)
+            let scrollDeadline = Date().addingTimeInterval(0.2)
+            while Date() < scrollDeadline {
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            }
         }
         hosting.view.setNeedsLayout()
         hosting.view.layoutIfNeeded()
@@ -207,6 +223,14 @@ final class PhysicalDeviceAuditTests: XCTestCase {
         )
         captureView(
             MainTabView(appState: state).modelContainer(container),
+            name: "04b_main_auditions_scrolled",
+            appState: state,
+            style: .dark,
+            waitSeconds: 0.5,
+            scrollDownOffset: 160
+        )
+        captureView(
+            MainTabView(appState: state).modelContainer(container),
             name: "05_main_auditions_light",
             appState: state,
             style: .light,
@@ -222,22 +246,26 @@ final class PhysicalDeviceAuditTests: XCTestCase {
             style: .dark
         )
 
-        // Global Search: Match & Zero Results
+        // Global Search Tab (Prominent Search Tab in Bottom Nav Bar): Match & Zero Results
+        state.selectedTab = .search
         state.globalSearchQuery = "Heer"
         captureView(
-            AuditionsListView(appState: state).modelContainer(container),
+            MainTabView(appState: state).modelContainer(container),
             name: "07_search_matches",
             appState: state,
-            style: .dark
+            style: .dark,
+            waitSeconds: 0.55
         )
         state.globalSearchQuery = "NonExistentQuery999"
         captureView(
-            AuditionsListView(appState: state).modelContainer(container),
+            MainTabView(appState: state).modelContainer(container),
             name: "08_search_zero_results",
             appState: state,
-            style: .dark
+            style: .dark,
+            waitSeconds: 0.55
         )
         state.globalSearchQuery = ""
+        state.selectedTab = .auditions
 
         // Audition Details Editor (Check sheet & inline)
         captureView(
