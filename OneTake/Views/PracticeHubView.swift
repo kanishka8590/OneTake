@@ -84,7 +84,7 @@ struct PracticeHubView: View {
                     HStack(spacing: 4) {
                         Button { showingHistory = true } label: { Image(systemName: "clock.arrow.circlepath").frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget) }
                         Button { showingAddSheet = true } label: {
-                            Image(systemName: "plus.circle.fill").font(.system(size: 20, weight: .semibold))
+                            Image(systemName: "plus.circle").font(.system(size: 20, weight: .semibold))
                                 .foregroundStyle(Theme.Colors.accent)
                                 .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
                         }

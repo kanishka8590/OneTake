@@ -102,7 +102,7 @@ struct AuditionsListView: View {
                                             appState.updateAuditionStatus(audition, to: .sent)
                                         }
                                     } label: {
-                                        Label("Mark Sent", systemImage: "paperplane.fill")
+                                        Label("Mark Sent", systemImage: "paperplane")
                                     }
                                     .tint(Theme.Colors.successGreen)
                                 } else {
@@ -128,8 +128,7 @@ struct AuditionsListView: View {
             }
             .navigationTitle("Auditions")
             .toolbar {
-                // Header with native Menu filter
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
                     Menu {
                         Picker("Filter", selection: $selectedFilter) {
                             ForEach(AuditionListFilter.allCases) { filter in
@@ -148,14 +147,11 @@ struct AuditionsListView: View {
                         .padding(.vertical, 4)
                         .padding(.horizontal, 8)
                     }
-                }
 
-                // Add audition plus button
-                ToolbarItem(placement: .primaryAction) {
                     Button {
                         showingAddSourceSheet = true
                     } label: {
-                        Image(systemName: "plus.circle.fill")
+                        Image(systemName: "plus.circle")
                             .font(.system(size: 22, weight: .semibold))
                             .foregroundStyle(Theme.Colors.accent)
                             .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
@@ -549,7 +545,7 @@ struct AuditionsListView: View {
                     .fill(Theme.Colors.lavenderSurface)
                     .frame(width: 80, height: 80)
 
-                Image(systemName: "movieclapper.fill")
+                Image(systemName: "movieclapper")
                     .font(.system(size: 36))
                     .foregroundStyle(Theme.Colors.accent)
             }

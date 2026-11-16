@@ -233,7 +233,7 @@ struct HeadshotGuidanceView: View {
                 VStack {
                     Spacer()
                     HStack(spacing: 8) {
-                        Image(systemName: "camera.fill")
+                        Image(systemName: "camera")
                         if retakeAngle != nil {
                             Text("Simulator Demo • \(currentAngle.rawValue.capitalized)")
                         } else {
@@ -282,7 +282,7 @@ struct HeadshotGuidanceView: View {
         ZStack {
             Color.black.ignoresSafeArea()
             VStack(spacing: 14) {
-                Image(systemName: showSettingsButton ? "camera.badge.ellipsis" : "video.slash.fill")
+                Image(systemName: showSettingsButton ? "camera.badge.ellipsis" : "video.slash")
                     .font(.system(size: 36, weight: .semibold))
                     .foregroundStyle(Theme.Colors.cameraGuideGold)
 
@@ -445,7 +445,7 @@ struct HeadshotGuidanceView: View {
                             .frame(width: 50, height: 50)
                             .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
 
-                        Image(systemName: guidanceService.voiceGuidanceEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                        Image(systemName: guidanceService.voiceGuidanceEnabled ? "speaker.wave.2" : "speaker.slash")
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(guidanceService.voiceGuidanceEnabled ? Color.white : Color.white.opacity(0.45))
                     }
@@ -578,7 +578,7 @@ struct HeadshotGuidanceView: View {
                     headshotVoiceRow(
                         phrase: "\"Action\" or \"Now\"",
                         desc: "Hands-free shutter capture with 3s countdown",
-                        icon: "camera.fill",
+                        icon: "camera",
                         iconColor: Color.green
                     )
                 }

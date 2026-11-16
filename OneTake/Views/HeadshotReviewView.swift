@@ -107,7 +107,7 @@ struct HeadshotReviewView: View {
                                 ProgressView().tint(.white)
                             } else {
                                 HStack(spacing: 8) {
-                                    Image(systemName: "checkmark.circle.fill")
+                                    Image(systemName: "checkmark.circle")
                                     Text("Save Headshots (\(savedReadyCount)/3 Ready)")
                                 }
                                 .primaryCapsuleButton()
@@ -226,7 +226,7 @@ struct HeadshotReviewView: View {
                     }
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: imageForAngle(angle) != nil ? "checkmark.circle.fill" : "circle.dashed")
+                        Image(systemName: imageForAngle(angle) != nil ? "checkmark.circle" : "circle.dashed")
                             .font(.system(size: 13))
                             .foregroundStyle(selectedAngle == angle ? Color.white : (imageForAngle(angle) != nil ? Theme.Colors.successGreen : Theme.Colors.textSecondary))
 

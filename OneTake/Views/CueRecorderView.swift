@@ -84,7 +84,7 @@ struct CueRecorderView: View {
 
                                 if cue.audioFilePath != nil {
                                     HStack(spacing: 4) {
-                                        Image(systemName: "checkmark.circle.fill")
+                                        Image(systemName: "checkmark.circle")
                                             .foregroundStyle(Theme.Colors.successGreen)
                                         Text("Audio Ready (\(String(format: "%.1fs", cue.durationSeconds)))").monospacedDigit()
                                             .font(Theme.Typography.captionBadge)
@@ -148,7 +148,7 @@ struct CueRecorderView: View {
                             Button {
                                 togglePlayback(for: cue)
                             } label: {
-                                Image(systemName: isPlaying ? "stop.circle.fill" : "play.circle.fill")
+                                Image(systemName: isPlaying ? "stop.circle" : "play.circle")
                                     .font(.system(size: 44))
                                     .foregroundStyle(cue.audioFilePath != nil ? Theme.Colors.accent : Theme.Colors.textSecondary.opacity(0.4))
                             }
@@ -180,7 +180,7 @@ struct CueRecorderView: View {
                             Button {
                                 deleteCurrentRecording()
                             } label: {
-                                Image(systemName: "arrow.counterclockwise.circle.fill")
+                                Image(systemName: "arrow.counterclockwise.circle")
                                     .font(.system(size: 44))
                                     .foregroundStyle(cue.audioFilePath != nil ? Theme.Colors.warningAmber : Theme.Colors.textSecondary.opacity(0.4))
                             }

@@ -87,7 +87,7 @@ struct TalkToOneTakeBriefingView: View {
                     .fill(Theme.Colors.lavenderSurface)
                     .frame(width: 52, height: 52)
 
-                Image(systemName: "waveform.circle.fill")
+                Image(systemName: "waveform.circle")
                     .font(.system(size: 32))
                     .foregroundStyle(Theme.Colors.accent)
             }

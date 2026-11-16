@@ -173,7 +173,7 @@ struct AuditionDetailsEditorView: View {
                                 Divider().padding(.leading, 44)
 
                                 HStack {
-                                    Image(systemName: "tag.fill")
+                                    Image(systemName: "tag")
                                         .font(.system(size: 16))
                                         .foregroundStyle(Theme.Colors.accent)
                                         .frame(width: 28)
@@ -217,7 +217,7 @@ struct AuditionDetailsEditorView: View {
 
                                 if isDeadlineInPast {
                                     HStack(spacing: 6) {
-                                        Image(systemName: "exclamationmark.triangle.fill")
+                                        Image(systemName: "exclamationmark.triangle")
                                             .font(.system(size: 12))
                                             .foregroundStyle(Theme.Colors.warningAmber)
                                         Text("This deadline is in the past. Local reminders will not fire.")
@@ -234,7 +234,7 @@ struct AuditionDetailsEditorView: View {
                                 editableRow(
                                     title: "Recipient Email",
                                     value: recipientEmail.isEmpty ? "Not specified (add email)" : recipientEmail,
-                                    icon: "envelope.fill",
+                                    icon: "envelope",
                                     isWarning: !isRecipientEmailValid
                                 ) {
                                     openSheet(.recipientEmail)
@@ -242,7 +242,7 @@ struct AuditionDetailsEditorView: View {
 
                                 if !isRecipientEmailValid {
                                     HStack(spacing: 6) {
-                                        Image(systemName: "exclamationmark.circle.fill")
+                                        Image(systemName: "exclamationmark.circle")
                                             .font(.system(size: 12))
                                             .foregroundStyle(Theme.Colors.errorCrimson)
                                         Text("Please enter a valid email address.")
@@ -285,7 +285,7 @@ struct AuditionDetailsEditorView: View {
                                 } else {
                                     ForEach(requirements) { req in
                                         HStack(spacing: 12) {
-                                            Image(systemName: req.isCompleted ? "checkmark.circle.fill" : "circle")
+                                            Image(systemName: req.isCompleted ? "checkmark.circle" : "circle")
                                                 .foregroundStyle(req.isCompleted ? Theme.Colors.successGreen : Theme.Colors.textSecondary)
 
                                             Text(req.title)
@@ -544,7 +544,7 @@ struct AuditionDetailsEditorView: View {
 
     private var headerCard: some View {
         HStack(spacing: 14) {
-            Image(systemName: isEditingExisting ? "pencil.circle.fill" : "sparkles")
+            Image(systemName: isEditingExisting ? "pencil.circle" : "sparkles")
                 .font(.system(size: 24))
                 .foregroundStyle(Theme.Colors.accent)
                 .frame(width: 48, height: 48)
@@ -572,7 +572,7 @@ struct AuditionDetailsEditorView: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    Image(systemName: "doc.text.fill")
+                    Image(systemName: "doc.text")
                         .foregroundStyle(Theme.Colors.accent)
                         .font(.system(size: 16))
 
@@ -644,7 +644,7 @@ struct AuditionDetailsEditorView: View {
     private var sidesAttachedCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                Image(systemName: "doc.text.fill")
+                Image(systemName: "doc.text")
                     .foregroundStyle(Theme.Colors.accent)
                     .font(.system(size: 18))
 
@@ -1156,7 +1156,7 @@ struct AuditionDetailsEditorView: View {
                             draftRequirements.append(SubmissionRequirement(title: trimmed))
                             newRequirementTitle = ""
                         } label: {
-                            Image(systemName: "plus.circle.fill")
+                            Image(systemName: "plus.circle")
                                 .foregroundStyle(Theme.Colors.accent)
                         }
                         .accessibilityLabel("Add requirement")

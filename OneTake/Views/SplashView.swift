@@ -19,7 +19,7 @@ struct SplashView: View {
                         .fill(Color.white.opacity(0.12))
                         .frame(width: 140, height: 140)
 
-                    Image(systemName: "movieclapper.fill")
+                    Image(systemName: "movieclapper")
                         .font(.system(size: 56, weight: .semibold))
                         .foregroundStyle(Color.white)
                 }

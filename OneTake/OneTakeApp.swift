@@ -81,8 +81,6 @@ struct RootContentView: View {
                 }
             } else if !appState.hasCompletedOnboarding {
                 OnboardingView()
-            } else if !appState.isAuthenticated {
-                AuthView()
             } else {
                 MainTabView()
             }

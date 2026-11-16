@@ -260,7 +260,7 @@ struct TeleprompterRecorderView: View {
             #else
             if recorderService.cameraPermissionDenied {
                 VStack(spacing: 12) {
-                    Image(systemName: "video.slash.fill")
+                    Image(systemName: "video.slash")
                         .font(.system(size: 40))
                         .foregroundStyle(.white.opacity(0.75))
                     Text("Camera Access Required")
@@ -407,7 +407,7 @@ struct TeleprompterRecorderView: View {
                     cueEngine.playNextCue()
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: "forward.fill")
+                        Image(systemName: "forward")
                             .font(.system(size: 11, weight: .bold))
                         Text("Play Next Cue")
                             .font(.system(size: 12, weight: .bold))
@@ -478,7 +478,7 @@ struct TeleprompterRecorderView: View {
                             .frame(width: 50, height: 50)
                             .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
 
-                        Image(systemName: recorderService.voiceGuidanceEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                        Image(systemName: recorderService.voiceGuidanceEnabled ? "speaker.wave.2" : "speaker.slash")
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(recorderService.voiceGuidanceEnabled ? Color.white : Color.white.opacity(0.45))
                     }

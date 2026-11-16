@@ -45,7 +45,7 @@ struct TakesListView: View {
                                             selectedTakeID = take.id
                                         }
                                     } label: {
-                                        Image(systemName: selectedTakeID == take.id ? "checkmark.circle.fill" : "circle")
+                                        Image(systemName: selectedTakeID == take.id ? "checkmark.circle" : "circle")
                                             .font(.system(size: 22))
                                             .foregroundStyle(selectedTakeID == take.id ? Theme.Colors.successGreen : Theme.Colors.textSecondary)
                                     }
@@ -83,7 +83,7 @@ struct TakesListView: View {
                                     Button {
                                         previewTake = take
                                     } label: {
-                                        Image(systemName: "play.circle.fill")
+                                        Image(systemName: "play.circle")
                                             .font(.system(size: 26))
                                             .foregroundStyle(Theme.Colors.accent)
                                     }

@@ -640,15 +640,29 @@ final class AppState {
         )
     }
 
+    // MARK: - Authentication & Session
+    func completeSignIn(name: String, email: String) {
+        let existing = currentUser
+        createOrUpdateProfile(
+            name: name,
+            email: email,
+            height: existing?.height ?? "",
+            age: existing?.age ?? 0,
+            basedIn: existing?.basedIn ?? "",
+            representation: existing?.representation ?? "Self-represented"
+        )
+        isAuthenticated = true
+        selectedTab = .auditions
+        globalSearchQuery = ""
+    }
+
     // MARK: - Logout
     func logout() {
         if isDemoMode {
             exitDemoMode()
         }
         isAuthenticated = false
-        hasCompletedOnboarding = false
-        currentUser = nil
-        auditions = []
-        practiceScripts = []
+        selectedTab = .auditions
+        globalSearchQuery = ""
     }
 }

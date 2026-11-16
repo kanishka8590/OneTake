@@ -17,13 +17,13 @@ struct MainTabView: View {
         TabView(selection: Bindable(appState).selectedTab) {
             AuditionsListView(appState: appState)
                 .tabItem {
-                    Label("Auditions", systemImage: "movieclapper.fill")
+                    Label("Auditions", systemImage: "movieclapper")
                 }
                 .tag(AppTab.auditions)
 
             PracticeHubView(appState: appState)
                 .tabItem {
-                    Label("Practice", systemImage: "theatermasks.fill")
+                    Label("Practice", systemImage: "theatermasks")
                 }
                 .tag(AppTab.practice)
 

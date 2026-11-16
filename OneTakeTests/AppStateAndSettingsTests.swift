@@ -125,7 +125,8 @@ final class AppStateAndSettingsTests: XCTestCase {
         XCTAssertEqual(state.currentUser?.name, "Actor One")
 
         state.logout()
-        XCTAssertNil(state.currentUser)
+        XCTAssertFalse(state.isAuthenticated)
+        XCTAssertEqual(state.currentUser?.name, "Actor One")
 
         state.createOrUpdateProfile(
             name: "Actor Updated",
@@ -209,6 +210,90 @@ final class AppStateAndSettingsTests: XCTestCase {
         XCTAssertNil(state.currentUser)
         XCTAssertEqual(state.auditions.map(\.id), [userAudition.id])
         XCTAssertEqual(state.practiceScripts.map(\.id), [userScript.id])
+    }
+
+    // MARK: - Guest Mode, Session & Tab Reset Tests
+
+    func testLogoutPreservesOnboardingAndLocalDataWhileResettingSessionAndTab() throws {
+        let (state, container, _) = try makeIsolatedAppState()
+        defer { withExtendedLifetime(container) {} }
+
+        state.hasCompletedOnboarding = true
+        state.isAuthenticated = true
+        state.selectedTab = .profile
+        state.globalSearchQuery = "Heer"
+        state.createOrUpdateProfile(
+            name: "Local Actor",
+            email: "local@example.com",
+            height: "5'8\"",
+            age: 26,
+            basedIn: "Mumbai",
+            representation: "Self-represented"
+        )
+
+        let userAudition = Audition(
+            projectName: "Independent Feature",
+            roleName: "Lead",
+            recipientEmail: "casting@indie.com"
+        )
+        let userScript = PracticeScript(
+            title: "Audition Sides",
+            rawText: "LEAD\nWe need to leave now."
+        )
+        state.addAudition(userAudition)
+        state.addPracticeScript(userScript)
+
+        state.logout()
+
+        XCTAssertTrue(state.hasCompletedOnboarding)
+        XCTAssertFalse(state.isAuthenticated)
+        XCTAssertEqual(state.selectedTab, .auditions)
+        XCTAssertEqual(state.globalSearchQuery, "")
+        XCTAssertEqual(state.auditions.count, 1)
+        XCTAssertEqual(state.practiceScripts.count, 1)
+        XCTAssertEqual(state.currentUser?.name, "Local Actor")
+    }
+
+    func testLogoutExitsDemoModeAndPreservesUserRecordsWhileResettingTab() throws {
+        let (state, container, _) = try makeIsolatedAppState()
+        defer { withExtendedLifetime(container) {} }
+
+        let userAudition = Audition(
+            projectName: "User Feature",
+            roleName: "Supporting",
+            recipientEmail: "casting@user.com"
+        )
+        state.addAudition(userAudition)
+        state.enterDemoMode(generateMedia: false)
+        state.selectedTab = .practice
+        state.globalSearchQuery = "Naina"
+
+        state.logout()
+
+        XCTAssertFalse(state.isDemoMode)
+        XCTAssertFalse(state.isAuthenticated)
+        XCTAssertTrue(state.hasCompletedOnboarding)
+        XCTAssertEqual(state.selectedTab, .auditions)
+        XCTAssertEqual(state.globalSearchQuery, "")
+        XCTAssertEqual(state.auditions.map(\.id), [userAudition.id])
+    }
+
+    func testCompleteSignInResetsTabToAuditions() throws {
+        let (state, container, _) = try makeIsolatedAppState()
+        defer { withExtendedLifetime(container) {} }
+
+        state.hasCompletedOnboarding = true
+        state.isAuthenticated = false
+        state.selectedTab = .profile
+        state.globalSearchQuery = "Search Term"
+
+        state.completeSignIn(name: "Signed In Actor", email: "actor@example.com")
+
+        XCTAssertTrue(state.isAuthenticated)
+        XCTAssertEqual(state.selectedTab, .auditions)
+        XCTAssertEqual(state.globalSearchQuery, "")
+        XCTAssertEqual(state.currentUser?.name, "Signed In Actor")
+        XCTAssertEqual(state.currentUser?.email, "actor@example.com")
     }
 
     // MARK: - File Cleanup & Delete All Local Data Tests

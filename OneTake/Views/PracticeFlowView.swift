@@ -429,7 +429,7 @@ struct MemoriseView: View {
             VStack(spacing: 16) {
                 Text("Level \(level) of 3 — \(level == 1 ? "READ" : level == 2 ? "RECALL" : "RECONSTRUCT")").font(Theme.Typography.sectionHeader).foregroundStyle(Theme.Colors.accent)
                 if level > 1 {
-                    Label("Tap any blank to reveal", systemImage: "hand.tap.fill")
+                    Label("Tap any blank to reveal", systemImage: "hand.tap")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(Theme.Colors.accent)
                         .padding(.horizontal, 12)
@@ -579,7 +579,7 @@ struct SayItAloudView: View {
                 }
             }
             if help != .fullScript {
-                Button { requestNextSentence() } label: { Label("Need a clue?", systemImage: "lightbulb.fill").secondaryLavenderButton() }
+                Button { requestNextSentence() } label: { Label("Need a clue?", systemImage: "lightbulb").secondaryLavenderButton() }
                 if let hintText {
                     Text("Next sentence: \"\(hintText)\"")
                         .font(.caption)
@@ -598,7 +598,7 @@ struct SayItAloudView: View {
                 Button {
                     didStart ? togglePause() : toggleStart()
                 } label: {
-                    Image(systemName: paused ? "pause.fill" : "mic.fill")
+                    Image(systemName: paused ? "pause" : "mic")
                         .font(.system(size: 42))
                         .foregroundStyle(.white)
                         .frame(width: 82, height: 82)
@@ -675,7 +675,7 @@ struct SayItAloudView: View {
 
     private var permissionDeniedCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Microphone & Speech Access Needed", systemImage: "mic.slash.fill")
+            Label("Microphone & Speech Access Needed", systemImage: "mic.slash")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Theme.Colors.textPrimary)
             Text("Enable Microphone and Speech Recognition in Settings to record and analyze your practice run.")
@@ -860,7 +860,7 @@ struct PracticeReviewView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
                 Button { playback.toggle() } label: {
-                    Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
+                    Image(systemName: playback.isPlaying ? "pause" : "play")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(.white)
                         .frame(width: 36, height: 36)

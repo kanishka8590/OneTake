@@ -249,7 +249,7 @@ struct PackageValidationAndExportView: View {
                     let sizeMB = actualSizeMB(for: oversizedTake, metadata: oversizedTake.id == slate?.id ? slateMetadata : clipMetadata)
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 12) {
-                            Image(systemName: "film.stack.fill")
+                            Image(systemName: "film.stack")
                                 .font(.title2)
                                 .foregroundStyle(Theme.Colors.warningAmber)
                                 .frame(width: 54, height: 42)
@@ -280,7 +280,7 @@ struct PackageValidationAndExportView: View {
 
     private func validationCard(_ title: String, detail: String, passed: Bool, action: String?, actionHandler: @escaping () -> Void) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: passed ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+            Image(systemName: passed ? "checkmark.circle" : "exclamationmark.triangle")
                 .foregroundStyle(passed ? Theme.Colors.successGreen : Theme.Colors.warningAmber)
                 .font(.title3)
             VStack(alignment: .leading, spacing: 5) {
@@ -318,7 +318,7 @@ struct PackageValidationAndExportView: View {
                 ForEach(bundleItems) { item in bundleFileRow(item) }
 
                 Button { showingShareChoices = true } label: {
-                    Label("Share Package", systemImage: "square.and.arrow.up.fill").primaryCapsuleButton()
+                    Label("Share Package", systemImage: "square.and.arrow.up").primaryCapsuleButton()
                 }
                 .padding(.top, 8)
             }
@@ -386,7 +386,7 @@ struct PackageValidationAndExportView: View {
 
     private func bundleFileRow(_ item: BundleItem) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: item.fallbackExtension == "jpg" ? "photo.fill" : "video.fill")
+            Image(systemName: item.fallbackExtension == "jpg" ? "photo" : "video")
                 .foregroundStyle(item.existsOnDisk ? Theme.Colors.accent : Theme.Colors.warningAmber)
                 .frame(width: 34, height: 34)
                 .background(Theme.Colors.lavenderSurface)
@@ -460,7 +460,7 @@ struct PackageValidationAndExportView: View {
 
                 if let email = appState.resolvedRecipientEmail(for: audition), MFMailComposeViewController.canSendMail() {
                     Button { emailPackageFiles() } label: {
-                        Label("Email \(email)", systemImage: "envelope.fill")
+                        Label("Email \(email)", systemImage: "envelope")
                             .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
                     }
                 }
@@ -833,7 +833,7 @@ private struct VideoCompressorView: View {
             VStack(spacing: 24) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 18).fill(.black).aspectRatio(16 / 9, contentMode: .fit)
-                    Image(systemName: "play.rectangle.fill").font(.system(size: 44)).foregroundStyle(.white)
+                    Image(systemName: "play.rectangle").font(.system(size: 44)).foregroundStyle(.white)
                 }
                 VStack(spacing: 8) {
                     Text("COMPRESSING YOUR \(isSlate ? "SLATE" : "CLIP")").font(Theme.Typography.cardTitle)

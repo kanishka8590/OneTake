@@ -16,6 +16,7 @@ struct ProfileView: View {
 
     @State private var showingEditProfile = false
     @State private var showingLogoutConfirmation = false
+    @State private var showingSignIn = false
 
     var user: UserProfile {
         appState.currentUser ?? UserProfile(
@@ -38,7 +39,7 @@ struct ProfileView: View {
                             .listRowBackground(Color.clear)
                     }
 
-                    // Key Audition & Storage Metrics
+                    // Key Audition Metrics
                     Section("Studio Metrics") {
                         HStack {
                             Label("Active Auditions", systemImage: "film")
@@ -57,15 +58,6 @@ struct ProfileView: View {
                                 .foregroundStyle(Theme.Colors.successGreen)
                         }
                         .frame(minHeight: Theme.Layout.minTapTarget)
-
-                        HStack {
-                            Label("Storage Used", systemImage: "internaldrive")
-                            Spacer()
-                            Text(String(format: "%.1f MB", max(appState.totalStorageUsedMB, appState.localAppDataUsedMB)))
-                                .font(Theme.Typography.bodyRegular)
-                                .foregroundStyle(Theme.Colors.textSecondary)
-                        }
-                        .frame(minHeight: Theme.Layout.minTapTarget)
                     }
 
                     // Previous Work Section
@@ -73,7 +65,7 @@ struct ProfileView: View {
                         Section("Credits & Previous Work") {
                             ForEach(Array(user.previousWork.enumerated()), id: \.offset) { _, work in
                                 HStack(spacing: 8) {
-                                    Image(systemName: "star.fill")
+                                    Image(systemName: "star")
                                         .font(.system(size: 12))
                                         .foregroundStyle(Theme.Colors.warningAmber)
                                         .accessibilityHidden(true)
@@ -88,8 +80,6 @@ struct ProfileView: View {
 
                     // Profile & App Settings
                     Section("Profile & settings") {
-                        Button("Edit profile") { showingEditProfile = true }
-                            .frame(minHeight: Theme.Layout.minTapTarget)
                         NavigationLink("Recording settings") { RecordingSettingsView(appState: appState) }
                             .frame(minHeight: Theme.Layout.minTapTarget)
                         NavigationLink("Notification Preferences") { NotificationPreferencesView(appState: appState) }
@@ -100,27 +90,25 @@ struct ProfileView: View {
 
                     // Demo Mode
                     Section {
-                        HStack {
-                            Label("Demo Mode", systemImage: "sparkles")
-                            Spacer()
-                            Text(appState.isDemoMode ? "Active" : "Off")
-                                .statusBadge(color: appState.isDemoMode ? Theme.Colors.accent : Theme.Colors.textSecondary)
-                        }
+                        Toggle(
+                            "Demo Mode",
+                            isOn: Binding(
+                                get: { appState.isDemoMode },
+                                set: { enabled in
+                                    if enabled {
+                                        appState.enterDemoMode()
+                                    } else {
+                                        appState.exitDemoMode()
+                                    }
+                                }
+                            )
+                        )
+                        .tint(Theme.Colors.accent)
                         .frame(minHeight: Theme.Layout.minTapTarget)
 
                         if appState.isDemoMode {
                             Button("Reset Demo Data") {
                                 appState.resetDemoData()
-                            }
-                            .frame(minHeight: Theme.Layout.minTapTarget)
-
-                            Button("Exit Demo Mode", role: .destructive) {
-                                appState.exitDemoMode()
-                            }
-                            .frame(minHeight: Theme.Layout.minTapTarget)
-                        } else {
-                            Button("Enable Demo Mode") {
-                                appState.enterDemoMode()
                             }
                             .frame(minHeight: Theme.Layout.minTapTarget)
                         }
@@ -129,23 +117,56 @@ struct ProfileView: View {
                     } footer: {
                         Text(
                             appState.isDemoMode
-                                ? "Demo Mode is active with sample auditions and scripts. Exiting removes sample data while keeping your own work."
+                                ? "Demo Mode is active with sample auditions and scripts. Turning it off removes sample data while keeping your own work."
                                 : "Load sample auditions, scripts, and takes to explore OneTake."
                         )
                     }
 
                     // Account Actions
                     Section {
-                        Button(role: .destructive) {
-                            showingLogoutConfirmation = true
-                        } label: {
-                            HStack {
-                                Spacer()
-                                Text("Sign out")
+                        if appState.isAuthenticated {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(user.name.isEmpty ? "Signed in" : user.name)
                                     .font(Theme.Typography.cardTitle)
-                                Spacer()
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                if !user.email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    Text(user.email)
+                                        .font(Theme.Typography.captionBadge)
+                                        .foregroundStyle(Theme.Colors.textSecondary)
+                                }
                             }
-                            .frame(minHeight: Theme.Layout.minTapTarget)
+                            .frame(minHeight: Theme.Layout.minTapTarget, alignment: .leading)
+
+                            Button(role: .destructive) {
+                                showingLogoutConfirmation = true
+                            } label: {
+                                HStack {
+                                    Spacer()
+                                    Text("Sign out")
+                                        .font(Theme.Typography.cardTitle)
+                                    Spacer()
+                                }
+                                .frame(minHeight: Theme.Layout.minTapTarget)
+                            }
+                        } else {
+                            Button {
+                                showingSignIn = true
+                            } label: {
+                                HStack {
+                                    Spacer()
+                                    Text("Sign in")
+                                        .font(Theme.Typography.cardTitle)
+                                        .foregroundStyle(Theme.Colors.accent)
+                                    Spacer()
+                                }
+                                .frame(minHeight: Theme.Layout.minTapTarget)
+                            }
+                        }
+                    } header: {
+                        Text("Account")
+                    } footer: {
+                        if !appState.isAuthenticated {
+                            Text("Sign-in is optional. Your auditions, scripts, and takes stay stored locally on this device.")
                         }
                     }
                 }
@@ -169,6 +190,9 @@ struct ProfileView: View {
             .sheet(isPresented: $showingEditProfile) {
                 EditProfileSheet(appState: appState, isPresented: $showingEditProfile)
             }
+            .sheet(isPresented: $showingSignIn) {
+                AuthView(appState: appState)
+            }
             .confirmationDialog("Sign Out?", isPresented: $showingLogoutConfirmation) {
                 Button("Sign Out", role: .destructive) {
                     withAnimation {
@@ -177,7 +201,7 @@ struct ProfileView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Are you sure you want to sign out of OneTake?")
+                Text("Signing out keeps your local auditions, scripts, and profile on this device.")
             }
         }
     }
@@ -320,7 +344,7 @@ struct EditProfileSheet: View {
                                 Circle()
                                     .fill(Theme.Colors.lavenderSurface)
                                     .frame(width: 56, height: 56)
-                                Image(systemName: "person.fill")
+                                Image(systemName: "person")
                                     .font(.system(size: 24))
                                     .foregroundStyle(Theme.Colors.accent)
                             }

@@ -4,6 +4,7 @@ import AuthenticationServices
 struct AuthView: View {
     @Environment(AppState.self) private var envAppState
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dismiss) private var dismiss
     private let explicitAppState: AppState?
 
     @State private var showingEmailSheet = false
@@ -33,7 +34,7 @@ struct AuthView: View {
                                 .fill(Theme.Colors.lavenderSurface)
                                 .frame(width: 140, height: 140)
 
-                            Image(systemName: "movieclapper.fill")
+                            Image(systemName: "movieclapper")
                                 .font(.system(size: 60, weight: .semibold))
                                 .foregroundStyle(Theme.Colors.accent)
                                 .padding(.bottom, 5)
@@ -78,7 +79,7 @@ struct AuthView: View {
                             showingEmailSheet = true
                         } label: {
                             HStack(spacing: 10) {
-                                Image(systemName: "envelope.fill")
+                                Image(systemName: "envelope")
                                     .font(.system(size: 16, weight: .semibold))
                                     .accessibilityHidden(true)
                                 Text("Continue with email")
@@ -95,7 +96,10 @@ struct AuthView: View {
                         Button {
                             withAnimation {
                                 appState.enterDemoMode()
+                                appState.selectedTab = .auditions
+                                appState.globalSearchQuery = ""
                             }
+                            dismiss()
                         } label: {
                             VStack(spacing: 2) {
                                 Text("Try Demo Mode")
@@ -113,8 +117,17 @@ struct AuthView: View {
                     .padding(.bottom, 24)
                 }
             }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Continue as Guest") {
+                        dismiss()
+                    }
+                }
+            }
             .sheet(isPresented: $showingEmailSheet) {
-                EmailOTPView(appState: appState, isPresented: $showingEmailSheet)
+                EmailOTPView(appState: appState, isPresented: $showingEmailSheet) {
+                    dismiss()
+                }
             }
             .alert(
                 "Sign In Failed",
@@ -165,18 +178,10 @@ struct AuthView: View {
                 resolvedEmail = ""
             }
 
-            appState.createOrUpdateProfile(
-                name: displayName,
-                email: resolvedEmail,
-                height: existing?.height ?? "",
-                age: existing?.age ?? 0,
-                basedIn: existing?.basedIn ?? "",
-                representation: existing?.representation ?? "Self-represented"
-            )
-
             withAnimation {
-                appState.isAuthenticated = true
+                appState.completeSignIn(name: displayName, email: resolvedEmail)
             }
+            dismiss()
 
         case .failure(let error):
             if (error as? ASAuthorizationError)?.code == .canceled {
@@ -194,6 +199,7 @@ struct EmailOTPView: View {
     private let explicitAppState: AppState?
 
     @Binding var isPresented: Bool
+    var onComplete: (() -> Void)? = nil
 
     @State private var email: String = ""
     @State private var otpCode: String = ""
@@ -206,9 +212,10 @@ struct EmailOTPView: View {
 
     private static let emailPattern = #"^[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"#
 
-    init(appState: AppState? = nil, isPresented: Binding<Bool>) {
+    init(appState: AppState? = nil, isPresented: Binding<Bool>, onComplete: (() -> Void)? = nil) {
         self.explicitAppState = appState
         self._isPresented = isPresented
+        self.onComplete = onComplete
     }
 
     private var appState: AppState {
@@ -260,7 +267,7 @@ struct EmailOTPView: View {
 
     private var demoServerBanner: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "info.circle.fill")
+            Image(systemName: "info.circle")
                 .font(.system(size: 16))
                 .foregroundStyle(Theme.Colors.accent)
                 .accessibilityHidden(true)
@@ -451,8 +458,11 @@ struct EmailOTPView: View {
         errorMessage = nil
         withAnimation {
             appState.enterDemoMode()
+            appState.selectedTab = .auditions
+            appState.globalSearchQuery = ""
         }
         isPresented = false
+        onComplete?()
     }
 }
 

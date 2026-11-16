@@ -29,7 +29,7 @@ enum PackageDeliverable: String, CaseIterable, Identifiable {
         switch self {
         case .headshots: return "person.crop.rectangle.badge.plus"
         case .slate: return "person.badge.shield.checkmark"
-        case .audition: return "movieclapper.fill"
+        case .audition: return "movieclapper"
         }
     }
 }
@@ -130,7 +130,7 @@ struct AuditionPackageHubView: View {
                             showingPackageValidation = true
                         } label: {
                             HStack(spacing: 8) {
-                                Image(systemName: "square.and.arrow.up.fill")
+                                Image(systemName: "square.and.arrow.up")
                                 Text("Export Package")
                             }
                             .font(.system(size: 15, weight: .semibold))
@@ -152,7 +152,7 @@ struct AuditionPackageHubView: View {
             // Transient confirmation banner overlay
             if let banner = bannerMessage {
                 HStack(spacing: 10) {
-                    Image(systemName: "checkmark.circle.fill")
+                    Image(systemName: "checkmark.circle")
                         .foregroundStyle(bannerColor)
                     Text(banner)
                         .font(Theme.Typography.cardTitle)
@@ -485,10 +485,10 @@ struct AuditionPackageHubView: View {
     }
 
     // MARK: - Completed Row
-    // Compact white rounded rows with green checkmark.seal.fill, bold title, purple status, and Review button
+    // Compact white rounded rows with green checkmark.seal, bold title, purple status, and Review button
     private func completedRow(for deliverable: PackageDeliverable) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: "checkmark.seal.fill")
+            Image(systemName: "checkmark.seal")
                 .font(.system(size: 20))
                 .foregroundStyle(Theme.Colors.successGreen)
 
@@ -665,7 +665,7 @@ struct AuditionPackageHubView: View {
 
     private var allCompletedCard: some View {
         VStack(spacing: 12) {
-            Image(systemName: "checkmark.seal.fill")
+            Image(systemName: "checkmark.seal")
                 .font(.system(size: 32))
                 .foregroundStyle(Theme.Colors.successGreen)
 
