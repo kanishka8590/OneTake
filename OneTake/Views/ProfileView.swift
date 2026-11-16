@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import PhotosUI
+import UIKit
 
 struct ProfileView: View {
     @Environment(AppState.self) private var envAppState
@@ -312,6 +313,8 @@ struct EditProfileSheet: View {
     @State private var creditItems: [CreditItem] = []
     @State private var stagedAvatarData: Data? = nil
     @State private var photoItem: PhotosPickerItem?
+    @State private var showingPhotoPicker = false
+    @State private var showingCameraPicker = false
 
     var body: some View {
         NavigationStack {
@@ -336,12 +339,25 @@ struct EditProfileSheet: View {
                             .accessibilityHidden(true)
                         }
 
-                        PhotosPicker(selection: $photoItem, matching: .images) {
-                            Label(
-                                stagedAvatarData == nil ? "Choose photo" : "Change photo",
-                                systemImage: "person.crop.circle.badge.plus"
-                            )
+                        Menu {
+                            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                                Button {
+                                    showingCameraPicker = true
+                                } label: {
+                                    Label("Take Photo", systemImage: "camera")
+                                }
+                            }
+
+                            Button {
+                                showingPhotoPicker = true
+                            } label: {
+                                Label("Choose from Photos", systemImage: "photo.on.rectangle")
+                            }
+                        } label: {
+                            Text(stagedAvatarData == nil ? "Choose photo" : "Change photo")
+                                .foregroundStyle(Theme.Colors.accent)
                         }
+                        .menuIndicator(.hidden)
                     }
 
                     if stagedAvatarData != nil {
@@ -432,12 +448,24 @@ struct EditProfileSheet: View {
                     stagedAvatarData = u.avatarImageData
                 }
             }
+            .photosPicker(isPresented: $showingPhotoPicker, selection: $photoItem, matching: .images)
+            .fullScreenCover(isPresented: $showingCameraPicker) {
+                ProfileCameraPicker { image in
+                    stagedAvatarData = Self.compressedAvatarData(from: image)
+                }
+                .ignoresSafeArea()
+            }
             .onChange(of: photoItem) { _, item in
                 guard let item else { return }
                 Task {
                     if let data = try? await item.loadTransferable(type: Data.self) {
                         await MainActor.run {
-                            stagedAvatarData = data
+                            if let uiImage = UIImage(data: data) {
+                                stagedAvatarData = Self.compressedAvatarData(from: uiImage) ?? data
+                            } else {
+                                stagedAvatarData = data
+                            }
+                            photoItem = nil
                         }
                     }
                 }
@@ -481,6 +509,63 @@ struct EditProfileSheet: View {
             }
         }
         isPresented = false
+    }
+
+    private static func compressedAvatarData(from image: UIImage) -> Data? {
+        let maxDimension: CGFloat = 800
+        let size = image.size
+        let scale = min(1.0, maxDimension / max(size.width, size.height, 1))
+        let targetSize = CGSize(width: size.width * scale, height: size.height * scale)
+
+        let renderer = UIGraphicsImageRenderer(size: targetSize)
+        let resized = renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+        return resized.jpegData(compressionQuality: 0.85)
+    }
+}
+
+private struct ProfileCameraPicker: UIViewControllerRepresentable {
+    let onImageCaptured: (UIImage) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        if UIImagePickerController.isCameraDeviceAvailable(.front) {
+            picker.cameraDevice = .front
+        }
+        picker.allowsEditing = true
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        private let parent: ProfileCameraPicker
+
+        init(_ parent: ProfileCameraPicker) {
+            self.parent = parent
+        }
+
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            if let image = (info[.editedImage] as? UIImage) ?? (info[.originalImage] as? UIImage) {
+                parent.onImageCaptured(image)
+            }
+            parent.dismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.dismiss()
+        }
     }
 }
 
