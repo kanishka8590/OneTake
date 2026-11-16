@@ -205,7 +205,9 @@ nonisolated enum ZipArchive {
 
         var extractedBytes: UInt64 = 0
         var entryCount = 0
-        let standardizedRoot = destination.standardizedFileURL.path + "/"
+        let resolvedRootURL = destination.resolvingSymlinksInPath().standardizedFileURL
+        let resolvedRootPath = resolvedRootURL.path
+        let standardizedRoot = resolvedRootPath.hasSuffix("/") ? resolvedRootPath : resolvedRootPath + "/"
 
         for entry in entries {
             try validateEntry(entry)
@@ -225,7 +227,7 @@ nonisolated enum ZipArchive {
             extractedBytes = addedBytes
             entryCount += 1
 
-            let outputURL = components.reduce(destination) { $0.appendingPathComponent($1) }
+            let outputURL = components.reduce(resolvedRootURL) { $0.appendingPathComponent($1) }
             guard outputURL.standardizedFileURL.path.hasPrefix(standardizedRoot) else {
                 throw ArchiveError.invalid("unsafe file path")
             }
