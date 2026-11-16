@@ -44,7 +44,6 @@ struct ProfileView: View {
                                 .font(Theme.Typography.cardTitle)
                                 .foregroundStyle(Theme.Colors.accent)
                         }
-                        .frame(minHeight: Theme.Layout.minTapTarget)
 
                         HStack {
                             Label("Submitted Auditions", systemImage: "checkmark.circle")
@@ -53,7 +52,6 @@ struct ProfileView: View {
                                 .font(Theme.Typography.cardTitle)
                                 .foregroundStyle(Theme.Colors.successGreen)
                         }
-                        .frame(minHeight: Theme.Layout.minTapTarget)
                     }
 
                     // Previous Work Section
@@ -69,7 +67,6 @@ struct ProfileView: View {
                                         .font(Theme.Typography.bodyRegular)
                                         .foregroundStyle(Theme.Colors.textPrimary)
                                 }
-                                .frame(minHeight: Theme.Layout.minTapTarget)
                             }
                         }
                     }
@@ -77,11 +74,8 @@ struct ProfileView: View {
                     // Profile & App Settings
                     Section("Profile & settings") {
                         NavigationLink("Recording settings") { RecordingSettingsView(appState: appState) }
-                            .frame(minHeight: Theme.Layout.minTapTarget)
                         NavigationLink("Notification Preferences") { NotificationPreferencesView(appState: appState) }
-                            .frame(minHeight: Theme.Layout.minTapTarget)
                         NavigationLink("Privacy & data") { PrivacyAndDataView(appState: appState) }
-                            .frame(minHeight: Theme.Layout.minTapTarget)
                     }
 
                     // Demo Mode
@@ -100,13 +94,11 @@ struct ProfileView: View {
                             )
                         )
                         .tint(Theme.Colors.accent)
-                        .frame(minHeight: Theme.Layout.minTapTarget)
 
                         if appState.isDemoMode {
                             Button("Reset Demo Data") {
                                 appState.resetDemoData()
                             }
-                            .frame(minHeight: Theme.Layout.minTapTarget)
                         }
                     } header: {
                         Text("Demo Mode")
@@ -131,7 +123,6 @@ struct ProfileView: View {
                                         .foregroundStyle(Theme.Colors.textSecondary)
                                 }
                             }
-                            .frame(minHeight: Theme.Layout.minTapTarget, alignment: .leading)
 
                             Button(role: .destructive) {
                                 showingLogoutConfirmation = true
@@ -142,7 +133,6 @@ struct ProfileView: View {
                                         .font(Theme.Typography.cardTitle)
                                     Spacer()
                                 }
-                                .frame(minHeight: Theme.Layout.minTapTarget)
                             }
                         } else {
                             Button {
@@ -155,7 +145,6 @@ struct ProfileView: View {
                                         .foregroundStyle(Theme.Colors.accent)
                                     Spacer()
                                 }
-                                .frame(minHeight: Theme.Layout.minTapTarget)
                             }
                         }
                     } header: {
@@ -167,6 +156,7 @@ struct ProfileView: View {
                     }
                 }
                 .listStyle(.insetGrouped)
+                .listSectionSpacing(.compact)
                 .scrollContentBackground(.hidden)
                 .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Profile")
@@ -205,7 +195,7 @@ struct ProfileView: View {
     // MARK: - Actor Header Card
 
     private var actorHeaderCard: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             Group {
                 if let data = user.avatarImageData, let uiImage = UIImage(data: data) {
                     Image(uiImage: uiImage)
@@ -267,11 +257,10 @@ struct ProfileView: View {
                 .clipShape(Capsule())
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 20)
+        .padding(.vertical, 16)
         .background(Theme.Colors.cardSurface)
         .clipShape(RoundedRectangle(cornerRadius: Theme.Layout.cardCornerRadius))
         .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 2)
-        .padding(.horizontal, 4)
     }
 
     private func infoPill(label: String, value: String) -> some View {
