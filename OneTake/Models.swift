@@ -88,6 +88,23 @@ nonisolated struct SubmissionRequirement: Codable, Sendable, Hashable, Identifia
     var id: UUID = UUID()
     var title: String
     var isCompleted: Bool = false
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        isCompleted: Bool = false
+    ) {
+        self.id = id
+        self.title = title
+        self.isCompleted = isCompleted
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        isCompleted = try c.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
+    }
 }
 
 nonisolated struct HeadshotAsset: Codable, Sendable, Hashable {
@@ -101,6 +118,47 @@ nonisolated struct HeadshotAsset: Codable, Sendable, Hashable {
     var alignmentPassed: Bool = false
     var eyeLevelPassed: Bool = false
     var capturedAt: Date = .now
+
+    var originalURL: URL? { MediaStorage.resolveURL(for: originalFilePath) }
+    var croppedURL: URL? { MediaStorage.resolveURL(for: croppedFilePath) }
+
+    init(
+        angle: HeadshotAngle,
+        originalFilePath: String,
+        croppedFilePath: String,
+        aspectRatio: HeadshotAspectRatio = .ratio4x5,
+        cropPreset: HeadshotCropPreset? = nil,
+        lightingPassed: Bool = false,
+        backgroundPassed: Bool = false,
+        alignmentPassed: Bool = false,
+        eyeLevelPassed: Bool = false,
+        capturedAt: Date = .now
+    ) {
+        self.angle = angle
+        self.originalFilePath = originalFilePath
+        self.croppedFilePath = croppedFilePath
+        self.aspectRatio = aspectRatio
+        self.cropPreset = cropPreset
+        self.lightingPassed = lightingPassed
+        self.backgroundPassed = backgroundPassed
+        self.alignmentPassed = alignmentPassed
+        self.eyeLevelPassed = eyeLevelPassed
+        self.capturedAt = capturedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        angle = try c.decodeIfPresent(HeadshotAngle.self, forKey: .angle) ?? .front
+        originalFilePath = try c.decodeIfPresent(String.self, forKey: .originalFilePath) ?? ""
+        croppedFilePath = try c.decodeIfPresent(String.self, forKey: .croppedFilePath) ?? ""
+        aspectRatio = try c.decodeIfPresent(HeadshotAspectRatio.self, forKey: .aspectRatio) ?? .ratio4x5
+        cropPreset = try c.decodeIfPresent(HeadshotCropPreset.self, forKey: .cropPreset)
+        lightingPassed = try c.decodeIfPresent(Bool.self, forKey: .lightingPassed) ?? false
+        backgroundPassed = try c.decodeIfPresent(Bool.self, forKey: .backgroundPassed) ?? false
+        alignmentPassed = try c.decodeIfPresent(Bool.self, forKey: .alignmentPassed) ?? false
+        eyeLevelPassed = try c.decodeIfPresent(Bool.self, forKey: .eyeLevelPassed) ?? false
+        capturedAt = try c.decodeIfPresent(Date.self, forKey: .capturedAt) ?? .now
+    }
 }
 
 nonisolated struct VideoTake: Codable, Sendable, Hashable, Identifiable {
@@ -119,6 +177,61 @@ nonisolated struct VideoTake: Codable, Sendable, Hashable, Identifiable {
     var framingPassed: Bool = false
     var soundPassed: Bool = false
     var createdAt: Date = .now
+
+    var fileURL: URL? { MediaStorage.resolveURL(for: filePath) }
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        filePath: String,
+        durationSeconds: Double,
+        fileSizeMB: Double,
+        aspectRatioString: String = "16:9",
+        isPortrait: Bool = false,
+        isMirrored: Bool = false,
+        noiseCleaned: Bool = false,
+        trimStartSeconds: Double = 0,
+        trimEndSeconds: Double = 0,
+        lightingPassed: Bool = false,
+        framingPassed: Bool = false,
+        soundPassed: Bool = false,
+        createdAt: Date = .now
+    ) {
+        self.id = id
+        self.title = title
+        self.filePath = filePath
+        self.durationSeconds = durationSeconds
+        self.fileSizeMB = fileSizeMB
+        self.aspectRatioString = aspectRatioString
+        self.isPortrait = isPortrait
+        self.isMirrored = isMirrored
+        self.noiseCleaned = noiseCleaned
+        self.trimStartSeconds = trimStartSeconds
+        self.trimEndSeconds = trimEndSeconds
+        self.lightingPassed = lightingPassed
+        self.framingPassed = framingPassed
+        self.soundPassed = soundPassed
+        self.createdAt = createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        filePath = try c.decodeIfPresent(String.self, forKey: .filePath) ?? ""
+        durationSeconds = try c.decodeIfPresent(Double.self, forKey: .durationSeconds) ?? 0
+        fileSizeMB = try c.decodeIfPresent(Double.self, forKey: .fileSizeMB) ?? 0
+        aspectRatioString = try c.decodeIfPresent(String.self, forKey: .aspectRatioString) ?? "16:9"
+        isPortrait = try c.decodeIfPresent(Bool.self, forKey: .isPortrait) ?? false
+        isMirrored = try c.decodeIfPresent(Bool.self, forKey: .isMirrored) ?? false
+        noiseCleaned = try c.decodeIfPresent(Bool.self, forKey: .noiseCleaned) ?? false
+        trimStartSeconds = try c.decodeIfPresent(Double.self, forKey: .trimStartSeconds) ?? 0
+        trimEndSeconds = try c.decodeIfPresent(Double.self, forKey: .trimEndSeconds) ?? 0
+        lightingPassed = try c.decodeIfPresent(Bool.self, forKey: .lightingPassed) ?? false
+        framingPassed = try c.decodeIfPresent(Bool.self, forKey: .framingPassed) ?? false
+        soundPassed = try c.decodeIfPresent(Bool.self, forKey: .soundPassed) ?? false
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
+    }
 }
 
 nonisolated struct CueLine: Codable, Sendable, Hashable, Identifiable {
@@ -130,6 +243,40 @@ nonisolated struct CueLine: Codable, Sendable, Hashable, Identifiable {
     var audioFilePath: String? = nil
     var durationSeconds: Double = 0
     var isAutoDetected: Bool = false
+
+    var audioURL: URL? { MediaStorage.resolveURL(for: audioFilePath) }
+
+    init(
+        id: UUID = UUID(),
+        orderIndex: Int,
+        speaker: String,
+        cueText: String,
+        precedingActorLine: String = "",
+        audioFilePath: String? = nil,
+        durationSeconds: Double = 0,
+        isAutoDetected: Bool = false
+    ) {
+        self.id = id
+        self.orderIndex = orderIndex
+        self.speaker = speaker
+        self.cueText = cueText
+        self.precedingActorLine = precedingActorLine
+        self.audioFilePath = audioFilePath
+        self.durationSeconds = durationSeconds
+        self.isAutoDetected = isAutoDetected
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        orderIndex = try c.decodeIfPresent(Int.self, forKey: .orderIndex) ?? 0
+        speaker = try c.decodeIfPresent(String.self, forKey: .speaker) ?? ""
+        cueText = try c.decodeIfPresent(String.self, forKey: .cueText) ?? ""
+        precedingActorLine = try c.decodeIfPresent(String.self, forKey: .precedingActorLine) ?? ""
+        audioFilePath = try c.decodeIfPresent(String.self, forKey: .audioFilePath)
+        durationSeconds = try c.decodeIfPresent(Double.self, forKey: .durationSeconds) ?? 0
+        isAutoDetected = try c.decodeIfPresent(Bool.self, forKey: .isAutoDetected) ?? false
+    }
 }
 
 nonisolated struct ValidationRules: Codable, Sendable, Hashable {
@@ -140,18 +287,81 @@ nonisolated struct ValidationRules: Codable, Sendable, Hashable {
     var requiredPortrait: Bool? = nil
     var fileNamePattern: String = "ActorName_Role"
     var maxPerClipSizeMB: Double = 100.0
+
+    init(
+        isFromNotice: Bool = false,
+        requiredHeadshotRatio: HeadshotAspectRatio = .ratio4x5,
+        maxSlateSeconds: Double = 45.0,
+        maxClipSeconds: Double = 180.0,
+        requiredPortrait: Bool? = nil,
+        fileNamePattern: String = "ActorName_Role",
+        maxPerClipSizeMB: Double = 100.0
+    ) {
+        self.isFromNotice = isFromNotice
+        self.requiredHeadshotRatio = requiredHeadshotRatio
+        self.maxSlateSeconds = maxSlateSeconds
+        self.maxClipSeconds = maxClipSeconds
+        self.requiredPortrait = requiredPortrait
+        self.fileNamePattern = fileNamePattern
+        self.maxPerClipSizeMB = maxPerClipSizeMB
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        isFromNotice = try c.decodeIfPresent(Bool.self, forKey: .isFromNotice) ?? false
+        requiredHeadshotRatio = try c.decodeIfPresent(HeadshotAspectRatio.self, forKey: .requiredHeadshotRatio) ?? .ratio4x5
+        maxSlateSeconds = try c.decodeIfPresent(Double.self, forKey: .maxSlateSeconds) ?? 45.0
+        maxClipSeconds = try c.decodeIfPresent(Double.self, forKey: .maxClipSeconds) ?? 180.0
+        requiredPortrait = try c.decodeIfPresent(Bool.self, forKey: .requiredPortrait)
+        fileNamePattern = try c.decodeIfPresent(String.self, forKey: .fileNamePattern) ?? "ActorName_Role"
+        maxPerClipSizeMB = try c.decodeIfPresent(Double.self, forKey: .maxPerClipSizeMB) ?? 100.0
+    }
 }
 
 nonisolated struct PrivateShareLink: Codable, Sendable, Hashable {
     var urlString: String
     var createdAt: Date = .now
     var expiresAt: Date
+
+    init(
+        urlString: String,
+        createdAt: Date = .now,
+        expiresAt: Date
+    ) {
+        self.urlString = urlString
+        self.createdAt = createdAt
+        self.expiresAt = expiresAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        urlString = try c.decodeIfPresent(String.self, forKey: .urlString) ?? ""
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
+        expiresAt = try c.decodeIfPresent(Date.self, forKey: .expiresAt) ?? .now
+    }
 }
 
 nonisolated struct DeliveryAnnotation: Codable, Sendable, Hashable, Identifiable {
     var id: UUID = UUID()
     var text: String
     var kind: AnnotationKind = .normal
+
+    init(
+        id: UUID = UUID(),
+        text: String,
+        kind: AnnotationKind = .normal
+    ) {
+        self.id = id
+        self.text = text
+        self.kind = kind
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+        kind = try c.decodeIfPresent(AnnotationKind.self, forKey: .kind) ?? .normal
+    }
 }
 
 /// Timestamped recognizer output retained with a saved practice run.
@@ -160,6 +370,26 @@ nonisolated struct RecognizedPracticeWord: Codable, Sendable, Hashable, Identifi
     var text: String
     var timestamp: Double
     var duration: Double
+
+    init(
+        id: UUID = UUID(),
+        text: String,
+        timestamp: Double,
+        duration: Double
+    ) {
+        self.id = id
+        self.text = text
+        self.timestamp = timestamp
+        self.duration = duration
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+        timestamp = try c.decodeIfPresent(Double.self, forKey: .timestamp) ?? 0
+        duration = try c.decodeIfPresent(Double.self, forKey: .duration) ?? 0
+    }
 }
 
 nonisolated struct PracticeSession: Codable, Sendable, Hashable, Identifiable {
@@ -179,9 +409,61 @@ nonisolated struct PracticeSession: Codable, Sendable, Hashable, Identifiable {
     var clueTokenIDs: [Int] = []
     var audioFilePath: String? = nil
 
+    var audioURL: URL? { MediaStorage.resolveURL(for: audioFilePath) }
+
     var helpLevel: HelpLevel {
         get { HelpLevel(rawValue: helpLevelRaw) ?? .nothing }
         set { helpLevelRaw = newValue.rawValue }
+    }
+
+    init(
+        id: UUID = UUID(),
+        sessionNumber: Int,
+        date: Date = Date(),
+        durationSeconds: Double = 0,
+        helpLevelRaw: String = HelpLevel.nothing.rawValue,
+        skippedCount: Int = 0,
+        forgotCount: Int = 0,
+        hesitatedCount: Int = 0,
+        notInScriptCount: Int = 0,
+        annotations: [DeliveryAnnotation] = [],
+        transcript: String = "",
+        recognizedWords: [RecognizedPracticeWord] = [],
+        clueTokenIDs: [Int] = [],
+        audioFilePath: String? = nil
+    ) {
+        self.id = id
+        self.sessionNumber = sessionNumber
+        self.date = date
+        self.durationSeconds = durationSeconds
+        self.helpLevelRaw = helpLevelRaw
+        self.skippedCount = skippedCount
+        self.forgotCount = forgotCount
+        self.hesitatedCount = hesitatedCount
+        self.notInScriptCount = notInScriptCount
+        self.annotations = annotations
+        self.transcript = transcript
+        self.recognizedWords = recognizedWords
+        self.clueTokenIDs = clueTokenIDs
+        self.audioFilePath = audioFilePath
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        sessionNumber = try c.decodeIfPresent(Int.self, forKey: .sessionNumber) ?? 0
+        date = try c.decodeIfPresent(Date.self, forKey: .date) ?? Date()
+        durationSeconds = try c.decodeIfPresent(Double.self, forKey: .durationSeconds) ?? 0
+        helpLevelRaw = try c.decodeIfPresent(String.self, forKey: .helpLevelRaw) ?? HelpLevel.nothing.rawValue
+        skippedCount = try c.decodeIfPresent(Int.self, forKey: .skippedCount) ?? 0
+        forgotCount = try c.decodeIfPresent(Int.self, forKey: .forgotCount) ?? 0
+        hesitatedCount = try c.decodeIfPresent(Int.self, forKey: .hesitatedCount) ?? 0
+        notInScriptCount = try c.decodeIfPresent(Int.self, forKey: .notInScriptCount) ?? 0
+        annotations = try c.decodeIfPresent([DeliveryAnnotation].self, forKey: .annotations) ?? []
+        transcript = try c.decodeIfPresent(String.self, forKey: .transcript) ?? ""
+        recognizedWords = try c.decodeIfPresent([RecognizedPracticeWord].self, forKey: .recognizedWords) ?? []
+        clueTokenIDs = try c.decodeIfPresent([Int].self, forKey: .clueTokenIDs) ?? []
+        audioFilePath = try c.decodeIfPresent(String.self, forKey: .audioFilePath)
     }
 }
 
@@ -283,23 +565,34 @@ final class Audition {
     }
 
     var selectedSlateTake: VideoTake? {
-        slateTakes.first { $0.id == selectedSlateTakeID } ?? slateTakes.last
+        if let id = selectedSlateTakeID {
+            return slateTakes.first { $0.id == id }
+        }
+        return slateTakes.last
     }
 
     var selectedAuditionTake: VideoTake? {
-        auditionTakes.first { $0.id == selectedAuditionTakeID } ?? auditionTakes.last
+        if let id = selectedAuditionTakeID {
+            return auditionTakes.first { $0.id == id }
+        }
+        return auditionTakes.last
     }
 
     var isHeadshotsReady: Bool {
-        headshots.count >= 3
+        HeadshotAngle.allCases.allSatisfy { angle in
+            guard let h = headshot(for: angle) else { return false }
+            return MediaStorage.fileExists(at: h.croppedFilePath) || MediaStorage.fileExists(at: h.originalFilePath)
+        }
     }
 
     var isSlateReady: Bool {
-        selectedSlateTake != nil
+        guard let take = selectedSlateTake else { return false }
+        return MediaStorage.fileExists(at: take.filePath)
     }
 
     var isAuditionReady: Bool {
-        selectedAuditionTake != nil
+        guard let take = selectedAuditionTake else { return false }
+        return MediaStorage.fileExists(at: take.filePath)
     }
 
     var packageReadyCount: Int {
