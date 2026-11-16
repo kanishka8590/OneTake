@@ -265,6 +265,14 @@ struct AuditionsListView: View {
 
     // MARK: - Toolbar Controls
 
+    private var filterTintColor: Color {
+        switch selectedFilter {
+        case .active: return Theme.Colors.accent
+        case .sent: return Theme.Colors.successGreen
+        case .all: return Theme.Colors.warningAmber
+        }
+    }
+
     private var filterToolbarMenu: some View {
         Menu {
             Picker("Filter", selection: $selectedFilter) {
@@ -273,9 +281,9 @@ struct AuditionsListView: View {
                 }
             }
         } label: {
-            Image(systemName: selectedFilter == .active ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle")
+            Image(systemName: "line.3.horizontal.decrease")
                 .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(Theme.Colors.accent)
+                .foregroundStyle(filterTintColor)
         }
         .accessibilityLabel("Filter auditions")
         .accessibilityValue(selectedFilter.rawValue)
