@@ -28,16 +28,18 @@ struct HeadshotReviewView: View {
     @State private var leftScale: CGFloat = 1.0
     @State private var rightScale: CGFloat = 1.0
 
-    @State private var frontOffset: CGSize = .zero
-    @State private var leftOffset: CGSize = .zero
-    @State private var rightOffset: CGSize = .zero
+    // Resolution-independent pan offsets (fraction of crop container width/height)
+    @State private var frontOffsetRatio: CGSize = .zero
+    @State private var leftOffsetRatio: CGSize = .zero
+    @State private var rightOffsetRatio: CGSize = .zero
 
-    // Measured framing container size from GeometryReader
+    // Measured framing container size
     @State private var cropContainerSize: CGSize = CGSize(width: 300, height: 375)
 
     // Gesture tracking
     @State private var pinchScale: CGFloat = 1.0
     @State private var dragTranslation: CGSize = .zero
+    @State private var isInteractingWithCrop = false
 
     // Retake & save states
     @State private var showingSingleRetakeCamera = false
@@ -54,18 +56,29 @@ struct HeadshotReviewView: View {
                     .ignoresSafeArea()
 
                 ScrollView {
-                    VStack(spacing: 18) {
-                        angleSelectorChips
-                            .padding(.top, 8)
-                            .padding(.horizontal, 16)
-
+                    VStack(spacing: 16) {
                         aspectRatioChipsBar
+                            .padding(.top, 8)
                             .padding(.horizontal, 16)
 
                         cropFramingView
                             .padding(.horizontal, 20)
 
                         HStack {
+                            if currentScale > 1.01 || currentOffsetRatio != .zero {
+                                Button {
+                                    resetFramingForCurrentAngle()
+                                } label: {
+                                    Label("Reset Framing", systemImage: "arrow.counterclockwise")
+                                        .font(Theme.Typography.captionBadge)
+                                        .foregroundStyle(Theme.Colors.textSecondary)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 7)
+                                        .background(Theme.Colors.surfaceElevated)
+                                        .clipShape(Capsule())
+                                }
+                            }
+
                             Spacer()
 
                             Menu {
@@ -100,28 +113,7 @@ struct HeadshotReviewView: View {
                             .padding(.bottom, 16)
                     }
                 }
-                .safeAreaInset(edge: .bottom) {
-                    VStack(spacing: 0) {
-                        Divider()
-                        Button {
-                            saveAllHeadshots()
-                        } label: {
-                            if isSaving {
-                                ProgressView().tint(.white)
-                            } else {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "checkmark.circle")
-                                    Text("Save Headshots (\(savedReadyCount)/3 Ready)")
-                                }
-                                .primaryCapsuleButton()
-                            }
-                        }
-                        .disabled(isSaving || savedReadyCount < 3)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 14)
-                    }
-                    .background(Theme.Colors.canvasBackground)
-                }
+                .scrollDisabled(isInteractingWithCrop)
             }
             .navigationTitle("Review Headshots")
             .navigationBarTitleDisplayMode(.inline)
@@ -130,6 +122,20 @@ struct HeadshotReviewView: View {
                     Button("Close") {
                         dismiss()
                     }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        saveAllHeadshots()
+                    } label: {
+                        if isSaving {
+                            ProgressView()
+                        } else {
+                            Text("Save")
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    .disabled(isSaving || savedReadyCount < 3)
                 }
             }
             .onAppear {
@@ -172,43 +178,26 @@ struct HeadshotReviewView: View {
         }
     }
 
-    // MARK: - Current Angle Helpers
+    // MARK: - Current & Per-Angle Helpers
 
     private var currentImage: UIImage? {
-        switch selectedAngle {
-        case .front: return frontImage
-        case .left: return leftImage
-        case .right: return rightImage
-        }
+        imageForAngle(selectedAngle)
     }
 
     private var currentRatio: HeadshotAspectRatio {
-        switch selectedAngle {
-        case .front: return frontRatio
-        case .left: return leftRatio
-        case .right: return rightRatio
-        }
+        ratioForAngle(selectedAngle)
     }
 
     private var currentScale: CGFloat {
-        switch selectedAngle {
-        case .front: return frontScale
-        case .left: return leftScale
-        case .right: return rightScale
-        }
+        scaleForAngle(selectedAngle)
     }
 
-    private var currentOffset: CGSize {
-        switch selectedAngle {
-        case .front: return frontOffset
-        case .left: return leftOffset
-        case .right: return rightOffset
-        }
+    private var currentOffsetRatio: CGSize {
+        offsetRatioForAngle(selectedAngle)
     }
 
     private var frameAspectRatio: CGFloat {
-        let raw = HeadshotCropMath.targetAspect(for: currentRatio, imageSize: currentImage?.size)
-        return max(0.5, min(2.0, raw))
+        aspectRatioValue(for: selectedAngle)
     }
 
     private var savedReadyCount: Int {
@@ -219,48 +208,43 @@ struct HeadshotReviewView: View {
         return count
     }
 
-    // MARK: - Angle Selector Chips
-
-    private var angleSelectorChips: some View {
-        HStack(spacing: 8) {
-            ForEach(HeadshotAngle.allCases, id: \.self) { angle in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        selectedAngle = angle
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: imageForAngle(angle) != nil ? "checkmark.circle" : "circle.dashed")
-                            .font(.system(size: 13))
-                            .foregroundStyle(selectedAngle == angle ? Color.white : (imageForAngle(angle) != nil ? Theme.Colors.successGreen : Theme.Colors.textSecondary))
-
-                        Text(angleTitle(angle))
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(selectedAngle == angle ? Theme.Colors.primaryPlum : Theme.Colors.lavenderSurface)
-                    .foregroundStyle(selectedAngle == angle ? Color.white : Theme.Colors.textPrimary)
-                    .clipShape(Capsule())
-                }
-            }
-        }
-    }
-
-    private func angleTitle(_ angle: HeadshotAngle) -> String {
-        switch angle {
-        case .front: return "Front"
-        case .left: return "Left Profile"
-        case .right: return "Right Profile"
-        }
-    }
-
     private func imageForAngle(_ angle: HeadshotAngle) -> UIImage? {
         switch angle {
         case .front: return frontImage
         case .left: return leftImage
         case .right: return rightImage
         }
+    }
+
+    private func ratioForAngle(_ angle: HeadshotAngle) -> HeadshotAspectRatio {
+        switch angle {
+        case .front: return frontRatio
+        case .left: return leftRatio
+        case .right: return rightRatio
+        }
+    }
+
+    private func scaleForAngle(_ angle: HeadshotAngle) -> CGFloat {
+        switch angle {
+        case .front: return frontScale
+        case .left: return leftScale
+        case .right: return rightScale
+        }
+    }
+
+    private func offsetRatioForAngle(_ angle: HeadshotAngle) -> CGSize {
+        switch angle {
+        case .front: return frontOffsetRatio
+        case .left: return leftOffsetRatio
+        case .right: return rightOffsetRatio
+        }
+    }
+
+    private func aspectRatioValue(for angle: HeadshotAngle) -> CGFloat {
+        let ratio = ratioForAngle(angle)
+        let img = imageForAngle(angle)
+        let raw = HeadshotCropMath.targetAspect(for: ratio, imageSize: img?.size)
+        return max(0.5, min(2.0, raw))
     }
 
     // MARK: - Inline Aspect Ratio Chips (4:5, 2:3, 1:1, Free)
@@ -273,7 +257,7 @@ struct HeadshotReviewView: View {
 
             ForEach([HeadshotAspectRatio.ratio4x5, .ratio2x3, .ratio1x1, .free], id: \.self) { ratio in
                 Button {
-                    withAnimation {
+                    withAnimation(.snappy(duration: 0.25)) {
                         setRatioForCurrentAngle(ratio)
                         resetFramingForCurrentAngle()
                     }
@@ -302,9 +286,13 @@ struct HeadshotReviewView: View {
             if let img = currentImage {
                 GeometryReader { geo in
                     let effectiveScale = max(1.0, min(3.5, currentScale * pinchScale))
+                    let basePixelOffset = CGSize(
+                        width: currentOffsetRatio.width * geo.size.width,
+                        height: currentOffsetRatio.height * geo.size.height
+                    )
                     let proposedOffset = CGSize(
-                        width: currentOffset.width + dragTranslation.width,
-                        height: currentOffset.height + dragTranslation.height
+                        width: basePixelOffset.width + dragTranslation.width,
+                        height: basePixelOffset.height + dragTranslation.height
                     )
                     let liveClampedOffset = HeadshotCropMath.clampedOffset(
                         proposedOffset,
@@ -320,44 +308,63 @@ struct HeadshotReviewView: View {
                         .scaleEffect(effectiveScale)
                         .offset(x: liveClampedOffset.width, y: liveClampedOffset.height)
                         .contentShape(Rectangle())
-                        .gesture(
+                        .highPriorityGesture(
                             SimultaneousGesture(
                                 MagnificationGesture()
                                     .onChanged { scale in
+                                        isInteractingWithCrop = true
                                         pinchScale = scale
                                     }
                                     .onEnded { scale in
                                         let finalScale = max(1.0, min(3.5, currentScale * scale))
-                                        setScaleForCurrentAngle(finalScale)
+                                        let activeOffset = CGSize(
+                                            width: currentOffsetRatio.width * geo.size.width + dragTranslation.width,
+                                            height: currentOffsetRatio.height * geo.size.height + dragTranslation.height
+                                        )
                                         let clamped = HeadshotCropMath.clampedOffset(
-                                            currentOffset,
+                                            activeOffset,
                                             imageSize: img.size,
                                             containerSize: geo.size,
                                             scale: finalScale
                                         )
-                                        setOffsetForCurrentAngle(clamped)
+                                        setScaleForCurrentAngle(finalScale)
+                                        setOffsetRatioForCurrentAngle(CGSize(
+                                            width: clamped.width / max(1, geo.size.width),
+                                            height: clamped.height / max(1, geo.size.height)
+                                        ))
                                         pinchScale = 1.0
+                                        dragTranslation = .zero
+                                        isInteractingWithCrop = false
                                     },
-                                DragGesture()
+                                DragGesture(minimumDistance: 2)
                                     .onChanged { val in
+                                        isInteractingWithCrop = true
                                         dragTranslation = val.translation
                                     }
                                     .onEnded { val in
+                                        let activeScale = max(1.0, min(3.5, currentScale * pinchScale))
                                         let rawOffset = CGSize(
-                                            width: currentOffset.width + val.translation.width,
-                                            height: currentOffset.height + val.translation.height
+                                            width: currentOffsetRatio.width * geo.size.width + val.translation.width,
+                                            height: currentOffsetRatio.height * geo.size.height + val.translation.height
                                         )
                                         let clamped = HeadshotCropMath.clampedOffset(
                                             rawOffset,
                                             imageSize: img.size,
                                             containerSize: geo.size,
-                                            scale: currentScale
+                                            scale: activeScale
                                         )
-                                        setOffsetForCurrentAngle(clamped)
+                                        setOffsetRatioForCurrentAngle(CGSize(
+                                            width: clamped.width / max(1, geo.size.width),
+                                            height: clamped.height / max(1, geo.size.height)
+                                        ))
                                         dragTranslation = .zero
+                                        isInteractingWithCrop = false
                                     }
                             )
                         )
+                        .onTapGesture(count: 2) {
+                            resetFramingForCurrentAngle()
+                        }
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                         .onAppear {
                             cropContainerSize = geo.size
@@ -382,9 +389,10 @@ struct HeadshotReviewView: View {
                 }
             }
         }
-        .frame(maxHeight: 370)
+        .frame(maxHeight: 390)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: Color.black.opacity(0.12), radius: 10, x: 0, y: 4)
+        .animation(.snappy(duration: 0.25), value: currentRatio)
     }
 
     private var gridOverlay: some View {
@@ -407,47 +415,86 @@ struct HeadshotReviewView: View {
         }
     }
 
-    // MARK: - 3-Angle Mini Preview Bar
+    // MARK: - 3-Angle Fluid Live Mini Preview Bar
 
     private var threeAngleMiniBar: some View {
         HStack(spacing: 12) {
-            miniSlotView(title: "Front", angle: .front, image: frontImage)
-            miniSlotView(title: "Left", angle: .left, image: leftImage)
-            miniSlotView(title: "Right", angle: .right, image: rightImage)
+            miniSlotView(title: "Front", angle: .front)
+            miniSlotView(title: "Left Profile", angle: .left)
+            miniSlotView(title: "Right Profile", angle: .right)
         }
         .padding(10)
         .cardStyle()
     }
 
-    private func miniSlotView(title: String, angle: HeadshotAngle, image: UIImage?) -> some View {
-        Button {
-            withAnimation { selectedAngle = angle }
-        } label: {
-            VStack(spacing: 4) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Theme.Colors.lavenderSurface)
-                        .aspectRatio(4.0 / 5.0, contentMode: .fit)
+    private func miniSlotView(title: String, angle: HeadshotAngle) -> some View {
+        let image = imageForAngle(angle)
+        let isSelected = (selectedAngle == angle)
+        let angleAspect = aspectRatioValue(for: angle)
+        let baseScale = scaleForAngle(angle)
+        let baseOffsetRatio = offsetRatioForAngle(angle)
 
-                    if let img = image {
-                        Image(uiImage: img)
-                            .resizable()
-                            .scaledToFill()
+        let liveScale = isSelected ? max(1.0, min(3.5, baseScale * pinchScale)) : baseScale
+        let liveDragRatioX = isSelected ? (dragTranslation.width / max(1, cropContainerSize.width)) : 0
+        let liveDragRatioY = isSelected ? (dragTranslation.height / max(1, cropContainerSize.height)) : 0
+
+        return Button {
+            withAnimation(.snappy(duration: 0.22)) {
+                pinchScale = 1.0
+                dragTranslation = .zero
+                isInteractingWithCrop = false
+                selectedAngle = angle
+            }
+        } label: {
+            VStack(spacing: 6) {
+                ZStack {
+                    Color.clear
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 112)
+
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Theme.Colors.lavenderSurface)
+
+                        if let img = image {
+                            GeometryReader { miniGeo in
+                                let proposed = CGSize(
+                                    width: (baseOffsetRatio.width + liveDragRatioX) * miniGeo.size.width,
+                                    height: (baseOffsetRatio.height + liveDragRatioY) * miniGeo.size.height
+                                )
+                                let clampedMiniOffset = HeadshotCropMath.clampedOffset(
+                                    proposed,
+                                    imageSize: img.size,
+                                    containerSize: miniGeo.size,
+                                    scale: liveScale
+                                )
+
+                                Image(uiImage: img)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: miniGeo.size.width, height: miniGeo.size.height)
+                                    .scaleEffect(liveScale)
+                                    .offset(x: clampedMiniOffset.width, y: clampedMiniOffset.height)
+                            }
                             .clipShape(RoundedRectangle(cornerRadius: 8))
-                    } else {
-                        Image(systemName: "camera")
-                            .font(.system(size: 14))
-                            .foregroundStyle(Theme.Colors.textSecondary)
+                        } else {
+                            Image(systemName: "camera")
+                                .font(.system(size: 14))
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                        }
                     }
+                    .aspectRatio(angleAspect, contentMode: .fit)
+                    .frame(maxHeight: 112)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(isSelected ? Theme.Colors.accent : Color.clear, lineWidth: 2)
+                    )
                 }
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(selectedAngle == angle ? Theme.Colors.accent : Color.clear, lineWidth: 2)
-                )
 
                 Text(title)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(selectedAngle == angle ? Theme.Colors.accent : Theme.Colors.textSecondary)
+                    .font(.system(size: 11, weight: isSelected ? .bold : .medium))
+                    .foregroundStyle(isSelected ? Theme.Colors.accent : Theme.Colors.textSecondary)
+                    .lineLimit(1)
             }
         }
         .buttonStyle(.plain)
@@ -471,18 +518,20 @@ struct HeadshotReviewView: View {
         }
     }
 
-    private func setOffsetForCurrentAngle(_ offset: CGSize) {
+    private func setOffsetRatioForCurrentAngle(_ offsetRatio: CGSize) {
         switch selectedAngle {
-        case .front: frontOffset = offset
-        case .left: leftOffset = offset
-        case .right: rightOffset = offset
+        case .front: frontOffsetRatio = offsetRatio
+        case .left: leftOffsetRatio = offsetRatio
+        case .right: rightOffsetRatio = offsetRatio
         }
     }
 
     private func resetFramingForCurrentAngle() {
-        withAnimation {
+        withAnimation(.snappy(duration: 0.25)) {
             setScaleForCurrentAngle(1.0)
-            setOffsetForCurrentAngle(.zero)
+            setOffsetRatioForCurrentAngle(.zero)
+            pinchScale = 1.0
+            dragTranslation = .zero
         }
     }
 
@@ -513,14 +562,20 @@ struct HeadshotReviewView: View {
         if frontImage == nil, let asset = sourceAssets.first(where: { $0.angle == .front }) {
             frontImage = loadResolvedImage(for: asset)
             frontRatio = asset.aspectRatio
+            frontScale = max(1.0, asset.cropScale)
+            frontOffsetRatio = CGSize(width: asset.cropOffsetRatioX, height: asset.cropOffsetRatioY)
         }
         if leftImage == nil, let asset = sourceAssets.first(where: { $0.angle == .left }) {
             leftImage = loadResolvedImage(for: asset)
             leftRatio = asset.aspectRatio
+            leftScale = max(1.0, asset.cropScale)
+            leftOffsetRatio = CGSize(width: asset.cropOffsetRatioX, height: asset.cropOffsetRatioY)
         }
         if rightImage == nil, let asset = sourceAssets.first(where: { $0.angle == .right }) {
             rightImage = loadResolvedImage(for: asset)
             rightRatio = asset.aspectRatio
+            rightScale = max(1.0, asset.cropScale)
+            rightOffsetRatio = CGSize(width: asset.cropOffsetRatioX, height: asset.cropOffsetRatioY)
         }
     }
 
@@ -541,37 +596,41 @@ struct HeadshotReviewView: View {
         isSaving = true
 
         let auditionID = audition.id
-        let containerSize = cropContainerSize
         let items: [(HeadshotAngle, UIImage, HeadshotAspectRatio, CGFloat, CGSize)] = [
-            (.front, front, frontRatio, frontScale, frontOffset),
-            (.left, left, leftRatio, leftScale, leftOffset),
-            (.right, right, rightRatio, rightScale, rightOffset)
+            (.front, front, frontRatio, frontScale, frontOffsetRatio),
+            (.left, left, leftRatio, leftScale, leftOffsetRatio),
+            (.right, right, rightRatio, rightScale, rightOffsetRatio)
         ]
 
         Task {
             do {
                 var newAssets: [HeadshotAsset] = []
 
-                for (angle, orig, ratio, scale, offset) in items {
+                for (angle, orig, ratio, scale, offsetRatio) in items {
                     let evaluation = await HeadshotGuidanceService.shared.evaluateImage(orig, for: angle)
 
                     let (origRel, cropRel) = try await Task.detached(priority: .userInitiated) {
                         let uprightOrig = HeadshotCropMath.normalizedImage(orig)
                         let targetAspect = HeadshotCropMath.targetAspect(for: ratio, imageSize: uprightOrig.size)
+                        let refWidth: CGFloat = 300.0
                         let targetContainer = CGSize(
-                            width: containerSize.width > 0 ? containerSize.width : 300,
-                            height: (containerSize.width > 0 ? containerSize.width : 300) / max(0.25, targetAspect)
+                            width: refWidth,
+                            height: refWidth / max(0.25, targetAspect)
+                        )
+                        let pixelOffset = CGSize(
+                            width: offsetRatio.width * targetContainer.width,
+                            height: offsetRatio.height * targetContainer.height
                         )
                         let cropped = HeadshotCropMath.renderCroppedImage(
                             uprightOrig,
                             containerSize: targetContainer,
                             targetAspect: targetAspect,
                             scale: scale,
-                            offset: offset
+                            offset: pixelOffset
                         )
 
                         guard let origData = uprightOrig.jpegData(compressionQuality: 0.9),
-                              let cropData = cropped.jpegData(compressionQuality: 0.9) else {
+                              let cropData = cropped.jpegData(compressionQuality: 0.92) else {
                             throw CocoaError(.fileWriteUnknown)
                         }
 
@@ -592,6 +651,9 @@ struct HeadshotReviewView: View {
                         croppedFilePath: cropRel,
                         aspectRatio: ratio,
                         cropPreset: .theatrical,
+                        cropScale: Double(scale),
+                        cropOffsetRatioX: Double(offsetRatio.width),
+                        cropOffsetRatioY: Double(offsetRatio.height),
                         lightingPassed: evaluation.lighting == .good,
                         backgroundPassed: evaluation.background == .clean,
                         alignmentPassed: evaluation.isFaceCentered && evaluation.isAngleCorrect,

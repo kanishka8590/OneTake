@@ -154,6 +154,9 @@ nonisolated struct HeadshotAsset: Codable, Sendable, Hashable {
     var croppedFilePath: String
     var aspectRatio: HeadshotAspectRatio = .ratio4x5
     var cropPreset: HeadshotCropPreset? = nil
+    var cropScale: Double = 1.0
+    var cropOffsetRatioX: Double = 0.0
+    var cropOffsetRatioY: Double = 0.0
     var lightingPassed: Bool = false
     var backgroundPassed: Bool = false
     var alignmentPassed: Bool = false
@@ -169,6 +172,9 @@ nonisolated struct HeadshotAsset: Codable, Sendable, Hashable {
         croppedFilePath: String,
         aspectRatio: HeadshotAspectRatio = .ratio4x5,
         cropPreset: HeadshotCropPreset? = nil,
+        cropScale: Double = 1.0,
+        cropOffsetRatioX: Double = 0.0,
+        cropOffsetRatioY: Double = 0.0,
         lightingPassed: Bool = false,
         backgroundPassed: Bool = false,
         alignmentPassed: Bool = false,
@@ -180,6 +186,9 @@ nonisolated struct HeadshotAsset: Codable, Sendable, Hashable {
         self.croppedFilePath = croppedFilePath
         self.aspectRatio = aspectRatio
         self.cropPreset = cropPreset
+        self.cropScale = cropScale
+        self.cropOffsetRatioX = cropOffsetRatioX
+        self.cropOffsetRatioY = cropOffsetRatioY
         self.lightingPassed = lightingPassed
         self.backgroundPassed = backgroundPassed
         self.alignmentPassed = alignmentPassed
@@ -194,6 +203,9 @@ nonisolated struct HeadshotAsset: Codable, Sendable, Hashable {
         croppedFilePath = try c.decodeIfPresent(String.self, forKey: .croppedFilePath) ?? ""
         aspectRatio = try c.decodeIfPresent(HeadshotAspectRatio.self, forKey: .aspectRatio) ?? .ratio4x5
         cropPreset = try c.decodeIfPresent(HeadshotCropPreset.self, forKey: .cropPreset)
+        cropScale = try c.decodeIfPresent(Double.self, forKey: .cropScale) ?? 1.0
+        cropOffsetRatioX = try c.decodeIfPresent(Double.self, forKey: .cropOffsetRatioX) ?? 0.0
+        cropOffsetRatioY = try c.decodeIfPresent(Double.self, forKey: .cropOffsetRatioY) ?? 0.0
         lightingPassed = try c.decodeIfPresent(Bool.self, forKey: .lightingPassed) ?? false
         backgroundPassed = try c.decodeIfPresent(Bool.self, forKey: .backgroundPassed) ?? false
         alignmentPassed = try c.decodeIfPresent(Bool.self, forKey: .alignmentPassed) ?? false
