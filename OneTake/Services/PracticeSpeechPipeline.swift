@@ -198,20 +198,51 @@ struct PracticeScriptModel {
         for (index, raw) in text.components(separatedBy: .newlines).enumerated() {
             let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             if let spokenLine = splitSpeakerAndDialogue(in: value) {
-                speaker = spokenLine.speaker
+                speaker = normalizeSpeakerName(spokenLine.speaker)
                 output.append(PracticeLine(id: index, speaker: speaker, text: spokenLine.dialogue, isHeader: false, isCue: false))
                 continue
             }
             let header = !value.isEmpty && value == value.uppercased() &&
                 value.range(of: "[A-Z]", options: .regularExpression) != nil && value.count < 48
             if header {
-                speaker = value.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ":")))
-                output.append(PracticeLine(id: index, speaker: speaker, text: value, isHeader: true, isCue: false))
+                let cleanedHeader = value.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ":")))
+                if isNonSpeakerHeader(cleanedHeader) {
+                    output.append(PracticeLine(id: index, speaker: speaker, text: value, isHeader: true, isCue: false))
+                } else {
+                    speaker = normalizeSpeakerName(cleanedHeader)
+                    output.append(PracticeLine(id: index, speaker: speaker, text: value, isHeader: true, isCue: false))
+                }
             } else if !value.isEmpty {
                 output.append(PracticeLine(id: index, speaker: speaker, text: value, isHeader: false, isCue: false))
             }
         }
         return output
+    }
+
+    private static func normalizeSpeakerName(_ raw: String) -> String {
+        raw
+            .replacingOccurrences(of: "–", with: "-")
+            .replacingOccurrences(of: "—", with: "-")
+            .replacingOccurrences(of: #"\s*-\s*"#, with: "-", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isNonSpeakerHeader(_ upperHeader: String) -> Bool {
+        let upper = upperHeader.uppercased()
+        if upper.hasPrefix("INT.") || upper.hasPrefix("EXT.") || upper.hasPrefix("INT/EXT") || upper.hasPrefix("I/E.") {
+            return true
+        }
+        if upper == "FADE IN" || upper == "FADE OUT" || upper.hasPrefix("CUT TO") || upper.hasPrefix("DISSOLVE TO") || upper == "(CONTINUED)" || upper == "CONTINUED" || upper == "SONGS & SCENES" {
+            return true
+        }
+        if upper.contains(",") || upper.contains("&") || upper.contains("THE MUSICAL") {
+            return true
+        }
+        if upper.range(of: #"^(?:ACT|SCENE)\s+(?:ONE|TWO|THREE|FOUR|FIVE|SIX|SEVEN|EIGHT|I|II|III|IV|V|\d+)\b"#, options: .regularExpression) != nil {
+            return true
+        }
+        return false
     }
 
     private static let genericSpeakerNames: Set<String> = ["", "SCRIPT", "ACTOR"]
