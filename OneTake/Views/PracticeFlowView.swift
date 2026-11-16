@@ -6,16 +6,46 @@ import UIKit
 
 // MARK: - Script source and cue editor
 
+func autoDetectCueLines(from scriptText: String) -> [CueLine] {
+    let parsedLines = PracticeScriptModel.parse(scriptText)
+    let dialogueLines = parsedLines.filter { !$0.isHeader && !$0.text.isEmpty }
+    var speakers: [String] = []
+    for line in dialogueLines {
+        let normalized = line.speaker.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if !normalized.isEmpty && normalized != "SCRIPT" && !speakers.contains(normalized) {
+            speakers.append(normalized)
+        }
+    }
+    guard speakers.count >= 2 else { return [] }
+    let primarySpeaker = speakers.first
+    var cues: [CueLine] = []
+    for (index, line) in dialogueLines.enumerated() {
+        let speaker = line.speaker.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if !speaker.isEmpty && speaker != "SCRIPT" && speaker != primarySpeaker {
+            let previous = index > 0 && dialogueLines[index - 1].speaker.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == primarySpeaker ? dialogueLines[index - 1].text : ""
+            cues.append(CueLine(
+                orderIndex: cues.count,
+                speaker: line.speaker.isEmpty ? "READER" : line.speaker,
+                cueText: line.text,
+                precedingActorLine: previous,
+                isAutoDetected: true
+            ))
+        }
+    }
+    return cues
+}
+
 struct PracticeASceneSheet: View {
     let appState: AppState
     @Binding var isPresented: Bool
     let onScriptReady: (PracticeScript) -> Void
 
-    @State private var showingEntry = false
-    @State private var entryTitle = ""
-    @State private var entryText = ""
-    @State private var entryLanguage: ScriptLanguage = .english
-    @State private var showingCueSelection = false
+    @State private var sceneTitle = ""
+    @State private var dialogueText = ""
+    @State private var language: ScriptLanguage = .english
+    @State private var autoDetectCues = true
+    @State private var customCues: [CueLine]? = nil
+    @State private var showingCueCustomizer = false
 
     @State private var showingPhotoPicker = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
@@ -28,67 +58,153 @@ struct PracticeASceneSheet: View {
     @State private var importErrorMessage: String?
     @State private var showingImportError = false
 
+    private var detectedCuesCount: Int {
+        if let custom = customCues {
+            return custom.count
+        }
+        if autoDetectCues {
+            return autoDetectCueLines(from: dialogueText).count
+        }
+        return 0
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
-                List {
-                    Section("Practice a scene") {
-                        Button {
-                            showingPhotoPicker = true
-                        } label: {
-                            Label("Photos", systemImage: "photo.on.rectangle")
-                        }
+                Theme.Colors.canvasBackground
+                    .ignoresSafeArea()
 
-                        Button {
-                            showingDocumentScanner = true
-                        } label: {
-                            Label("Scan pages", systemImage: "doc.viewfinder")
-                        }
+                Form {
+                    Section {
+                        TextField("Scene Title, e.g. Succession S2E10", text: $sceneTitle)
+                            .font(.system(size: 16))
 
-                        Button {
-                            showingFileImporter = true
-                        } label: {
-                            Label("PDF or file", systemImage: "doc.badge.plus")
-                        }
-
-                        Button {
-                            entryTitle = ""
-                            entryText = ""
-                            showingEntry = true
-                        } label: {
-                            Label("Type it in", systemImage: "keyboard")
-                        }
-                    }
-
-                    Section("Script language") {
-                        Picker("Language", selection: $entryLanguage) {
-                            ForEach(ScriptLanguage.allCases, id: \.self) { language in
-                                Text(language.rawValue).tag(language)
+                        Picker("Language", selection: $language) {
+                            ForEach(ScriptLanguage.allCases, id: \.self) { lang in
+                                Text(lang.rawValue).tag(lang)
                             }
                         }
                         .pickerStyle(.segmented)
+                    } header: {
+                        Text("Scene Details")
                     }
 
-                    Section("From an audition") {
-                        if appState.auditions.filter({ !$0.scriptLines.isEmpty }).isEmpty {
-                            Text("No recent sides").foregroundStyle(Theme.Colors.textSecondary)
+                    Section {
+                        HStack(spacing: 8) {
+                            quickImportButton(title: "Photos", icon: "photo.on.rectangle") {
+                                showingPhotoPicker = true
+                            }
+                            quickImportButton(title: "Scan", icon: "doc.viewfinder") {
+                                showingDocumentScanner = true
+                            }
+                            quickImportButton(title: "File", icon: "doc.badge.plus") {
+                                showingFileImporter = true
+                            }
+                            quickImportButton(title: "Paste", icon: "doc.on.clipboard") {
+                                pasteFromClipboard()
+                            }
                         }
-                        ForEach(appState.auditions.filter { !$0.scriptLines.isEmpty }) { audition in
-                            Button {
-                                // Audition-side cues were already explicitly configured;
-                                // do not run heuristic detection over them again.
-                                let script = PracticeScript(
-                                    title: "\(audition.projectName) — \(audition.roleName)",
-                                    sourceAuditionID: audition.id,
-                                    languageRaw: entryLanguage.rawValue,
-                                    rawText: audition.scriptText ?? "",
-                                    cueLines: audition.cueLines
-                                )
-                                appState.addPracticeScript(script)
-                                isPresented = false
-                                onScriptReady(script)
-                            } label: {
-                                Label(audition.projectName, systemImage: "film")
+                        .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+                        .listRowBackground(Color.clear)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("Script Dialogue")
+                                    .font(Theme.Typography.captionBadge)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+
+                                Spacer()
+
+                                if !dialogueText.isEmpty {
+                                    Text("\(dialogueText.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count) lines")
+                                        .font(Theme.Typography.captionBadge)
+                                        .foregroundStyle(Theme.Colors.textSecondary)
+
+                                    Button("Clear") {
+                                        dialogueText = ""
+                                        customCues = nil
+                                    }
+                                    .font(Theme.Typography.captionBadge)
+                                    .foregroundStyle(Theme.Colors.accent)
+                                    .padding(.leading, 4)
+                                }
+                            }
+
+                            TextEditor(text: $dialogueText)
+                                .frame(minHeight: 160, maxHeight: 220)
+                                .overlay(alignment: .topLeading) {
+                                    if dialogueText.isEmpty {
+                                        Text("Paste or type dialogue here…\n\nLOGAN\nYou have to be a killer.\n\nKENDALL\nI'm not a killer.")
+                                            .font(.system(size: 15))
+                                            .foregroundStyle(Theme.Colors.textSecondary.opacity(0.6))
+                                            .padding(6)
+                                            .allowsHitTesting(false)
+                                    }
+                                }
+                        }
+                    } header: {
+                        Text("Script & Import")
+                    } footer: {
+                        Text("Include character names in ALL CAPS before dialogue lines to enable automatic cue detection.")
+                            .font(Theme.Typography.captionBadge)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                    }
+
+                    Section {
+                        Toggle("Auto-detect Scene Partner Cues", isOn: $autoDetectCues)
+                            .tint(Theme.Colors.accent)
+                            .onChange(of: autoDetectCues) { _, _ in
+                                customCues = nil
+                            }
+
+                        if autoDetectCues || customCues != nil {
+                            HStack {
+                                Image(systemName: "person.2.wave.2")
+                                    .foregroundStyle(Theme.Colors.accent)
+                                Text(customCues != nil ? "\(customCues!.count) customized cues" : "\(detectedCuesCount) partner cues detected")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+
+                                Spacer()
+
+                                Button("Customize") {
+                                    showingCueCustomizer = true
+                                }
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Theme.Colors.accent)
+                                .disabled(dialogueText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
+                        }
+                    } header: {
+                        Text("Scene Partner Cues")
+                    }
+
+                    let auditionsWithSides = appState.auditions.filter { !$0.scriptLines.isEmpty }
+                    if !auditionsWithSides.isEmpty {
+                        Section("From an Audition") {
+                            ForEach(auditionsWithSides) { audition in
+                                Button {
+                                    sceneTitle = "\(audition.projectName) — \(audition.roleName)"
+                                    dialogueText = audition.scriptText ?? ""
+                                    customCues = audition.cueLines
+                                } label: {
+                                    HStack {
+                                        Image(systemName: "film")
+                                            .foregroundStyle(Theme.Colors.accent)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(audition.projectName)
+                                                .font(.system(size: 15, weight: .semibold))
+                                                .foregroundStyle(Theme.Colors.textPrimary)
+                                            Text("Role: \(audition.roleName)")
+                                                .font(.system(size: 13))
+                                                .foregroundStyle(Theme.Colors.textSecondary)
+                                        }
+                                        Spacer()
+                                        Image(systemName: "arrow.down.doc")
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(Theme.Colors.textSecondary)
+                                    }
+                                }
                             }
                         }
                     }
@@ -96,7 +212,7 @@ struct PracticeASceneSheet: View {
 
                 if isImporting {
                     ZStack {
-                        Color.black.opacity(0.18).ignoresSafeArea()
+                        Color.black.opacity(0.25).ignoresSafeArea()
                         VStack(spacing: 12) {
                             ProgressView().controlSize(.large).tint(Theme.Colors.accent)
                             Text("Extracting Script…")
@@ -112,8 +228,22 @@ struct PracticeASceneSheet: View {
                     }
                 }
             }
-            .navigationTitle("Practice a scene").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { isPresented = false } } }
+            .navigationTitle("Add Practice Scene")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        isPresented = false
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save Scene") {
+                        saveScene()
+                    }
+                    .fontWeight(.bold)
+                    .disabled(dialogueText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
             .photosPicker(
                 isPresented: $showingPhotoPicker,
                 selection: $selectedPhotoItems,
@@ -146,61 +276,84 @@ struct PracticeASceneSheet: View {
             ) { result in
                 handleFileImport(result)
             }
+            .sheet(isPresented: $showingCueCustomizer) {
+                let initial = customCues ?? (autoDetectCues ? autoDetectCueLines(from: dialogueText) : [])
+                PracticeAuditionCueSelectionView(
+                    scriptText: dialogueText,
+                    initialCues: initial
+                ) { cues in
+                    customCues = cues
+                    showingCueCustomizer = false
+                }
+            }
             .alert("Import Failed", isPresented: $showingImportError) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(importErrorMessage ?? "Unable to extract script text from the selected source.")
             }
-            .sheet(isPresented: $showingEntry) { entrySheet }
-            .sheet(isPresented: $showingCueSelection) { cueSelectionSheet }
         }
     }
 
-    private var entrySheet: some View {
-        NavigationStack {
-            Form {
-                Section("Scene details") {
-                    TextField("Scene title", text: $entryTitle)
-                    Picker("Language", selection: $entryLanguage) {
-                        ForEach(ScriptLanguage.allCases, id: \.self) { language in
-                            Text(language.rawValue).tag(language)
-                        }
-                    }
-                }
-                Section("Script") {
-                    TextField("Paste or type script", text: $entryText, axis: .vertical)
-                        .lineLimit(8...16)
-                }
+    private func quickImportButton(title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Theme.Colors.accent)
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.Colors.textPrimary)
             }
-            .navigationTitle("Add practice script")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showingEntry = false }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Continue") {
-                        showingEntry = false
-                        showingCueSelection = true
-                    }
-                    .disabled(entryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(Theme.Colors.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.Colors.controlBorder, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func pasteFromClipboard() {
+        if let text = UIPasteboard.general.string, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            dialogueText = text
+            customCues = nil
+            if sceneTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let firstLine = text.components(separatedBy: .newlines)
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .first(where: { !$0.isEmpty }) ?? ""
+                if firstLine.count <= 36 && !firstLine.isEmpty {
+                    sceneTitle = firstLine
+                } else {
+                    sceneTitle = "Pasted Scene"
                 }
             }
         }
     }
 
-    private var cueSelectionSheet: some View {
-        PracticeAuditionCueSelectionView(scriptText: entryText) { cues in
-            let script = PracticeScript(
-                title: entryTitle.trimmingCharacters(in: .whitespaces).isEmpty ? "Untitled scene" : entryTitle,
-                languageRaw: entryLanguage.rawValue,
-                rawText: entryText,
-                cueLines: cues
-            )
-            appState.addPracticeScript(script)
-            showingCueSelection = false
-            isPresented = false
-            onScriptReady(script)
+    private func saveScene() {
+        let trimmedTitle = sceneTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = trimmedTitle.isEmpty ? "Untitled Scene" : trimmedTitle
+        let text = dialogueText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        let finalCues: [CueLine]
+        if let custom = customCues {
+            finalCues = custom
+        } else if autoDetectCues {
+            finalCues = autoDetectCueLines(from: text)
+        } else {
+            finalCues = []
         }
+
+        let script = PracticeScript(
+            title: title,
+            languageRaw: language.rawValue,
+            rawText: text,
+            cueLines: finalCues
+        )
+        appState.addPracticeScript(script)
+        isPresented = false
+        onScriptReady(script)
     }
 
     private func loadSelectedPhotos(_ items: [PhotosPickerItem]) {
@@ -298,9 +451,9 @@ struct PracticeASceneSheet: View {
             return
         }
         let suggestedTitle = parsed.projectName.trimmingCharacters(in: .whitespacesAndNewlines)
-        entryTitle = (!suggestedTitle.isEmpty && suggestedTitle != "Untitled Audition") ? suggestedTitle : fallbackTitle
-        entryText = trimmed
-        showingEntry = true
+        sceneTitle = (!suggestedTitle.isEmpty && suggestedTitle != "Untitled Audition") ? suggestedTitle : fallbackTitle
+        dialogueText = trimmed
+        customCues = nil
     }
 
     @MainActor
@@ -418,34 +571,213 @@ struct PracticeAuditionCueSelectionView: View {
 
 // MARK: - Script model and memorise levels
 
-struct MemoriseView: View {
-    let script: PracticeScript; let appState: AppState
-    @State private var level = 1
-    @State private var revealedTokens: Set<Int> = []
-    @State private var test = false
-    @State private var editCues = false
+private struct CueAudioInlineButton: View {
+    let audioURL: URL
+    @State private var isPlaying = false
+    @State private var player: AVAudioPlayer?
+
     var body: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                Text("Level \(level) of 3 — \(level == 1 ? "READ" : level == 2 ? "RECALL" : "RECONSTRUCT")").font(Theme.Typography.sectionHeader).foregroundStyle(Theme.Colors.accent)
-                if level > 1 {
-                    Label("Tap any blank to reveal", systemImage: "hand.tap")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Theme.Colors.accent)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(.regularMaterial, in: Capsule())
-                }
-                ScriptPracticeCard(model: PracticeScriptModel(script: script), mode: level, revealedTokenIDs: $revealedTokens, clueTokenIDs: .constant([]), recordRevealAsClue: false, onClueTokenRequested: { _ in })
-                Button { if level < 3 { level += 1 } else { test = true } } label: { Text(level < 3 ? "Continue" : "Test Yourself").primaryCapsuleButton() }
-            }.padding(16)
+        Button {
+            togglePlay()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: isPlaying ? "stop.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(isPlaying ? "Stop" : "Play Cue")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundStyle(Theme.Colors.accent)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Theme.Colors.lavenderSurface)
+            .clipShape(Capsule())
         }
-        .background(Theme.Colors.canvasBackground).navigationTitle(script.title).navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Edit") { editCues = true } } }
-        .navigationDestination(isPresented: $test) { TestYourselfView(script: script, appState: appState) }
+        .buttonStyle(.plain)
+        .onDisappear {
+            player?.stop()
+            isPlaying = false
+        }
+    }
+
+    private func togglePlay() {
+        if isPlaying {
+            player?.stop()
+            isPlaying = false
+        } else {
+            do {
+                player = try AVAudioPlayer(contentsOf: audioURL)
+                player?.play()
+                isPlaying = true
+            } catch {
+                isPlaying = false
+            }
+        }
+    }
+}
+
+struct MemoriseView: View {
+    let script: PracticeScript
+    let appState: AppState
+
+    @State private var selectedMode: PracticeDisplayMode = ProcessInfo.processInfo.arguments.contains("-PracticeModeHidden") ? .hideLines : (ProcessInfo.processInfo.arguments.contains("-PracticeModeLetters") ? .firstLetters : .full)
+    @State private var revealedTokens: Set<Int> = []
+    @State private var revealedLineIDs: Set<Int> = []
+    @State private var editCues = false
+    @State private var navigateToSayItAloud = false
+
+    private var scriptModel: PracticeScriptModel {
+        PracticeScriptModel(script: script)
+    }
+
+    private var modeInt: Int {
+        switch selectedMode {
+        case .full: return 1
+        case .gaps: return 2
+        case .firstLetters: return 3
+        case .hideLines: return 0
+        }
+    }
+
+    private var hasReveals: Bool {
+        !revealedTokens.isEmpty || !revealedLineIDs.isEmpty
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Top Mode Selector Bar
+            VStack(spacing: 10) {
+                Picker("Practice Mode", selection: $selectedMode) {
+                    ForEach(PracticeDisplayMode.allCases) { mode in
+                        Text(mode.shortTitle).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                // Instruction & Hint Reset
+                HStack(alignment: .center, spacing: 8) {
+                    Image(systemName: selectedMode == .hideLines || selectedMode == .gaps || selectedMode == .firstLetters ? "hand.tap" : "book")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.Colors.accent)
+
+                    Text(selectedMode.instruction)
+                        .font(Theme.Typography.captionBadge)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                        .lineLimit(2)
+
+                    Spacer(minLength: 4)
+
+                    if hasReveals {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                revealedTokens.removeAll()
+                                revealedLineIDs.removeAll()
+                            }
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "arrow.counterclockwise")
+                                    .font(.system(size: 10, weight: .bold))
+                                Text("Reset")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            .foregroundStyle(Theme.Colors.accent)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Theme.Colors.lavenderSurface, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 12)
+            .background(Theme.Colors.cardSurface)
+            .overlay(Divider(), alignment: .bottom)
+
+            // Scrollable Script Practice Card
+            ScrollView {
+                VStack(spacing: 16) {
+                    ScriptPracticeCard(
+                        model: scriptModel,
+                        mode: modeInt,
+                        revealedTokenIDs: $revealedTokens,
+                        revealedLineIDs: $revealedLineIDs,
+                        clueTokenIDs: .constant([]),
+                        allowLinePeek: true,
+                        recordRevealAsClue: false,
+                        onClueTokenRequested: { _ in },
+                        scriptCues: script.cueLines
+                    )
+                }
+                .padding(16)
+                .padding(.bottom, 20)
+            }
+
+            // Sticky Bottom Action Bar
+            VStack(spacing: 8) {
+                Divider()
+
+                HStack(spacing: 12) {
+                    Button {
+                        navigateToSayItAloud = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "waveform")
+                                .font(.system(size: 16, weight: .bold))
+                            Text("Practice Aloud")
+                                .font(.system(size: 16, weight: .bold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Theme.Colors.primaryPlum)
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+                .padding(.bottom, 10)
+            }
+            .background(Theme.Colors.cardSurface)
+        }
+        .background(Theme.Colors.canvasBackground)
+        .navigationTitle(script.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
+                        editCues = true
+                    } label: {
+                        Label("Customize Cues", systemImage: "pencil.line")
+                    }
+
+                    if hasReveals {
+                        Button {
+                            withAnimation {
+                                revealedTokens.removeAll()
+                                revealedLineIDs.removeAll()
+                            }
+                        } label: {
+                            Label("Reset Hints", systemImage: "arrow.counterclockwise")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 17))
+                        .foregroundStyle(Theme.Colors.accent)
+                }
+            }
+        }
+        .navigationDestination(isPresented: $navigateToSayItAloud) {
+            SayItAloudView(script: script, appState: appState, help: selectedMode.helpLevel)
+        }
         .sheet(isPresented: $editCues) {
             PracticeAuditionCueSelectionView(scriptText: script.rawText, initialCues: script.cueLines) { cues in
-                script.cueLines = cues; appState.saveChanges(); editCues = false
+                script.cueLines = cues
+                appState.saveChanges()
+                editCues = false
             }
         }
     }
@@ -453,13 +785,39 @@ struct MemoriseView: View {
 
 private struct ScriptPracticeCard: View {
     let model: PracticeScriptModel
-    let mode: Int // 0 nothing, 1 full, 2 gaps, 3 letters
+    let mode: Int // 0 nothing/hidden, 1 full, 2 gaps, 3 letters
     @Binding var revealedTokenIDs: Set<Int>
+    @Binding var revealedLineIDs: Set<Int>
     @Binding var clueTokenIDs: Set<Int>
+    var allowLinePeek: Bool = false
     let recordRevealAsClue: Bool
     let onClueTokenRequested: (Int) -> Void
+    var scriptCues: [CueLine] = []
+
+    init(
+        model: PracticeScriptModel,
+        mode: Int,
+        revealedTokenIDs: Binding<Set<Int>>,
+        revealedLineIDs: Binding<Set<Int>> = .constant([]),
+        clueTokenIDs: Binding<Set<Int>>,
+        allowLinePeek: Bool = false,
+        recordRevealAsClue: Bool,
+        onClueTokenRequested: @escaping (Int) -> Void,
+        scriptCues: [CueLine] = []
+    ) {
+        self.model = model
+        self.mode = mode
+        self._revealedTokenIDs = revealedTokenIDs
+        self._revealedLineIDs = revealedLineIDs
+        self._clueTokenIDs = clueTokenIDs
+        self.allowLinePeek = allowLinePeek
+        self.recordRevealAsClue = recordRevealAsClue
+        self.onClueTokenRequested = onClueTokenRequested
+        self.scriptCues = scriptCues
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 10) {
             ForEach(model.lines) { line in
                 if line.isHeader {
                     Text(line.text)
@@ -468,32 +826,134 @@ private struct ScriptPracticeCard: View {
                         .foregroundStyle(Theme.Colors.accent)
                         .padding(.vertical, 6)
                 } else if line.isCue || model.cueLineIDs.contains(line.id) {
-                    // Cue lines are always visible: they are the actor's prompt,
-                    // never material to memorise or mask in any practice mode.
+                    // Cue lines are always visible: they are the actor's prompt
                     cueLine(line)
                         .id(line.id)
-                        .padding(.vertical, 6)
                 } else if mode != 0 {
-                    actorLine(line)
+                    actorLineBlock(line)
                         .id(line.id)
-                        .padding(.vertical, 6)
+                } else if allowLinePeek {
+                    hiddenActorLine(line)
+                        .id(line.id)
                 } else {
-                    // Keep a zero-height anchor so .nothing mode still auto-scrolls past cue lines.
+                    // Keep a zero-height anchor so .nothing mode still auto-scrolls past cue lines in SayItAloudView.
                     Color.clear
                         .frame(height: 0)
                         .id(line.id)
                 }
             }
         }
-        .padding(20)
+        .padding(18)
         .cardStyle()
     }
+
     private func cueLine(_ line: PracticeLine) -> some View {
-        HStack(alignment: .top, spacing: 7) {
-            Text("CUE").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.Colors.accent).studioPill(Theme.Colors.accent)
-            Text(line.text).font(.system(size: 19)).foregroundStyle(Theme.Colors.textPrimary).lineSpacing(7)
-        }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Theme.Colors.accent.opacity(0.16)).overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.Colors.accent.opacity(0.5), lineWidth: 1)).clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        let matchingCue = scriptCues.first {
+            $0.cueText.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(line.text.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+        }
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                Text(line.speaker.isEmpty ? "READER CUE" : "\(line.speaker.uppercased()) · CUE")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Theme.Colors.accent)
+                    .studioPill(Theme.Colors.accent)
+
+                Spacer()
+
+                if let cue = matchingCue, let audioURL = cue.audioURL {
+                    CueAudioInlineButton(audioURL: audioURL)
+                }
+            }
+
+            Text(line.text)
+                .font(.system(size: 19))
+                .foregroundStyle(Theme.Colors.textPrimary)
+                .lineSpacing(7)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.Colors.accent.opacity(0.12))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.Colors.accent.opacity(0.4), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
+
+    private func actorLineBlock(_ line: PracticeLine) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !line.speaker.isEmpty && line.speaker != "SCRIPT" {
+                Text("\(line.speaker.uppercased()) · YOU")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Theme.Colors.accent)
+                    .padding(.bottom, 2)
+            }
+            actorLine(line)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func hiddenActorLine(_ line: PracticeLine) -> some View {
+        Group {
+            if revealedLineIDs.contains(line.id) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(line.speaker.isEmpty ? "YOU" : "\(line.speaker.uppercased()) · YOU")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Theme.Colors.accent)
+
+                        Spacer()
+
+                        Button {
+                            revealedLineIDs.remove(line.id)
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "eye.slash")
+                                    .font(.system(size: 10))
+                                Text("Hide")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Theme.Colors.surface, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    actorLine(line)
+                }
+                .padding(12)
+                .background(Theme.Colors.accent.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.Colors.accent.opacity(0.25), lineWidth: 1))
+            } else {
+                Button {
+                    revealedLineIDs.insert(line.id)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "eye.slash")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Theme.Colors.accent)
+                        Text(line.speaker.isEmpty ? "Tap to reveal your line" : "Tap to reveal \(line.speaker.uppercased()) line")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                        Spacer()
+                        Image(systemName: "hand.tap")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.Colors.textSecondary.opacity(0.6))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(Theme.Colors.surfaceElevated)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.Colors.controlBorder, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
     private func actorLine(_ line: PracticeLine) -> some View {
         let tokens = model.tokens.filter { $0.lineID == line.id }
         return FlowLayout(spacing: 4) {
@@ -509,7 +969,16 @@ private struct ScriptPracticeCard: View {
             }
         }
     }
-    private func reveal(_ token: PracticeToken) { guard mode > 1 else { return }; revealedTokenIDs.insert(token.id); if recordRevealAsClue { clueTokenIDs.insert(token.id); onClueTokenRequested(token.id) } }
+
+    private func reveal(_ token: PracticeToken) {
+        guard mode > 1 else { return }
+        revealedTokenIDs.insert(token.id)
+        if recordRevealAsClue {
+            clueTokenIDs.insert(token.id)
+            onClueTokenRequested(token.id)
+        }
+    }
+
     private func display(_ token: PracticeToken, position: Int, count: Int) -> String {
         guard mode > 1, !revealedTokenIDs.contains(token.id) else { return token.word }
         if mode == 2, !shouldMask(position, count: count) { return token.word }
@@ -517,8 +986,12 @@ private struct ScriptPracticeCard: View {
         let punctuation = token.word.replacingOccurrences(of: bare, with: "")
         return mode == 2 ? String(repeating: "_", count: max(6, bare.count)) + punctuation : (bare.first.map { String($0) + punctuation } ?? token.word)
     }
+
     /// Four non-adjacent blanks per nine words keeps approximately 55% visible.
-    private func shouldMask(_ index: Int, count: Int) -> Bool { guard index > 0 && index < count - 1 else { return false }; return [1, 3, 6, 8].contains(index % 9) }
+    private func shouldMask(_ index: Int, count: Int) -> Bool {
+        guard index > 0 && index < count - 1 else { return false }
+        return [1, 3, 6, 8].contains(index % 9)
+    }
 }
 
 // MARK: - Test and live delivery
@@ -567,7 +1040,17 @@ struct SayItAloudView: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    ScriptPracticeCard(model: model, mode: mode, revealedTokenIDs: $revealed, clueTokenIDs: $clueTokenIDs, recordRevealAsClue: didStart, onClueTokenRequested: requestClueForToken)
+                    ScriptPracticeCard(
+                        model: model,
+                        mode: mode,
+                        revealedTokenIDs: $revealed,
+                        revealedLineIDs: .constant([]),
+                        clueTokenIDs: $clueTokenIDs,
+                        allowLinePeek: false,
+                        recordRevealAsClue: didStart,
+                        onClueTokenRequested: requestClueForToken,
+                        scriptCues: script.cueLines
+                    )
                         .padding(.horizontal, 2)
                 }
                 .scrollIndicators(.visible)

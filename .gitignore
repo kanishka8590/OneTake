@@ -12,3 +12,4 @@ DerivedData/
 !default.perspectivev3
 .build/
 build/
+test/

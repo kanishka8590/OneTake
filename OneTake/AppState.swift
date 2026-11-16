@@ -56,12 +56,18 @@ final class AppState {
         self.hasCompletedOnboarding = defaults.bool(forKey: "hasCompletedOnboarding")
         self.isAuthenticated = defaults.bool(forKey: "isAuthenticated")
         self.isDemoMode = defaults.bool(forKey: "onetake.isDemoMode")
+        if ProcessInfo.processInfo.arguments.contains("-PracticeTab") {
+            self.selectedTab = .practice
+        }
     }
 
     // MARK: - Setup
     func configure(with modelContext: ModelContext) {
         self.modelContext = modelContext
         loadData()
+        if ProcessInfo.processInfo.arguments.contains("-DemoMode") && practiceScripts.isEmpty {
+            enterDemoMode()
+        }
     }
 
     // MARK: - Data Loading

@@ -57,6 +57,46 @@ enum HelpLevel: String, Codable, Hashable, CaseIterable {
     case fullScript = "Full Script"
 }
 
+nonisolated enum PracticeDisplayMode: String, Codable, Hashable, CaseIterable, Identifiable, Sendable {
+    case full = "Full Script"
+    case firstLetters = "First Letters"
+    case gaps = "Fill Gaps"
+    case hideLines = "Hide Lines"
+
+    public var id: String { rawValue }
+
+    public var helpLevel: HelpLevel {
+        switch self {
+        case .full: return .fullScript
+        case .firstLetters: return .letters
+        case .gaps: return .gaps
+        case .hideLines: return .nothing
+        }
+    }
+
+    public var shortTitle: String {
+        switch self {
+        case .full: return "Full"
+        case .firstLetters: return "Letters"
+        case .gaps: return "Gaps"
+        case .hideLines: return "Hidden"
+        }
+    }
+
+    public var instruction: String {
+        switch self {
+        case .full:
+            return "Read your lines naturally to build familiarity."
+        case .firstLetters:
+            return "Only the first letter of each word is shown. Tap any word to reveal."
+        case .gaps:
+            return "Key words are blanked out. Tap any blank to reveal."
+        case .hideLines:
+            return "Your lines are hidden. Tap any hidden line to reveal."
+        }
+    }
+}
+
 enum AnnotationKind: String, Codable, Hashable, CaseIterable {
     case normal = "Normal"
     case skipped = "Skipped"

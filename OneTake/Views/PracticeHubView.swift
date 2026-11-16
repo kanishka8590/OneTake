@@ -62,24 +62,27 @@ struct PracticeHubView: View {
                                 } onRunAgain: {
                                     scriptToRunAgain = script
                                 }
+                                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
                                 .contextMenu {
                                     Button {
                                         scriptToOpen = script
                                     } label: {
-                                        Label("Memorise & Practice", systemImage: "text.book.closed")
+                                        Label("Memorise & Practice", systemImage: "book.pages")
                                     }
 
                                     Button {
                                         scriptToRunAgain = script
                                     } label: {
-                                        Label("Run Scene Aloud", systemImage: "mic")
+                                        Label("Run Scene Aloud", systemImage: "waveform")
                                     }
 
                                     if let latest = script.sessions.sorted(by: { $0.date > $1.date }).first {
                                         Button {
                                             reviewTarget = ScriptReviewTarget(script: script, session: latest)
                                         } label: {
-                                            Label("Review Latest Run", systemImage: "waveform")
+                                            Label("Review Latest Run", systemImage: "doc.text.magnifyingglass")
                                         }
                                     }
 
@@ -173,6 +176,13 @@ struct PracticeHubView: View {
             } message: { script in
                 Text("This will delete the script and its practice history.")
             }
+            .onAppear {
+                if ProcessInfo.processInfo.arguments.contains("-OpenAddSceneSheet") {
+                    showingAddSheet = true
+                } else if ProcessInfo.processInfo.arguments.contains("-OpenUnifiedPractice") {
+                    scriptToOpen = appState.practiceScripts.first(where: { $0.title.contains("Noah") }) ?? appState.practiceScripts.first
+                }
+            }
         }
     }
 
@@ -221,6 +231,19 @@ struct PracticeHubView: View {
                     .padding(.horizontal, 32)
             }
             .padding(.top, 8)
+
+            Button {
+                showingAddSheet = true
+            } label: {
+                Label("Add a Scene", systemImage: "plus")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(maxWidth: 200)
+                    .padding(.vertical, 12)
+                    .background(Theme.Colors.primaryPlum)
+                    .foregroundStyle(.white)
+                    .clipShape(Capsule())
+            }
+            .padding(.top, 8)
         }
         .padding(.horizontal, 24)
     }
@@ -243,65 +266,162 @@ struct PracticeScriptCardRow: View {
         }.first
     }
 
+    private var accuracyPercentage: Int? {
+        guard let session = latestSession else { return nil }
+        let scriptModel = PracticeScriptModel(script: script)
+        let totalTargetWords = scriptModel.actorTokens.count
+        guard totalTargetWords > 0 else { return nil }
+        let errors = session.skippedCount + session.forgotCount
+        let correct = max(0, totalTargetWords - errors)
+        let pct = Int(round(Double(correct) / Double(totalTargetWords) * 100.0))
+        return min(100, max(0, pct))
+    }
+
     var body: some View {
-        HStack(spacing: 12) {
-            Button(action: onOpen) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(script.title)
-                            .font(.system(size: 22, weight: .bold))
-                            .foregroundStyle(Theme.Colors.textPrimary)
-                            .lineLimit(1)
+        VStack(alignment: .leading, spacing: 12) {
+            // Title & Badges
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top) {
+                    Text(script.title)
+                        .font(Theme.Typography.cardTitle)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
 
-                        HStack(spacing: 5) {
-                            Image(systemName: "clock")
-                                .font(.system(size: 12, weight: .medium))
-                            Text(lastPracticedText(for: script.lastPracticedAt))
-                                .font(.system(size: 17, weight: .medium))
-                        }
-                        .foregroundStyle(Theme.Colors.textSecondary)
-                    }
+                    Spacer(minLength: 8)
 
-                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.Colors.textSecondary.opacity(0.4))
                 }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
 
-            if let latestSession {
-                VStack(alignment: .trailing, spacing: 7) {
+                HStack(spacing: 6) {
+                    // Language badge
+                    Text(script.languageRaw.uppercased())
+                        .font(.system(size: 10, weight: .bold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Theme.Colors.lavenderSurface)
+                        .foregroundStyle(Theme.Colors.accent)
+                        .clipShape(Capsule())
+
+                    // Cues badge
+                    let cueCount = script.cueLines.count
+                    Text(cueCount == 1 ? "1 CUE" : "\(cueCount) CUES")
+                        .font(.system(size: 10, weight: .bold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Theme.Colors.surfaceElevated)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                        .clipShape(Capsule())
+
+                    // Accuracy badge
+                    if let accuracy = accuracyPercentage {
+                        HStack(spacing: 3) {
+                            Image(systemName: accuracy >= 85 ? "checkmark.circle.fill" : "chart.bar.fill")
+                                .font(.system(size: 9))
+                            Text("\(accuracy)% ACCURACY")
+                        }
+                        .font(.system(size: 10, weight: .bold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(accuracy >= 85 ? Theme.Colors.successGreen.opacity(0.15) : Theme.Colors.accent.opacity(0.15))
+                        .foregroundStyle(accuracy >= 85 ? Theme.Colors.successGreen : Theme.Colors.accent)
+                        .clipShape(Capsule())
+                    }
+                }
+            }
+
+            // Metadata / Runs
+            HStack(spacing: 12) {
+                HStack(spacing: 4) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 12))
+                    Text(lastPracticedText(for: script.lastPracticedAt))
+                        .font(Theme.Typography.captionBadge)
+                }
+                .foregroundStyle(Theme.Colors.textSecondary)
+
+                if !script.sessions.isEmpty {
+                    Text("•")
+                        .foregroundStyle(Theme.Colors.textSecondary.opacity(0.5))
+
+                    HStack(spacing: 4) {
+                        Image(systemName: "repeat")
+                            .font(.system(size: 12))
+                        Text(script.sessions.count == 1 ? "1 run" : "\(script.sessions.count) runs")
+                            .font(Theme.Typography.captionBadge)
+                    }
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                }
+
+                Spacer()
+            }
+
+            Divider()
+                .background(Theme.Colors.controlBorder.opacity(0.5))
+
+            // Action Bar
+            HStack(spacing: 8) {
+                Button(action: onOpen) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "book.pages")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Practice")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(Theme.Colors.primaryPlum)
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+
+                Button(action: onRunAgain) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "waveform")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Run Aloud")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(Theme.Colors.lavenderSurface)
+                    .foregroundStyle(Theme.Colors.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+
+                if let latestSession {
                     Button {
                         onReview(latestSession)
                     } label: {
-                        Text("Review")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Theme.Colors.accent)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(Theme.Colors.lavenderSurface)
-                            .clipShape(Capsule())
+                        HStack(spacing: 4) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Review")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Theme.Colors.surfaceElevated)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.Colors.controlBorder, lineWidth: 1))
                     }
-
-                    Button(action: onRunAgain) {
-                        Text("Run again")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(Theme.Colors.primaryPlum)
-                            .clipShape(Capsule())
-                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.borderless)
-            } else {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.Colors.textSecondary.opacity(0.5))
-                    .allowsHitTesting(false)
             }
         }
-        .padding(.vertical, 8)
-        .frame(minHeight: Theme.Layout.minTapTarget)
+        .padding(14)
+        .background(Theme.Colors.cardSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Theme.Colors.controlBorder, lineWidth: 1))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onOpen()
+        }
     }
 
     private func lastPracticedText(for date: Date?) -> String {
