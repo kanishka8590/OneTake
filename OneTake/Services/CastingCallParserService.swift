@@ -2,7 +2,8 @@ import Foundation
 import UIKit
 import Vision
 import PDFKit
-import Compression
+import ImageIO
+import NaturalLanguage
 
 // MARK: - Parsed Result Model
 
@@ -35,7 +36,7 @@ nonisolated struct ParsedCastingCall: Sendable {
 
 // MARK: - Protocol
 
-protocol CastingCallParserServiceProtocol: Sendable {
+nonisolated protocol CastingCallParserServiceProtocol: Sendable {
     func parseImage(_ image: UIImage) async throws -> ParsedCastingCall
     func parseImages(_ images: [UIImage]) async throws -> ParsedCastingCall
     func parsePDF(data: Data) async throws -> ParsedCastingCall
@@ -44,10 +45,36 @@ protocol CastingCallParserServiceProtocol: Sendable {
     func parseMultipleFiles(urls: [URL]) async throws -> ParsedCastingCall
 }
 
+// MARK: - CoreML Classifier Holder
+
+private nonisolated final class ScriptClassifierBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private let model: NLModel?
+
+    init() {
+        let url = Bundle.main.url(forResource: "ScriptElementClassifier", withExtension: "mlmodelc")
+            ?? Bundle(for: CastingCallParserService.self).url(forResource: "ScriptElementClassifier", withExtension: "mlmodelc")
+        self.model = url.flatMap { try? NLModel(contentsOf: $0) }
+    }
+
+    func classify(_ line: String) -> (label: String, confidence: Double)? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        lock.lock()
+        defer { lock.unlock() }
+        guard let model else { return nil }
+        let hypotheses = model.predictedLabelHypotheses(for: trimmed, maximumCount: 1)
+        guard let best = hypotheses.max(by: { $0.value < $1.value }) else { return nil }
+        return (best.key, best.value)
+    }
+}
+
 // MARK: - CastingCallParserService Implementation
 
-final class CastingCallParserService: CastingCallParserServiceProtocol {
+nonisolated final class CastingCallParserService: CastingCallParserServiceProtocol, @unchecked Sendable {
     static let shared = CastingCallParserService()
+
+    private let classifierBox = ScriptClassifierBox()
 
     init() {}
 
@@ -59,120 +86,92 @@ final class CastingCallParserService: CastingCallParserServiceProtocol {
     }
 
     func parseImages(_ images: [UIImage]) async throws -> ParsedCastingCall {
-        var combinedText = ""
-        for image in images {
-            let pageText = try await extractRawText(from: image)
-            if !pageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                combinedText += (combinedText.isEmpty ? "" : "\n\n") + pageText
-            }
+        let snapshots = images.compactMap { image -> (CGImage, CGImagePropertyOrientation)? in
+            Self.cgImageAndOrientation(for: image)
         }
-        return await parseText(combinedText)
+        return try await Task.detached(priority: .userInitiated) { [self] in
+            var combinedText = ""
+            for (cgImage, orientation) in snapshots {
+                let pageText = try Self.extractTextWithColumnReconstructionSync(
+                    from: cgImage,
+                    orientation: orientation
+                )
+                if !pageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    combinedText += (combinedText.isEmpty ? "" : "\n\n") + pageText
+                }
+            }
+            return self.parseTextSync(combinedText)
+        }.value
     }
 
     func extractRawText(from image: UIImage) async throws -> String {
-        guard let cgImage = image.cgImage else { return "" }
-        return try await extractTextWithColumnReconstruction(from: cgImage)
-    }
-
-    private func extractTextWithColumnReconstruction(from cgImage: CGImage) async throws -> String {
-        return try await withCheckedThrowingContinuation { continuation in
-            let request = VNRecognizeTextRequest { request, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-
-                guard let observations = request.results as? [VNRecognizedTextObservation], !observations.isEmpty else {
-                    continuation.resume(returning: "")
-                    return
-                }
-
-                // Layout reconstruction:
-                // Vision bounding boxes are normalized [0, 1] with origin at lower-left.
-                // Convert to top-left origin for intuitive reading order.
-                struct TextBlock {
-                    let text: String
-                    let minX: CGFloat
-                    let maxX: CGFloat
-                    let minY: CGFloat // from top
-                    let maxY: CGFloat
-                }
-
-                var blocks: [TextBlock] = []
-                for obs in observations {
-                    guard let candidate = obs.topCandidates(1).first else { continue }
-                    let box = obs.boundingBox
-                    // Flip Y so 0 is top
-                    let topY = 1.0 - (box.origin.y + box.size.height)
-                    let bottomY = 1.0 - box.origin.y
-                    blocks.append(TextBlock(
-                        text: candidate.string,
-                        minX: box.origin.x,
-                        maxX: box.origin.x + box.size.width,
-                        minY: topY,
-                        maxY: bottomY
-                    ))
-                }
-
-                // Check for multi-column layout by finding distinct horizontal columns
-                // Compute column buckets:
-                let reconstructedText = Self.reconstructColumns(from: blocks)
-                continuation.resume(returning: reconstructedText)
-            }
-
-            request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = true
-
-            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-            do {
-                try handler.perform([request])
-            } catch {
-                continuation.resume(throwing: error)
-            }
-        }
-    }
-
-    private static func reconstructColumns(from blocks: [Any]) -> String {
-        // Group blocks by columns based on X position
-        struct Block {
-            let text: String
-            let minX: CGFloat
-            let maxX: CGFloat
-            let topY: CGFloat
-        }
-
-        let typedBlocks: [Block] = blocks.compactMap { b in
-            if let tb = b as? (text: String, minX: CGFloat, maxX: CGFloat, minY: CGFloat, maxY: CGFloat) {
-                return Block(text: tb.text, minX: tb.minX, maxX: tb.maxX, topY: tb.minY)
-            }
-            return nil
-        }
-
-        if typedBlocks.isEmpty {
-            // Fallback for internal helper
+        guard let (cgImage, orientation) = Self.cgImageAndOrientation(for: image) else {
             return ""
         }
-
-        // Determine if there are 2 distinct columns (e.g. median width < 0.45 and blocks split across center)
-        let midpoints = typedBlocks.map { ($0.minX + $0.maxX) / 2.0 }
-        let hasLeftColumn = midpoints.contains { $0 < 0.45 }
-        let hasRightColumn = midpoints.contains { $0 > 0.55 }
-        let isTwoColumn = hasLeftColumn && hasRightColumn
-
-        if isTwoColumn {
-            let leftBlocks = typedBlocks.filter { ($0.minX + $0.maxX) / 2.0 <= 0.5 }.sorted { $0.topY < $1.topY }
-            let rightBlocks = typedBlocks.filter { ($0.minX + $0.maxX) / 2.0 > 0.5 }.sorted { $0.topY < $1.topY }
-
-            let leftText = leftBlocks.map { $0.text }.joined(separator: "\n")
-            let rightText = rightBlocks.map { $0.text }.joined(separator: "\n")
-            return "\(leftText)\n\n\(rightText)"
-        } else {
-            let sortedBlocks = typedBlocks.sorted { $0.topY < $1.topY }
-            return sortedBlocks.map { $0.text }.joined(separator: "\n")
-        }
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.extractTextWithColumnReconstructionSync(from: cgImage, orientation: orientation)
+        }.value
     }
 
-    // MARK: - PDF Parsing with Vision OCR Fallback
+    /// Reconstructs reading-order text from Vision/layout bounding boxes using `OCRLayoutReconstructor`.
+    static func reconstructColumns(from boxes: [OCRLayoutReconstructor.TextBoundingBox]) -> String {
+        OCRLayoutReconstructor.reconstruct(boxes: boxes)
+    }
+
+    private static func cgImageAndOrientation(for image: UIImage) -> (CGImage, CGImagePropertyOrientation)? {
+        let orientation = CGImagePropertyOrientation(image.imageOrientation)
+        if let cgImage = image.cgImage {
+            return (cgImage, orientation)
+        }
+        // Fallback for CIImage-backed or synthetic UIImages without a backing CGImage.
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = image.scale
+        let rendered = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
+        guard let renderedCG = rendered.cgImage else { return nil }
+        return (renderedCG, .up)
+    }
+
+    private static func extractTextWithColumnReconstructionSync(
+        from cgImage: CGImage,
+        orientation: CGImagePropertyOrientation
+    ) throws -> String {
+        var recognizedBoxes: [OCRLayoutReconstructor.TextBoundingBox] = []
+        var recognitionError: Error?
+
+        let request = VNRecognizeTextRequest { request, error in
+            if let error {
+                recognitionError = error
+                return
+            }
+            guard let observations = request.results as? [VNRecognizedTextObservation], !observations.isEmpty else {
+                return
+            }
+            recognizedBoxes = observations.compactMap { obs in
+                guard let candidate = obs.topCandidates(1).first else { return nil }
+                return OCRLayoutReconstructor.TextBoundingBox(
+                    text: candidate.string,
+                    rect: obs.boundingBox,
+                    confidence: candidate.confidence
+                )
+            }
+        }
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+
+        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: orientation, options: [:])
+        try handler.perform([request])
+
+        if let recognitionError {
+            throw recognitionError
+        }
+        return reconstructColumns(from: recognizedBoxes)
+    }
+
+    // MARK: - PDF Parsing with Geometry & Vision OCR Fallback
 
     func parsePDF(data: Data) async throws -> ParsedCastingCall {
         let text = try await extractRawText(fromPDF: data)
@@ -180,6 +179,12 @@ final class CastingCallParserService: CastingCallParserServiceProtocol {
     }
 
     func extractRawText(fromPDF data: Data) async throws -> String {
+        try await Task.detached(priority: .userInitiated) {
+            try Self.extractRawTextFromPDFSync(data)
+        }.value
+    }
+
+    private static func extractRawTextFromPDFSync(_ data: Data) throws -> String {
         guard let document = PDFDocument(data: data) else {
             return ""
         }
@@ -189,35 +194,45 @@ final class CastingCallParserService: CastingCallParserServiceProtocol {
 
         for i in 0..<pageCount {
             guard let page = document.page(at: i) else { continue }
-            let pageText = page.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let rawPageText = page.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
-            // Fallback to Vision OCR if page has no selectable text layer
-            if pageText.isEmpty {
-                let pageBounds = page.bounds(for: .mediaBox)
-                let renderer = UIGraphicsImageRenderer(size: pageBounds.size)
+            if rawPageText.isEmpty {
+                // Scanned PDF page: render at 2x scale honoring mediaBox.origin and run Vision OCR.
+                let mediaBox = page.bounds(for: .mediaBox)
+                guard mediaBox.width > 0, mediaBox.height > 0 else { continue }
+
+                let format = UIGraphicsImageRendererFormat()
+                format.scale = 2.0
+                format.opaque = true
+                let renderer = UIGraphicsImageRenderer(size: mediaBox.size, format: format)
                 let renderedImage = renderer.image { ctx in
-                    UIColor.white.set()
-                    ctx.fill(pageBounds)
-                    ctx.cgContext.translateBy(x: 0.0, y: pageBounds.size.height)
+                    UIColor.white.setFill()
+                    ctx.fill(CGRect(origin: .zero, size: mediaBox.size))
+                    ctx.cgContext.translateBy(x: 0.0, y: mediaBox.size.height)
                     ctx.cgContext.scaleBy(x: 1.0, y: -1.0)
+                    ctx.cgContext.translateBy(x: -mediaBox.origin.x, y: -mediaBox.origin.y)
                     page.draw(with: .mediaBox, to: ctx.cgContext)
                 }
 
                 if let cgImage = renderedImage.cgImage {
-                    let ocrText = try? await extractTextWithColumnReconstruction(from: cgImage)
-                    if let ocr = ocrText, !ocr.isEmpty {
-                        fullExtractedText += (fullExtractedText.isEmpty ? "" : "\n\n") + ocr
+                    let ocrText = try extractTextWithColumnReconstructionSync(from: cgImage, orientation: .up)
+                    if !ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        fullExtractedText += (fullExtractedText.isEmpty ? "" : "\n\n") + ocrText
                     }
                 }
             } else {
-                fullExtractedText += (fullExtractedText.isEmpty ? "" : "\n\n") + pageText
+                let layoutLines = PDFGeometryExtractor.extractLines(from: page, pageIndex: i)
+                let reconstructed = OCRLayoutReconstructor.reconstruct(layoutLines: layoutLines)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let finalPageText = reconstructed.isEmpty ? rawPageText : reconstructed
+                fullExtractedText += (fullExtractedText.isEmpty ? "" : "\n\n") + finalPageText
             }
         }
 
         return fullExtractedText
     }
 
-    // MARK: - DOCX Parsing via Zip Extraction & XMLParser
+    // MARK: - DOCX Parsing via ZipArchive & Bounded XMLParser
 
     func parseDocx(data: Data) async throws -> ParsedCastingCall {
         let text = try await extractRawText(fromDocx: data)
@@ -225,184 +240,110 @@ final class CastingCallParserService: CastingCallParserServiceProtocol {
     }
 
     func extractRawText(fromDocx data: Data) async throws -> String {
-        // Unzip word/document.xml from docx data
-        if let xmlText = extractDocumentXml(from: data) {
-            let parsedText = parseDocxXML(xmlText)
-            if !parsedText.isEmpty {
-                return parsedText
-            }
-        }
+        try await Task.detached(priority: .userInitiated) {
+            try Self.extractRawTextFromDocxSync(data)
+        }.value
+    }
 
-        // Fallback: search raw utf8 data for XML text tags <w:t>...</w:t>
-        return extractTextFromRawDocx(data: data)
+    private static func extractRawTextFromDocxSync(_ data: Data) throws -> String {
+        let xmlData = try ZipArchive.readEntry(
+            named: "word/document.xml",
+            from: data,
+            maxEntryBytes: 32 * 1024 * 1024
+        )
+        return parseDocxXML(xmlData)
+    }
+
+    private static func parseDocxXML(_ data: Data) -> String {
+        let delegate = DocxXMLParserDelegate(maxCharacters: 2_000_000)
+        let parser = XMLParser(data: data)
+        parser.shouldProcessNamespaces = false
+        parser.shouldResolveExternalEntities = false
+        parser.delegate = delegate
+        parser.parse()
+        return delegate.extractedText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - Multi-File Import Support
 
     func parseMultipleFiles(urls: [URL]) async throws -> ParsedCastingCall {
-        var combinedText = ""
-        for url in urls {
-            let accessing = url.startAccessingSecurityScopedResource()
-            defer {
-                if accessing {
-                    url.stopAccessingSecurityScopedResource()
-                }
-            }
+        try await Task.detached(priority: .userInitiated) { [self] in
+            var combinedText = ""
+            var firstError: Error?
 
-            guard let data = try? Data(contentsOf: url) else { continue }
-            let filename = url.lastPathComponent.lowercased()
-
-            let extracted: String
-            if filename.hasSuffix(".pdf") {
-                extracted = (try? await extractRawText(fromPDF: data)) ?? ""
-            } else if filename.hasSuffix(".docx") {
-                extracted = (try? await extractRawText(fromDocx: data)) ?? ""
-            } else if let image = UIImage(data: data) {
-                extracted = (try? await extractRawText(from: image)) ?? ""
-            } else {
-                extracted = String(data: data, encoding: .utf8) ?? ""
-            }
-
-            if !extracted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                combinedText += (combinedText.isEmpty ? "" : "\n\n") + extracted
-            }
-        }
-        return await parseText(combinedText)
-    }
-
-    private func extractDocumentXml(from data: Data) -> String? {
-        // Native docx zip reader: look for "word/document.xml" entry header
-        // Zip local file header signature: 0x04034b50 (PK\x03\x04)
-        var offset = 0
-        let count = data.count
-        let targetName = "word/document.xml"
-
-        while offset + 30 <= count {
-            let sig = data.withUnsafeBytes { ptr -> UInt32 in
-                ptr.load(fromByteOffset: offset, as: UInt32.self)
-            }
-            if sig != 0x04034b50 {
-                // Not a local header, advance by 1
-                offset += 1
-                continue
-            }
-
-            let compMethod = data.withUnsafeBytes { ptr -> UInt16 in
-                ptr.load(fromByteOffset: offset + 8, as: UInt16.self)
-            }
-            let compSize = Int(data.withUnsafeBytes { ptr -> UInt32 in
-                ptr.load(fromByteOffset: offset + 18, as: UInt32.self)
-            })
-            let uncompSize = Int(data.withUnsafeBytes { ptr -> UInt32 in
-                ptr.load(fromByteOffset: offset + 22, as: UInt32.self)
-            })
-            let nameLen = Int(data.withUnsafeBytes { ptr -> UInt16 in
-                ptr.load(fromByteOffset: offset + 26, as: UInt16.self)
-            })
-            let extraLen = Int(data.withUnsafeBytes { ptr -> UInt16 in
-                ptr.load(fromByteOffset: offset + 28, as: UInt16.self)
-            })
-
-            let headerSize = 30 + nameLen + extraLen
-            guard offset + headerSize <= count else { break }
-
-            let nameData = data.subdata(in: (offset + 30)..<(offset + 30 + nameLen))
-            let fileName = String(data: nameData, encoding: .utf8) ?? ""
-
-            let dataOffset = offset + headerSize
-            if fileName == targetName, dataOffset + compSize <= count {
-                let fileData = data.subdata(in: dataOffset..<(dataOffset + compSize))
-                if compMethod == 8 { // Deflated
-                    if let inflated = decompressDeflate(data: fileData, expectedSize: uncompSize) {
-                        return String(data: inflated, encoding: .utf8)
+            for url in urls {
+                let accessing = url.startAccessingSecurityScopedResource()
+                defer {
+                    if accessing {
+                        url.stopAccessingSecurityScopedResource()
                     }
-                } else if compMethod == 0 { // Stored
-                    return String(data: fileData, encoding: .utf8)
+                }
+
+                do {
+                    let data = try Data(contentsOf: url)
+                    let filename = url.lastPathComponent.lowercased()
+
+                    let extracted: String
+                    if filename.hasSuffix(".pdf") {
+                        extracted = try Self.extractRawTextFromPDFSync(data)
+                    } else if filename.hasSuffix(".docx") {
+                        extracted = try Self.extractRawTextFromDocxSync(data)
+                    } else if let image = UIImage(data: data),
+                              let (cgImage, orientation) = Self.cgImageAndOrientation(for: image) {
+                        extracted = try Self.extractTextWithColumnReconstructionSync(from: cgImage, orientation: orientation)
+                    } else {
+                        extracted = String(data: data, encoding: .utf8)
+                            ?? String(data: data, encoding: .unicode)
+                            ?? ""
+                    }
+
+                    if !extracted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        combinedText += (combinedText.isEmpty ? "" : "\n\n") + extracted
+                    }
+                } catch {
+                    if firstError == nil {
+                        firstError = error
+                    }
                 }
             }
 
-            offset = dataOffset + compSize
-        }
-        return nil
-    }
-
-    private func decompressDeflate(data: Data, expectedSize: Int) -> Data? {
-        guard !data.isEmpty else { return nil }
-        let bufferSize = max(expectedSize, data.count * 4, 1024)
-        let destinationBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
-        defer { destinationBuffer.deallocate() }
-
-        let decompressedSize = data.withUnsafeBytes { (srcPtr: UnsafeRawBufferPointer) -> Int in
-            guard let baseAddress = srcPtr.baseAddress else { return 0 }
-            return compression_decode_buffer(
-                destinationBuffer,
-                bufferSize,
-                baseAddress.assumingMemoryBound(to: UInt8.self),
-                data.count,
-                nil,
-                COMPRESSION_ZLIB
-            )
-        }
-
-        if decompressedSize > 0 {
-            return Data(bytes: destinationBuffer, count: decompressedSize)
-        }
-        return nil
-    }
-
-    private func extractTextFromRawDocx(data: Data) -> String {
-        // Fast regex fallback matching <w:t>...</w:t> inside raw payload
-        guard let content = String(data: data, encoding: .ascii) else { return "" }
-        let pattern = "<w:t[^>]*>(.*?)</w:t>"
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return "" }
-        let matches = regex.matches(in: content, range: NSRange(content.startIndex..., in: content))
-
-        var result = ""
-        for match in matches {
-            if let range = Range(match.range(at: 1), in: content) {
-                result += content[range] + " "
+            if combinedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let firstError {
+                throw firstError
             }
-        }
-        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+            return self.parseTextSync(combinedText)
+        }.value
     }
 
-    private func parseDocxXML(_ xml: String) -> String {
-        guard let data = xml.data(using: .utf8) else { return "" }
-        let delegate = DocxXMLParserDelegate()
-        let parser = XMLParser(data: data)
-        parser.delegate = delegate
-        parser.parse()
-        return delegate.extractedText
-    }
-
-    // MARK: - Deterministic Parser
+    // MARK: - Deterministic + ML-Assisted Parser
 
     func parseText(_ text: String) async -> ParsedCastingCall {
+        await Task.detached(priority: .userInitiated) { [self] in
+            self.parseTextSync(text)
+        }.value
+    }
+
+    private func parseTextSync(_ text: String) -> ParsedCastingCall {
         var result = ParsedCastingCall()
         result.rawExtractedText = text
         let cleanText = text.replacingOccurrences(of: "\r\n", with: "\n")
         let lines = cleanText.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
 
-        // 1. Recipient Email Extraction (kept out of requirements)
-        let emailRegex = try? NSRegularExpression(pattern: "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", options: .caseInsensitive)
-        if let emailMatch = emailRegex?.firstMatch(in: cleanText, range: NSRange(cleanText.startIndex..., in: cleanText)),
-           let emailRange = Range(emailMatch.range, in: cleanText) {
-            result.recipientEmail = String(cleanText[emailRange])
-        }
+        // 1. Recipient Email Extraction (prioritizing "submit to" / "send to" / "casting" emails)
+        result.recipientEmail = extractPrioritizedEmail(from: lines)
 
-        // 2. Production Type
+        // 2. Production Type (word-boundary safe so "screenplay" does not match "play")
         let lowerText = cleanText.lowercased()
-        if lowerText.contains("feature film") || lowerText.contains("movie") || lowerText.contains("cinema") {
+        if matchesRegex(#"\b(?:feature\s+film|movie|cinema)\b"#, in: lowerText) {
             result.productionType = .featureFilm
-        } else if lowerText.contains("short film") {
+        } else if matchesRegex(#"\bshort\s+film\b"#, in: lowerText) {
             result.productionType = .shortFilm
-        } else if lowerText.contains("web series") || lowerText.contains("ott series") {
+        } else if matchesRegex(#"\b(?:web\s+series|ott\s+series)\b"#, in: lowerText) {
             result.productionType = .webSeries
-        } else if lowerText.contains("series") || lowerText.contains("television") || lowerText.contains("tv show") {
+        } else if matchesRegex(#"\b(?:series|television|tv\s+show)\b"#, in: lowerText) {
             result.productionType = .series
-        } else if lowerText.contains("commercial") || lowerText.contains("ad film") || lowerText.contains("advertisement") {
+        } else if matchesRegex(#"\b(?:commercial|ad\s+film|advertisement)\b"#, in: lowerText) {
             result.productionType = .adFilm
-        } else if lowerText.contains("theatre") || lowerText.contains("theater") || lowerText.contains("play") {
+        } else if isTheaterProduction(in: lowerText) {
             result.productionType = .theater
         }
 
@@ -418,9 +359,9 @@ final class CastingCallParserService: CastingCallParserServiceProtocol {
             }
         }
         if result.projectName.isEmpty {
-            // First prominent non-empty line
             if let firstLine = lines.first(where: { !$0.isEmpty && $0.count < 60 && !$0.lowercased().contains("casting call") }) {
-                result.projectName = firstLine.replacingOccurrences(of: "CASTING CALL - ", with: "")
+                result.projectName = firstLine
+                    .replacingOccurrences(of: "CASTING CALL - ", with: "")
                     .replacingOccurrences(of: "CASTING NOTICE: ", with: "")
                     .trimmingCharacters(in: .whitespaces)
             } else {
@@ -431,7 +372,6 @@ final class CastingCallParserService: CastingCallParserServiceProtocol {
         // 4. Deadline Extraction
         var foundDeadline = false
         if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue) {
-            // Check lines mentioning deadline/submit
             for line in lines {
                 let lower = line.lowercased()
                 if lower.contains("deadline") || lower.contains("submit by") || lower.contains("due") || lower.contains("last date") {
@@ -452,36 +392,27 @@ final class CastingCallParserService: CastingCallParserServiceProtocol {
         }
 
         // 5. Constraints: Ratio, Slate Max, Clip Max, Size Max
-        if lowerText.contains("4:5") || lowerText.contains("4x5") {
+        if matchesRegex(#"\b4[:x]5\b"#, in: lowerText) {
             result.requiredHeadshotRatio = .ratio4x5
-        } else if lowerText.contains("2:3") || lowerText.contains("2x3") {
+        } else if matchesRegex(#"\b2[:x]3\b"#, in: lowerText) {
             result.requiredHeadshotRatio = .ratio2x3
-        } else if lowerText.contains("1:1") || lowerText.contains("square") {
+        } else if matchesRegex(#"\b1[:x]1\b"#, in: lowerText) || mentionsSquareHeadshot(in: lines) {
             result.requiredHeadshotRatio = .ratio1x1
         }
 
-        // Slate max seconds
-        let slateRegex = try? NSRegularExpression(pattern: "(\\d{2})\\s*(?:seconds?|s|sec)\\s*slate", options: .caseInsensitive)
-        if let match = slateRegex?.firstMatch(in: cleanText, range: NSRange(cleanText.startIndex..., in: cleanText)),
-           let range = Range(match.range(at: 1), in: cleanText),
-           let sec = Double(cleanText[range]) {
-            result.maxSlateSeconds = sec
+        // Slate max seconds (e.g., "5s slate", "30 seconds slate", "slate: 30s")
+        if let slateSeconds = extractSlateSeconds(from: cleanText) {
+            result.maxSlateSeconds = slateSeconds
         }
 
-        // Clip max seconds (e.g., "2-minute clip", "120s")
-        let clipMinRegex = try? NSRegularExpression(pattern: "(\\d+)\\s*(?:-|\\s*)minute(?:s)?\\s*(?:clip|tape|video|audition)", options: .caseInsensitive)
-        if let match = clipMinRegex?.firstMatch(in: cleanText, range: NSRange(cleanText.startIndex..., in: cleanText)),
-           let range = Range(match.range(at: 1), in: cleanText),
-           let mins = Double(cleanText[range]) {
-            result.maxClipSeconds = mins * 60.0
+        // Clip max seconds (e.g., "2 min clip", "2-minute tape", "90s clip", "90 seconds clip", "clip: 90s")
+        if let clipSeconds = extractClipMaxSeconds(from: cleanText) {
+            result.maxClipSeconds = clipSeconds
         }
 
         // Clip max size MB (e.g. "100 MB", "50mb")
-        let mbRegex = try? NSRegularExpression(pattern: "(\\d+)\\s*mb", options: .caseInsensitive)
-        if let match = mbRegex?.firstMatch(in: cleanText, range: NSRange(cleanText.startIndex..., in: cleanText)),
-           let range = Range(match.range(at: 1), in: cleanText),
-           let mb = Double(cleanText[range]) {
-            result.maxPerClipSizeMB = mb
+        if let mbValue = firstCaptureDouble(#"(\d+)\s*mb\b"#, in: cleanText) {
+            result.maxPerClipSizeMB = mbValue
         }
 
         // 6. Dialogue Blocks & Role Extraction
@@ -495,7 +426,6 @@ final class CastingCallParserService: CastingCallParserServiceProtocol {
         if !dialogueResult.mainRole.isEmpty {
             result.roleName = dialogueResult.mainRole
         } else {
-            // Fallback role name search
             for line in lines {
                 let lower = line.lowercased()
                 if lower.hasPrefix("role:") || lower.hasPrefix("character:") {
@@ -523,27 +453,182 @@ final class CastingCallParserService: CastingCallParserServiceProtocol {
             }
         }
         if result.roleDescription.isEmpty {
-            // Take the line after role name if available
-            if let idx = lines.firstIndex(where: { $0.lowercased().contains("role:") }), idx + 1 < lines.count {
+            if let idx = lines.firstIndex(where: { $0.lowercased().hasPrefix("role:") }), idx + 1 < lines.count {
                 result.roleDescription = lines[idx + 1]
             }
         }
 
         // 7. Requirements Checklist (clean: email kept out)
-        var reqs: [SubmissionRequirement] = []
-        reqs.append(SubmissionRequirement(title: "Guided Headshots (3 Angles: Front, Left, Right)", isCompleted: false))
-        reqs.append(SubmissionRequirement(title: "Slate / Introduction Video", isCompleted: false))
-        reqs.append(SubmissionRequirement(title: "Audition Self-Tape Take", isCompleted: false))
+        var reqs: [SubmissionRequirement] = [
+            SubmissionRequirement(title: "Guided Headshots (3 Angles: Front, Left, Right)", isCompleted: false),
+            SubmissionRequirement(title: "Slate / Introduction Video", isCompleted: false),
+            SubmissionRequirement(title: "Audition Self-Tape Take", isCompleted: false)
+        ]
 
-        if lowerText.contains("resume") || lowerText.contains("cv") {
+        if matchesRegex(#"\b(?:resume|cv)\b"#, in: lowerText) {
             reqs.append(SubmissionRequirement(title: "Actor Resume / Bio", isCompleted: false))
         }
-        if lowerText.contains("showreel") || lowerText.contains("demo reel") {
+        if matchesRegex(#"\b(?:showreel|demo\s+reel)\b"#, in: lowerText) {
             reqs.append(SubmissionRequirement(title: "Demo Showreel", isCompleted: false))
         }
 
         result.requirements = reqs
         return result
+    }
+
+    // MARK: - Regex Extraction Helpers
+
+    private func extractPrioritizedEmail(from lines: [String]) -> String {
+        let pattern = #"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
+            return ""
+        }
+
+        var bestEmail = ""
+        var bestScore = Int.min
+
+        for line in lines where !line.isEmpty {
+            let nsRange = NSRange(line.startIndex..., in: line)
+            let matches = regex.matches(in: line, range: nsRange)
+            guard !matches.isEmpty else { continue }
+            let lowerLine = line.lowercased()
+
+            for match in matches {
+                guard let range = Range(match.range, in: line) else { continue }
+                let email = String(line[range])
+                let lowerEmail = email.lowercased()
+
+                var score = 0
+                if lowerLine.contains("submit to") || lowerLine.contains("send to") || lowerLine.contains("send tape") || lowerLine.contains("send self-tape") || lowerLine.contains("submissions") {
+                    score += 100
+                } else if lowerLine.contains("submit") || lowerLine.contains("apply") || lowerLine.contains("deliver to") {
+                    score += 60
+                }
+
+                if lowerLine.contains("casting") {
+                    score += 40
+                }
+                if lowerEmail.contains("casting") || lowerEmail.contains("submissions") || lowerEmail.contains("audition") {
+                    score += 30
+                }
+
+                if score == 0 && (lowerLine.contains("agent") || lowerLine.contains("manager") || lowerLine.contains("contact") || lowerLine.contains("coordinator")) {
+                    score -= 10
+                }
+
+                if score > bestScore {
+                    bestScore = score
+                    bestEmail = email
+                }
+            }
+        }
+
+        return bestEmail
+    }
+
+    private func isTheaterProduction(in lowerText: String) -> Bool {
+        if matchesRegex(#"\b(?:theatre|theater|stage\s+play|one-act\s+play|broadway\s+play)\b"#, in: lowerText) {
+            return true
+        }
+        // Match standalone word "play" (e.g., "a new play") without matching "to play a role".
+        let pattern = #"\bplay\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return false }
+        let matches = regex.matches(in: lowerText, range: NSRange(lowerText.startIndex..., in: lowerText))
+        for match in matches {
+            guard let range = Range(match.range, in: lowerText) else { continue }
+            let before = String(lowerText[..<range.lowerBound])
+            let after = String(lowerText[range.upperBound...])
+            if before.hasSuffix("to ") || after.hasPrefix(" the ") || after.hasPrefix(" a ") || after.hasPrefix(" an ") {
+                continue
+            }
+            return true
+        }
+        return false
+    }
+
+    private func mentionsSquareHeadshot(in lines: [String]) -> Bool {
+        let squareWordRegex = try? NSRegularExpression(pattern: #"\bsquare\b"#, options: .caseInsensitive)
+        let properPlaceRegex = try? NSRegularExpression(pattern: #"\b[A-Z][a-z]+\s+Square\b"#, options: [])
+        let unitRegex = try? NSRegularExpression(pattern: #"\bsquare\s+(?:feet|ft|meters?|m|miles?|km|yards?|blocks?)\b"#, options: .caseInsensitive)
+
+        for line in lines {
+            let range = NSRange(line.startIndex..., in: line)
+            guard squareWordRegex?.firstMatch(in: line, range: range) != nil else { continue }
+
+            let lower = line.lowercased()
+            let hasPhotoContext = lower.contains("headshot")
+                || lower.contains("photo")
+                || lower.contains("ratio")
+                || lower.contains("crop")
+                || lower.contains("aspect")
+                || lower.contains("format")
+                || lower.contains("frame")
+                || lower.contains("image")
+
+            if hasPhotoContext {
+                return true
+            }
+            if unitRegex?.firstMatch(in: line, range: range) != nil {
+                continue
+            }
+            if properPlaceRegex?.firstMatch(in: line, range: range) != nil {
+                continue
+            }
+            return true
+        }
+        return false
+    }
+
+    private func extractSlateSeconds(from text: String) -> Double? {
+        let patterns = [
+            #"(\d+)\s*(?:seconds?|secs?|s)\b(?:\s*|-)?slate\b"#,
+            #"\bslate\b(?:\s*(?:max|maximum|limit|under|up\s+to|:|-|\(|of))*\s*(\d+)\s*(?:seconds?|secs?|s)\b"#
+        ]
+        for pattern in patterns {
+            if let value = firstCaptureDouble(pattern, in: text) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private func extractClipMaxSeconds(from text: String) -> Double? {
+        let minutePatterns = [
+            #"(\d+)\s*(?:-|\s*)(?:minutes?|mins?)\b\s*(?:max\s*)?(?:clip|tape|video|audition|scene|self-?tape)\b"#,
+            #"\b(?:clip|tape|video|audition|scene|self-?tape)\b(?:\s*(?:max|maximum|limit|length|duration|:|-|\(|of))*\s*(\d+)\s*(?:-|\s*)(?:minutes?|mins?)\b"#
+        ]
+        for pattern in minutePatterns {
+            if let mins = firstCaptureDouble(pattern, in: text) {
+                return mins * 60.0
+            }
+        }
+
+        let secondPatterns = [
+            #"(\d+)\s*(?:-|\s*)(?:seconds?|secs?|s)\b\s*(?:max\s*)?(?:clip|tape|video|audition|scene|self-?tape)\b"#,
+            #"\b(?:clip|tape|video|audition|scene|self-?tape)\b(?:\s*(?:max|maximum|limit|length|duration|:|-|\(|of))*\s*(\d+)\s*(?:-|\s*)(?:seconds?|secs?|s)\b"#
+        ]
+        for pattern in secondPatterns {
+            if let secs = firstCaptureDouble(pattern, in: text) {
+                return secs
+            }
+        }
+
+        return nil
+    }
+
+    private func matchesRegex(_ pattern: String, in text: String) -> Bool {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return false }
+        return regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+    }
+
+    private func firstCaptureDouble(_ pattern: String, in text: String) -> Double? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: text) else {
+            return nil
+        }
+        return Double(text[range])
     }
 
     // MARK: - Dialogue & Script Parser
@@ -556,7 +641,7 @@ final class CastingCallParserService: CastingCallParserServiceProtocol {
             return (script, dialogue.cueLines, dialogue.teleprompterLines)
         }
 
-        // If no distinct CHARACTER: format was detected, treat the entire text as a monologue
+        // If no distinct character dialogue was detected, treat the text as a monologue.
         let cleaned = stripStageDirections(from: cleanText).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return ("", [], []) }
 
@@ -566,101 +651,150 @@ final class CastingCallParserService: CastingCallParserServiceProtocol {
     }
 
     private func parseDialogue(from lines: [String]) -> (mainRole: String, cueRole: String, cueLines: [CueLine], teleprompterLines: [String], scriptText: String?) {
-        // Reserved metadata keywords to ignore as speakers:
         let ignoredKeywords: Set<String> = [
-            "PROJECT", "TITLE", "FILM", "MOVIE", "SERIES", "ROLE", "CHARACTER",
-            "ROLE DESCRIPTION", "CHARACTER DESCRIPTION", "BIO", "DEADLINE", "DUE",
-            "SUBMIT", "SUBMISSION", "EMAIL", "CONTACT", "PRODUCER", "DIRECTOR",
-            "WRITER", "CASTING DIRECTOR", "CASTING", "PRODUCTION", "SHOOT DATES",
-            "SHOOT DATE", "LOCATION", "RATE", "PAY", "UNION", "NON-UNION", "STATUS",
-            "NOTE", "NOTES", "REQUIREMENT", "REQUIREMENTS", "AUDITION", "AUDITIONS",
-            "SPEC", "SPECS", "SLATE", "HEADSHOT", "HEADSHOTS", "TAPE", "SELF-TAPE",
-            "SCENE", "INT", "EXT", "DAY", "NIGHT", "CONTINUED", "NOTICE", "CASTING NOTICE",
-            "CASTING CALL", "INFO", "IMPORTANT", "ATTACHMENT", "ATTACHMENTS", "FILE", "FILES"
+            "PROJECT", "PROJECT TITLE", "TITLE", "FILM", "MOVIE", "SERIES", "ROLE", "CHARACTER",
+            "ROLE DESCRIPTION", "CHARACTER DESCRIPTION", "ROLE DETAILS", "PROJECT DETAILS",
+            "ABOUT THE PROJECT", "BIO", "DEADLINE", "DUE", "SUBMIT", "SUBMIT TO", "SEND TO",
+            "SUBMISSION", "SUBMISSIONS", "SUBMISSION DETAILS", "EMAIL", "CONTACT", "PRODUCER",
+            "DIRECTOR", "WRITER", "CASTING DIRECTOR", "CASTING", "CASTING BREAKDOWN",
+            "CHARACTER BREAKDOWN", "PRODUCTION", "SHOOT DATES", "SHOOT DATE", "SHOOT LOCATION",
+            "LOCATION", "RATE", "PAY", "COMPENSATION", "UNION", "NON-UNION", "STATUS",
+            "NOTE", "NOTES", "ADDITIONAL NOTES", "REQUIREMENT", "REQUIREMENTS", "AUDITION",
+            "AUDITIONS", "AUDITION SIDES", "GUIDELINES", "INSTRUCTIONS", "SELF TAPE",
+            "SELF-TAPE", "SELF TAPE INSTRUCTIONS", "SELF-TAPE INSTRUCTIONS", "SPEC", "SPECS",
+            "SLATE", "HEADSHOT", "HEADSHOTS", "TAPE", "CLIP", "LENGTH", "DURATION", "RATIO",
+            "ASPECT RATIO", "FORMAT", "CALLBACK", "CALLBACKS", "TYPE", "WARDROBE", "SYNOPSIS",
+            "STORYLINE", "LOGLINE", "RESUME", "SHOWREEL", "SCENE", "INT", "EXT", "DAY", "NIGHT",
+            "CONTINUED", "NOTICE", "CASTING NOTICE", "CASTING CALL", "INFO", "IMPORTANT",
+            "ATTACHMENT", "ATTACHMENTS", "FILE", "FILES"
         ]
 
-        // Find dialogue pattern:
-        // CHARACTER: dialogue...
-        // or CHARACTER (parenthetical): dialogue...
-        let charPattern = "^([A-Z0-9\\s]{2,25})(?:\\s*\\([^)]*\\))?\\s*:(.*)$"
-        guard let regex = try? NSRegularExpression(pattern: charPattern, options: []) else {
+        let colonCharPattern = #"^([A-Z0-9][A-Z0-9\s.'#-]{1,29}?)(?:\s*\([^)]*\))?\s*:(.*)$"#
+        guard let colonRegex = try? NSRegularExpression(pattern: colonCharPattern, options: []) else {
             return ("", "", [], [], nil)
         }
 
         struct RawSpeech {
             let speaker: String
             var dialogue: String
+            let fromColonFormat: Bool
         }
 
         var speechList: [RawSpeech] = []
         var speakerLineCounts: [String: Int] = [:]
         var currentSpeaker: String?
+        var currentFromColon = false
         var currentBuffer = ""
 
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { continue }
+        func flushCurrentSpeech() {
+            guard let speaker = currentSpeaker else { return }
+            let trimmedDialogue = currentBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedDialogue.isEmpty {
+                speechList.append(RawSpeech(
+                    speaker: speaker,
+                    dialogue: trimmedDialogue,
+                    fromColonFormat: currentFromColon
+                ))
+                speakerLineCounts[speaker, default: 0] += 1
+            }
+            currentSpeaker = nil
+            currentFromColon = false
+            currentBuffer = ""
+        }
 
-            let range = NSRange(trimmed.startIndex..., in: trimmed)
-            if let match = regex.firstMatch(in: trimmed, range: range),
+        for index in lines.indices {
+            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty {
+                // Blank lines separate turns once dialogue has been captured.
+                if !currentBuffer.isEmpty {
+                    flushCurrentSpeech()
+                }
+                continue
+            }
+
+            if Self.isSceneHeading(trimmed) {
+                flushCurrentSpeech()
+                continue
+            }
+
+            let mlPrediction = classifierBox.classify(trimmed)
+
+            // 1. Check explicit COLON dialogue header: "SPEAKER: ..." or "SPEAKER:\ndialogue"
+            let nsRange = NSRange(trimmed.startIndex..., in: trimmed)
+            if let match = colonRegex.firstMatch(in: trimmed, range: nsRange),
                let speakerRange = Range(match.range(at: 1), in: trimmed),
                let dialogueRange = Range(match.range(at: 2), in: trimmed) {
-
-                let speaker = String(trimmed[speakerRange]).trimmingCharacters(in: .whitespaces).uppercased()
+                let rawSpeaker = String(trimmed[speakerRange]).trimmingCharacters(in: .whitespaces)
+                let speaker = rawSpeaker.uppercased()
                 let initialDialogue = String(trimmed[dialogueRange]).trimmingCharacters(in: .whitespaces)
+                let wordCount = speaker.split(whereSeparator: \.isWhitespace).count
 
-                // Check if this matched a metadata header rather than actual dialogue
-                if ignoredKeywords.contains(speaker) || speaker.contains("@") || speaker.contains("HTTP") || speaker.hasSuffix(".COM") {
-                    if let prevSpeaker = currentSpeaker, !currentBuffer.isEmpty {
-                        speechList.append(RawSpeech(speaker: prevSpeaker, dialogue: currentBuffer))
-                        speakerLineCounts[prevSpeaker, default: 0] += 1
-                    }
-                    currentSpeaker = nil
-                    currentBuffer = ""
-                    continue
+                let isIgnored = ignoredKeywords.contains(speaker)
+                    || speaker.contains("@")
+                    || speaker.contains("HTTP")
+                    || speaker.hasSuffix(".COM")
+                    || wordCount > 4
+                    || (mlPrediction?.label == "metadata" && (mlPrediction?.confidence ?? 0) >= 0.85 && initialDialogue.isEmpty)
+                    || (mlPrediction?.label == "scene_heading" && (mlPrediction?.confidence ?? 0) >= 0.85)
+
+                flushCurrentSpeech()
+                if !isIgnored {
+                    currentSpeaker = speaker
+                    currentFromColon = true
+                    currentBuffer = initialDialogue
                 }
+                continue
+            }
 
-                // If previous speaker was ongoing, flush it
-                if let prevSpeaker = currentSpeaker, !currentBuffer.isEmpty {
-                    speechList.append(RawSpeech(speaker: prevSpeaker, dialogue: currentBuffer))
-                    speakerLineCounts[prevSpeaker, default: 0] += 1
-                }
+            // 2. Skip standalone parenthetical / bracket stage directions
+            if Self.isStandaloneParenthetical(trimmed)
+                || (mlPrediction?.label == "parenthetical" && (mlPrediction?.confidence ?? 0) >= 0.8 && trimmed.hasPrefix("(")) {
+                continue
+            }
 
-                currentSpeaker = speaker
-                currentBuffer = initialDialogue
-            } else if let _ = currentSpeaker {
-                // Check if this continuation line is actually a metadata header
+            // 3. Check colonless screenplay character cue followed by dialogue
+            if let cueSpeaker = detectScreenplayCharacterCue(
+                at: index,
+                in: lines,
+                ignoredKeywords: ignoredKeywords,
+                mlPrediction: mlPrediction
+            ) {
+                flushCurrentSpeech()
+                currentSpeaker = cueSpeaker
+                currentFromColon = false
+                currentBuffer = ""
+                continue
+            }
+
+            // 4. Continuation of active speaker's dialogue
+            if currentSpeaker != nil {
                 if let colonIdx = trimmed.firstIndex(of: ":") {
                     let prefix = String(trimmed[..<colonIdx]).trimmingCharacters(in: .whitespaces).uppercased()
-                    if ignoredKeywords.contains(prefix) {
-                        if let prevSpeaker = currentSpeaker, !currentBuffer.isEmpty {
-                            speechList.append(RawSpeech(speaker: prevSpeaker, dialogue: currentBuffer))
-                            speakerLineCounts[prevSpeaker, default: 0] += 1
-                        }
-                        currentSpeaker = nil
-                        currentBuffer = ""
+                    if ignoredKeywords.contains(prefix)
+                        || (mlPrediction?.label == "metadata" && (mlPrediction?.confidence ?? 0) >= 0.85) {
+                        flushCurrentSpeech()
                         continue
                     }
                 }
-
-                // Check if it's stage direction like [hesitates] or (whispers)
-                if trimmed.hasPrefix("(") && trimmed.hasSuffix(")") {
-                    continue
-                }
-                if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
+                if mlPrediction?.label == "scene_heading" && (mlPrediction?.confidence ?? 0) >= 0.85 {
+                    flushCurrentSpeech()
                     continue
                 }
                 currentBuffer += (currentBuffer.isEmpty ? "" : " ") + trimmed
             }
         }
 
-        if let prevSpeaker = currentSpeaker, !currentBuffer.isEmpty {
-            speechList.append(RawSpeech(speaker: prevSpeaker, dialogue: currentBuffer))
-            speakerLineCounts[prevSpeaker, default: 0] += 1
-        }
+        flushCurrentSpeech()
 
-        // Only treat as script if there are genuine dialogue lines
-        guard !speakerLineCounts.isEmpty else {
+        // Require at least one explicit colon speech OR multiple colonless screenplay turns/speakers
+        // (or ML-verified single monologue character cue) to avoid false positives on plain notices.
+        let hasColonSpeech = speechList.contains(where: \.fromColonFormat)
+        let hasMultiSpeakerScreenplay = speakerLineCounts.count >= 2 || speechList.count >= 2
+        let hasSingleMLScreenplayCue = speechList.count == 1
+            && !speechList[0].fromColonFormat
+            && classifierBox.classify(speechList[0].speaker)?.label == "character_cue"
+        guard !speakerLineCounts.isEmpty,
+              (hasColonSpeech || hasMultiSpeakerScreenplay || hasSingleMLScreenplayCue) else {
             return ("", "", [], [], nil)
         }
 
@@ -678,7 +812,10 @@ final class CastingCallParserService: CastingCallParserServiceProtocol {
         }
 
         // Detect character with most lines as actor's main role
-        let sortedSpeakers = speakerLineCounts.sorted { $0.value > $1.value }
+        let sortedSpeakers = speakerLineCounts.sorted { lhs, rhs in
+            if lhs.value != rhs.value { return lhs.value > rhs.value }
+            return lhs.key < rhs.key
+        }
         let mainRole = sortedSpeakers.first?.key ?? "MAIN"
         let cueRole = sortedSpeakers.count > 1 ? sortedSpeakers[1].key : "READER"
 
@@ -717,14 +854,99 @@ final class CastingCallParserService: CastingCallParserServiceProtocol {
         return (mainRole, cueRole, cueLines, teleprompterLines, formattedScript)
     }
 
+    private func detectScreenplayCharacterCue(
+        at index: Int,
+        in lines: [String],
+        ignoredKeywords: Set<String>,
+        mlPrediction: (label: String, confidence: Double)?
+    ) -> String? {
+        let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
+        // Strip trailing screenplay tags such as (V.O.), (O.S.), (CONT'D)
+        let withoutTag = trimmed.replacingOccurrences(
+            of: #"\s*\((?:V\.O\.|O\.S\.|O\.C\.|CONT'D|CONTD|FILTERED|OFF|PRE-LAP)\)\s*$"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        ).trimmingCharacters(in: .whitespaces)
+
+        guard (2...30).contains(withoutTag.count),
+              !withoutTag.contains(":"),
+              !withoutTag.contains("@"),
+              !withoutTag.contains("•"),
+              !withoutTag.hasPrefix("-"),
+              !withoutTag.hasPrefix("*"),
+              withoutTag.rangeOfCharacter(from: .lowercaseLetters) == nil,
+              withoutTag.rangeOfCharacter(from: .letters) != nil else {
+            return nil
+        }
+
+        if withoutTag.hasSuffix("?") || withoutTag.hasSuffix("!") || withoutTag.hasSuffix(",") || withoutTag.hasSuffix(".") {
+            return nil
+        }
+
+        let words = withoutTag.split(whereSeparator: \.isWhitespace)
+        guard (1...4).contains(words.count) else { return nil }
+
+        let upperCandidate = withoutTag.uppercased()
+        if ignoredKeywords.contains(upperCandidate) || Self.isSceneHeading(upperCandidate) {
+            return nil
+        }
+
+        // Reject if the ML classifier strongly identifies this line as non-cue notice metadata or scene heading.
+        if let pred = mlPrediction,
+           (pred.label == "scene_heading" || pred.label == "metadata") && pred.confidence >= 0.75 {
+            return nil
+        }
+
+        // Must be followed immediately (skipping parentheticals, before any blank line) by a non-cue dialogue line.
+        var lookahead = index + 1
+        while lookahead < lines.count {
+            let nextLine = lines[lookahead].trimmingCharacters(in: .whitespaces)
+            if nextLine.isEmpty {
+                return nil
+            }
+            if Self.isStandaloneParenthetical(nextLine) {
+                lookahead += 1
+                continue
+            }
+            if Self.isSceneHeading(nextLine) || nextLine.contains(":") {
+                return nil
+            }
+            let nextHasLowercase = nextLine.rangeOfCharacter(from: .lowercaseLetters) != nil
+            let nextML = classifierBox.classify(nextLine)
+            if let nextML,
+               (nextML.label == "scene_heading" || nextML.label == "metadata") && nextML.confidence >= 0.80 {
+                return nil
+            }
+            if nextHasLowercase || nextML?.label == "dialogue" || mlPrediction?.label == "character_cue" {
+                return upperCandidate
+            }
+            return nil
+        }
+
+        return nil
+    }
+
+    private static func isSceneHeading(_ line: String) -> Bool {
+        let upper = line.trimmingCharacters(in: .whitespaces).uppercased()
+        if upper.hasPrefix("INT.") || upper.hasPrefix("EXT.") || upper.hasPrefix("INT/EXT") || upper.hasPrefix("I/E.") {
+            return true
+        }
+        if upper == "FADE IN:" || upper == "FADE OUT." || upper == "FADE OUT:" || upper.hasPrefix("CUT TO:") || upper.hasPrefix("DISSOLVE TO:") {
+            return true
+        }
+        return false
+    }
+
+    private static func isStandaloneParenthetical(_ line: String) -> Bool {
+        (line.hasPrefix("(") && line.hasSuffix(")")) || (line.hasPrefix("[") && line.hasSuffix("]"))
+    }
+
     private func stripStageDirections(from text: String) -> String {
         var result = text
-        // Strip (parentheticals)
-        if let parenRegex = try? NSRegularExpression(pattern: "\\([^)]*\\)", options: []) {
+        if let parenRegex = try? NSRegularExpression(pattern: #"\([^)]*\)"#, options: []) {
             result = parenRegex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
         }
-        // Strip [brackets]
-        if let bracketRegex = try? NSRegularExpression(pattern: "\\[[^\\]]*\\]", options: []) {
+        if let bracketRegex = try? NSRegularExpression(pattern: #"\[[^\]]*\]"#, options: []) {
             result = bracketRegex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
         }
         return result.replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -751,32 +973,72 @@ final class CastingCallParserService: CastingCallParserServiceProtocol {
     }
 }
 
+// MARK: - Orientation Bridge
+
+private extension CGImagePropertyOrientation {
+    nonisolated init(_ uiOrientation: UIImage.Orientation) {
+        switch uiOrientation {
+        case .up: self = .up
+        case .down: self = .down
+        case .left: self = .left
+        case .right: self = .right
+        case .upMirrored: self = .upMirrored
+        case .downMirrored: self = .downMirrored
+        case .leftMirrored: self = .leftMirrored
+        case .rightMirrored: self = .rightMirrored
+        @unknown default: self = .up
+        }
+    }
+}
+
 // MARK: - Docx XML Parser Delegate
 
-private final class DocxXMLParserDelegate: NSObject, XMLParserDelegate {
+private nonisolated final class DocxXMLParserDelegate: NSObject, XMLParserDelegate {
     var extractedText = ""
     private var isInsideTextElement = false
+    private let maxCharacters: Int
 
-    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String : String] = [:]) {
+    init(maxCharacters: Int) {
+        self.maxCharacters = maxCharacters
+    }
+
+    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
         if elementName == "w:t" {
             isInsideTextElement = true
         } else if elementName == "w:p" {
-            // Paragraph break
             if !extractedText.isEmpty && !extractedText.hasSuffix("\n") {
-                extractedText += "\n"
+                appendLimited("\n", parser: parser)
             }
+        } else if elementName == "w:br" || elementName == "w:cr" {
+            appendLimited("\n", parser: parser)
+        } else if elementName == "w:tab" {
+            appendLimited("\t", parser: parser)
         }
     }
 
     func parser(_ parser: XMLParser, foundCharacters string: String) {
         if isInsideTextElement {
-            extractedText += string
+            appendLimited(string, parser: parser)
         }
     }
 
     func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
         if elementName == "w:t" {
             isInsideTextElement = false
+        }
+    }
+
+    private func appendLimited(_ string: String, parser: XMLParser) {
+        if extractedText.count >= maxCharacters {
+            parser.abortParsing()
+            return
+        }
+        let remaining = maxCharacters - extractedText.count
+        if string.count <= remaining {
+            extractedText += string
+        } else {
+            extractedText += String(string.prefix(remaining))
+            parser.abortParsing()
         }
     }
 }

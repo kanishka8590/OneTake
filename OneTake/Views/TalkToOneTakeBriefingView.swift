@@ -11,12 +11,6 @@ struct TalkToOneTakeBriefingView: View {
     let onReadyToRecord: (String) -> Void
 
     @State private var editableScript: String = ""
-    @State private var isEditingScriptSheet = false
-    @State private var scriptEditBuffer: String = ""
-
-    // ONETAKE TALKS BACK toggles
-    @State private var framingTipsOutLoud: Bool = true
-    @State private var countdownOutLoud: Bool = true
 
     init(
         audition: Audition,
@@ -29,7 +23,6 @@ struct TalkToOneTakeBriefingView: View {
         self.initialScript = scriptPreview
         self.onReadyToRecord = onReadyToRecord
         self._editableScript = State(initialValue: scriptPreview)
-        self._scriptEditBuffer = State(initialValue: scriptPreview)
     }
 
     var body: some View {
@@ -40,25 +33,18 @@ struct TalkToOneTakeBriefingView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        // Header / Avatar
                         headerAvatarSection
 
-                        // In Slate mode: YOUR SLATE section
                         if isSlate {
                             yourSlateSection
                         }
 
-                        // SAY THIS Section
                         sayThisSection
-
-                        // ONETAKE TALKS BACK Section
                         onetakeTalksBackSection
 
                         Spacer(minLength: 24)
 
-                        // Start Recording Primary CTA
                         Button {
-                            dismiss()
                             onReadyToRecord(editableScript)
                         } label: {
                             HStack(spacing: 8) {
@@ -81,7 +67,6 @@ struct TalkToOneTakeBriefingView: View {
             .navigationTitle("Talk to OneTake")
             .navigationBarTitleDisplayMode(.inline)
             .onAppear {
-                // Slate and audition both pass through this one white briefing.
                 VoiceAuthorizationService.shared.requestAccess()
                 populateSlateScriptIfNeeded()
             }
@@ -89,9 +74,6 @@ struct TalkToOneTakeBriefingView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }
-            }
-            .sheet(isPresented: $isEditingScriptSheet) {
-                editScriptSheet
             }
         }
     }
@@ -125,7 +107,6 @@ struct TalkToOneTakeBriefingView: View {
     }
 
     // MARK: - YOUR SLATE Section (Slate mode only)
-    // "This scrolls as you record. Double tap to edit." + lavender-tinted rounded box
 
     private var yourSlateSection: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -142,97 +123,40 @@ struct TalkToOneTakeBriefingView: View {
             }
             .padding(.horizontal, 4)
 
-                TextEditor(text: $editableScript)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Theme.Colors.textPrimary)
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 130)
-                    .padding(10)
-                    .background(Theme.Colors.controlSurface)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.Colors.controlBorder, lineWidth: 1))
-            .padding(16)
-            .background(Theme.Colors.lavenderSurface.opacity(0.85))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
+            TextEditor(text: $editableScript)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Theme.Colors.textPrimary)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 130)
+                .padding(10)
+                .background(Theme.Colors.controlSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.Colors.controlBorder, lineWidth: 1))
+                .padding(16)
+                .background(Theme.Colors.lavenderSurface.opacity(0.85))
+                .clipShape(RoundedRectangle(cornerRadius: 16))
         }
     }
 
-    /// Live navigation can construct this view before SlateProfileSetupView's
-    /// generated text has propagated through SwiftUI state. Build a useful,
-    /// editable script here as well so the teleprompter is never absent.
+    /// Fallback template if navigated here directly before `SlateProfileSetupView`
+    /// populated the script preview. Uses the shared `SlateScriptTemplate`.
     private func populateSlateScriptIfNeeded() {
         guard isSlate, editableScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
         let profile = appState.currentUser
-        let name = nonEmpty(profile?.name, fallback: "your name")
-        let height = nonEmpty(profile?.height, fallback: "your height")
-        let age = profile?.age ?? 0
-        let ageText = age > 0 ? "\(age)" : "your age"
-        let basedIn = nonEmpty(profile?.basedIn, fallback: "your city")
-        let representation = nonEmpty(profile?.representation, fallback: "self-represented")
-        let role = nonEmpty(audition.roleName, fallback: "this role")
-        let project = nonEmpty(audition.projectName, fallback: "this project")
-
-        let template = "Hi, my name is \(name). I am \(height) tall and \(ageText) years old. I am based in \(basedIn) and represented by \(representation). Today I am reading for the role of \(role) in \(project)."
-        editableScript = template
-        scriptEditBuffer = template
-    }
-
-    private func nonEmpty(_ value: String?, fallback: String) -> String {
-        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? fallback : trimmed
-    }
-
-    // MARK: - Edit Script Sheet
-
-    private var editScriptSheet: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Edit Slate Script")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(Theme.Colors.textPrimary)
-
-                TextEditor(text: $scriptEditBuffer)
-                    .font(.system(size: 15))
-                    .foregroundStyle(Theme.Colors.textPrimary)
-                    .padding(12)
-                    .scrollContentBackground(.hidden)
-                    .background(Theme.Colors.controlSurface)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.Colors.controlBorder, lineWidth: 1))
-                    .frame(minHeight: 180)
-
-                Spacer()
-
-                Button {
-                    let trimmed = scriptEditBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmed.isEmpty {
-                        editableScript = trimmed
-                    }
-                    isEditingScriptSheet = false
-                } label: {
-                    Text("Save Changes")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Theme.Colors.onAction)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(Theme.Colors.primaryPlum)
-                        .clipShape(Capsule())
-                }
-            }
-            .padding(24)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { isEditingScriptSheet = false }
-                }
-            }
-        }
-        .presentationDetents([.medium])
+        editableScript = SlateScriptTemplate.build(
+            name: profile?.name ?? "",
+            height: profile?.height ?? "",
+            age: (profile?.age ?? 0) > 0 ? "\(profile?.age ?? 0)" : "",
+            basedIn: profile?.basedIn ?? "",
+            representation: profile?.representation ?? "Self-represented",
+            previousWork: profile?.previousWork ?? [],
+            roleName: audition.roleName,
+            projectName: audition.projectName
+        )
     }
 
     // MARK: - SAY THIS Section
-    // "Action" -> Starts Recording, "Cut" -> Stops Recording, "How do I look?" -> Checks framing and light
 
     private var sayThisSection: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -275,7 +199,6 @@ struct TalkToOneTakeBriefingView: View {
     }
 
     // MARK: - ONETAKE TALKS BACK Section
-    // Toggles: Framing tips out loud, Count down out loud
 
     private var onetakeTalksBackSection: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -292,9 +215,10 @@ struct TalkToOneTakeBriefingView: View {
 
                     Spacer()
 
-                    Toggle("", isOn: $framingTipsOutLoud)
+                    Toggle("", isOn: Bindable(appState.settings).framingTipsOutLoud)
                         .tint(Theme.Colors.accent)
                         .labelsHidden()
+                        .accessibilityLabel("Framing tips out loud")
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
@@ -308,9 +232,10 @@ struct TalkToOneTakeBriefingView: View {
 
                     Spacer()
 
-                    Toggle("", isOn: $countdownOutLoud)
+                    Toggle("", isOn: Bindable(appState.settings).countdownOutLoud)
                         .tint(Theme.Colors.accent)
                         .labelsHidden()
+                        .accessibilityLabel("Count down out loud")
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)

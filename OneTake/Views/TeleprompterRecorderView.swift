@@ -143,6 +143,8 @@ struct TeleprompterRecorderView: View {
                 selectedCountdownSeconds = appState.settings.countdownSeconds
                 scrollSpeed = appState.settings.teleprompterScrollSpeed
                 recorderService.defaultCountdownSeconds = selectedCountdownSeconds
+                recorderService.voiceGuidanceEnabled = appState.settings.framingTipsOutLoud
+                recorderService.countdownOutLoud = appState.settings.countdownOutLoud
                 if !audition.cueLines.isEmpty {
                     cueTimingMode = .afterMyLine
                 }

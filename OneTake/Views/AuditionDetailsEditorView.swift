@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import PhotosUI
+import UniformTypeIdentifiers
 
 enum ActiveEditorSheet: Identifiable {
     case projectName
@@ -13,6 +14,27 @@ enum ActiveEditorSheet: Identifiable {
     var id: Int { hashValue }
 }
 
+private enum PendingSidesSource {
+    case photo
+    case scan
+    case file
+    case paste
+}
+
+private struct EditorSnapshot: Equatable {
+    var projectName: String
+    var productionType: ProductionType
+    var roleName: String
+    var roleDescription: String
+    var deadline: Date
+    var reminderOffsetMinutes: Int
+    var recipientEmail: String
+    var requirements: [SubmissionRequirement]
+    var scriptText: String
+    var scriptFileName: String?
+    var cueLines: [CueLine]
+}
+
 struct AuditionDetailsEditorView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
@@ -22,7 +44,9 @@ struct AuditionDetailsEditorView: View {
     var onSaved: ((Audition) -> Void)?
 
     @State private var activeSheet: ActiveEditorSheet?
-    @State private var showingSaveSuccess = false
+    @State private var pendingSidesSource: PendingSidesSource?
+    @State private var initialSnapshot: EditorSnapshot?
+    @State private var hasInitialized = false
 
     // Editable properties
     @State private var projectName: String = ""
@@ -37,6 +61,16 @@ struct AuditionDetailsEditorView: View {
     @State private var scriptFileName: String? = nil
     @State private var cueLines: [CueLine] = []
 
+    // Sub-sheet draft buffers (committed only on Done)
+    @State private var draftProjectName: String = ""
+    @State private var draftRoleName: String = ""
+    @State private var draftRoleDescription: String = ""
+    @State private var draftDeadline: Date = Date()
+    @State private var draftReminderOffsetMinutes: Int = 60
+    @State private var draftRecipientEmail: String = ""
+    @State private var draftRequirements: [SubmissionRequirement] = []
+    @State private var newRequirementTitle = ""
+
     // Importer states for Script Sides (supports multi-photo and multi-file)
     @State private var selectedSidesPhotoItems: [PhotosPickerItem] = []
     @State private var showingSidesPhotoPicker = false
@@ -46,8 +80,56 @@ struct AuditionDetailsEditorView: View {
     @State private var pastedScriptBuffer = ""
     @State private var isProcessingSides = false
 
+    // Alerts & confirmations
+    @State private var validationErrorMessage: String?
+    @State private var showingValidationAlert = false
+    @State private var showingPastDeadlineAlert = false
+    @State private var importErrorMessage: String?
+    @State private var showingImportError = false
+    @State private var showingDiscardConfirmation = false
+
     private var isEditingExisting: Bool {
         existingAudition != nil
+    }
+
+    private var currentSnapshot: EditorSnapshot {
+        EditorSnapshot(
+            projectName: projectName,
+            productionType: productionType,
+            roleName: roleName,
+            roleDescription: roleDescription,
+            deadline: deadline,
+            reminderOffsetMinutes: reminderOffsetMinutes,
+            recipientEmail: recipientEmail,
+            requirements: requirements,
+            scriptText: scriptText,
+            scriptFileName: scriptFileName,
+            cueLines: cueLines
+        )
+    }
+
+    private var hasUnsavedChanges: Bool {
+        guard let initialSnapshot else { return false }
+        return currentSnapshot != initialSnapshot
+    }
+
+    private var isProjectNameValid: Bool {
+        !projectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var isRoleNameValid: Bool {
+        !roleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var isRecipientEmailValid: Bool {
+        let trimmed = recipientEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+        let pattern = #"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"#
+        return trimmed.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    private var isDeadlineInPast: Bool {
+        deadline < Date()
     }
 
     var body: some View {
@@ -58,7 +140,6 @@ struct AuditionDetailsEditorView: View {
 
                 ScrollView {
                     VStack(spacing: 20) {
-                        // Notice Header Banner
                         headerCard
 
                         // Section 1: Audition & Production Info
@@ -71,20 +152,22 @@ struct AuditionDetailsEditorView: View {
                             VStack(spacing: 0) {
                                 editableRow(
                                     title: "Project Name",
-                                    value: projectName.isEmpty ? "Tap to add" : projectName,
-                                    icon: "film"
+                                    value: isProjectNameValid ? projectName : "Required — tap to add",
+                                    icon: "film",
+                                    isWarning: !isProjectNameValid
                                 ) {
-                                    activeSheet = .projectName
+                                    openSheet(.projectName)
                                 }
 
                                 Divider().padding(.leading, 44)
 
                                 editableRow(
                                     title: "Role & Character",
-                                    value: roleName.isEmpty ? "Tap to add" : roleName,
-                                    icon: "person.text.rectangle"
+                                    value: isRoleNameValid ? roleName : "Required — tap to add",
+                                    icon: "person.text.rectangle",
+                                    isWarning: !isRoleNameValid
                                 ) {
-                                    activeSheet = .roleName
+                                    openSheet(.roleName)
                                 }
 
                                 Divider().padding(.leading, 44)
@@ -125,10 +208,25 @@ struct AuditionDetailsEditorView: View {
                             VStack(spacing: 0) {
                                 editableRow(
                                     title: "Deadline & Reminder",
-                                    value: "\(deadline.formatted(date: .abbreviated, time: .shortened))",
-                                    icon: "calendar.badge.clock"
+                                    value: deadline.formatted(date: .abbreviated, time: .shortened),
+                                    icon: "calendar.badge.clock",
+                                    isWarning: isDeadlineInPast
                                 ) {
-                                    activeSheet = .deadline
+                                    openSheet(.deadline)
+                                }
+
+                                if isDeadlineInPast {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(Theme.Colors.warningAmber)
+                                        Text("This deadline is in the past. Local reminders will not fire.")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(Theme.Colors.warningAmber)
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.bottom, 10)
                                 }
 
                                 Divider().padding(.leading, 44)
@@ -136,9 +234,24 @@ struct AuditionDetailsEditorView: View {
                                 editableRow(
                                     title: "Recipient Email",
                                     value: recipientEmail.isEmpty ? "Not specified (add email)" : recipientEmail,
-                                    icon: "envelope.fill"
+                                    icon: "envelope.fill",
+                                    isWarning: !isRecipientEmailValid
                                 ) {
-                                    activeSheet = .recipientEmail
+                                    openSheet(.recipientEmail)
+                                }
+
+                                if !isRecipientEmailValid {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "exclamationmark.circle.fill")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(Theme.Colors.errorCrimson)
+                                        Text("Please enter a valid email address.")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(Theme.Colors.errorCrimson)
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.bottom, 10)
                                 }
                             }
                             .cardStyle()
@@ -154,7 +267,7 @@ struct AuditionDetailsEditorView: View {
                                 Spacer()
 
                                 Button {
-                                    activeSheet = .requirements
+                                    openSheet(.requirements)
                                 } label: {
                                     Text("Edit")
                                         .font(Theme.Typography.captionBadge)
@@ -190,7 +303,7 @@ struct AuditionDetailsEditorView: View {
                             .cardStyle()
                         }
 
-                        // Section 4: Script Sides (Strict Separation: No breakdown/instructions in script)
+                        // Section 4: Script Sides
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
                                 Text("Script Sides")
@@ -201,7 +314,7 @@ struct AuditionDetailsEditorView: View {
 
                                 if !scriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                     Button {
-                                        activeSheet = .attachSides
+                                        openSheet(.attachSides)
                                     } label: {
                                         Text("Change Sides")
                                             .font(Theme.Typography.captionBadge)
@@ -212,17 +325,15 @@ struct AuditionDetailsEditorView: View {
                             .padding(.horizontal, 4)
 
                             if scriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                // Add Script Sides (Optional) Card
                                 addScriptSidesOptionalCard
                             } else {
-                                // Sides Attached Card
                                 sidesAttachedCard
                             }
                         }
 
                         // Save Audition Button
                         Button {
-                            saveAudition()
+                            attemptSaveAudition()
                         } label: {
                             Text(isEditingExisting ? "Save Changes" : "Save the Audition")
                                 .primaryCapsuleButton()
@@ -233,20 +344,45 @@ struct AuditionDetailsEditorView: View {
                     .padding(.horizontal, Theme.Layout.screenHPadding)
                     .padding(.top, 16)
                 }
+
+                if isProcessingSides {
+                    ZStack {
+                        Color.black.opacity(0.18).ignoresSafeArea()
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .controlSize(.large)
+                                .tint(Theme.Colors.accent)
+                            Text("Extracting Sides…")
+                                .font(Theme.Typography.sectionHeader)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                        }
+                        .padding(24)
+                        .background(Theme.Colors.cardSurface, in: RoundedRectangle(cornerRadius: 20))
+                        .shadow(color: .black.opacity(0.16), radius: 16, y: 6)
+                    }
+                }
             }
             .navigationTitle(isEditingExisting ? "Edit Audition Details" : "Audition Details")
             .navigationBarTitleDisplayMode(.inline)
+            .interactiveDismissDisabled(hasUnsavedChanges)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
-                        dismiss()
+                        if hasUnsavedChanges {
+                            showingDiscardConfirmation = true
+                        } else {
+                            dismiss()
+                        }
                     }
                 }
             }
             .onAppear {
-                initializeValues()
+                if !hasInitialized {
+                    initializeValues()
+                    hasInitialized = true
+                }
             }
-            .sheet(item: $activeSheet) { sheet in
+            .sheet(item: $activeSheet, onDismiss: triggerPendingSidesSource) { sheet in
                 switch sheet {
                 case .projectName:
                     editProjectNameSheet
@@ -262,7 +398,6 @@ struct AuditionDetailsEditorView: View {
                     attachSidesSheet
                 }
             }
-            // Multi-Photo Picker for Sides
             .photosPicker(
                 isPresented: $showingSidesPhotoPicker,
                 selection: $selectedSidesPhotoItems,
@@ -275,7 +410,6 @@ struct AuditionDetailsEditorView: View {
                 selectedSidesPhotoItems = []
                 loadSidesPhotos(toProcess)
             }
-            // Document Scanner for Sides
             .sheet(isPresented: $showingDocumentScanner) {
                 DocumentScannerRepresentable { images in
                     showingDocumentScanner = false
@@ -283,9 +417,11 @@ struct AuditionDetailsEditorView: View {
                     processSidesScannedImages(images)
                 } onCancel: {
                     showingDocumentScanner = false
+                } onError: { error in
+                    showingDocumentScanner = false
+                    presentImportError(error.localizedDescription)
                 }
             }
-            // Multi-File Importer for Sides
             .fileImporter(
                 isPresented: $showingFileImporter,
                 allowedContentTypes: [.pdf, .plainText, .data],
@@ -293,14 +429,45 @@ struct AuditionDetailsEditorView: View {
             ) { result in
                 handleSidesFileImport(result)
             }
-            // Paste Editor for Sides
             .sheet(isPresented: $showingPasteEditor) {
                 pasteSidesEditorSheet
+            }
+            .alert("Cannot Save Audition", isPresented: $showingValidationAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(validationErrorMessage ?? "Please check the required fields.")
+            }
+            .alert("Deadline Is in the Past", isPresented: $showingPastDeadlineAlert) {
+                Button("Edit Deadline", role: .cancel) {
+                    openSheet(.deadline)
+                }
+                Button("Save Anyway") {
+                    commitSaveAudition()
+                }
+            } message: {
+                Text("The submission deadline has already passed, so deadline reminders will not be scheduled. Save anyway?")
+            }
+            .alert("Sides Import Failed", isPresented: $showingImportError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(importErrorMessage ?? "Unable to extract script sides from the selected source.")
+            }
+            .confirmationDialog(
+                "Discard Unsaved Changes?",
+                isPresented: $showingDiscardConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Discard Changes", role: .destructive) {
+                    dismiss()
+                }
+                Button("Keep Editing", role: .cancel) {}
+            } message: {
+                Text("Your edits to this audition haven't been saved yet.")
             }
         }
     }
 
-    // MARK: - Initializer
+    // MARK: - Initializer & Sheet Routing
 
     private func initializeValues() {
         if let existing = existingAudition {
@@ -323,7 +490,6 @@ struct AuditionDetailsEditorView: View {
             deadline = call.deadline
             recipientEmail = call.recipientEmail
             requirements = call.requirements
-            // STRICT SEPARATION: ONLY set scriptText if genuine dialogue/monologue lines were detected
             if let script = call.detectedScriptText, !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 scriptText = script
                 scriptFileName = "Extracted Sides"
@@ -333,6 +499,44 @@ struct AuditionDetailsEditorView: View {
                 scriptFileName = nil
                 cueLines = []
             }
+        }
+        initialSnapshot = currentSnapshot
+    }
+
+    private func openSheet(_ sheet: ActiveEditorSheet) {
+        switch sheet {
+        case .projectName:
+            draftProjectName = projectName
+        case .roleName:
+            draftRoleName = roleName
+            draftRoleDescription = roleDescription
+        case .deadline:
+            draftDeadline = deadline
+            draftReminderOffsetMinutes = reminderOffsetMinutes
+        case .recipientEmail:
+            draftRecipientEmail = recipientEmail
+        case .requirements:
+            draftRequirements = requirements
+            newRequirementTitle = ""
+        case .attachSides:
+            break
+        }
+        activeSheet = sheet
+    }
+
+    private func triggerPendingSidesSource() {
+        guard let source = pendingSidesSource else { return }
+        pendingSidesSource = nil
+        switch source {
+        case .photo:
+            showingSidesPhotoPicker = true
+        case .scan:
+            showingDocumentScanner = true
+        case .file:
+            showingFileImporter = true
+        case .paste:
+            pastedScriptBuffer = scriptText
+            showingPasteEditor = true
         }
     }
 
@@ -362,7 +566,7 @@ struct AuditionDetailsEditorView: View {
         .cardStyle()
     }
 
-    // MARK: - "Add Script Sides (Optional)" Card (Requirement 3)
+    // MARK: - "Add Script Sides (Optional)" Card
 
     private var addScriptSidesOptionalCard: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -382,7 +586,6 @@ struct AuditionDetailsEditorView: View {
                     .foregroundStyle(Theme.Colors.textSecondary)
             }
 
-            // 4 Option Buttons in a clean horizontal row
             HStack(spacing: 0) {
                 sidesImportOptionButton(title: "Photo", systemImage: "photo") {
                     showingSidesPhotoPicker = true
@@ -467,7 +670,7 @@ struct AuditionDetailsEditorView: View {
 
             HStack {
                 Button {
-                    activeSheet = .attachSides
+                    openSheet(.attachSides)
                 } label: {
                     Label("Change Sides", systemImage: "arrow.triangle.2.circlepath")
                         .font(Theme.Typography.captionBadge)
@@ -494,12 +697,18 @@ struct AuditionDetailsEditorView: View {
     }
 
     @ViewBuilder
-    private func editableRow(title: String, value: String, icon: String, action: @escaping () -> Void) -> some View {
+    private func editableRow(
+        title: String,
+        value: String,
+        icon: String,
+        isWarning: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: icon)
                     .font(.system(size: 16))
-                    .foregroundStyle(Theme.Colors.accent)
+                    .foregroundStyle(isWarning ? Theme.Colors.warningAmber : Theme.Colors.accent)
                     .frame(width: 28)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -509,7 +718,7 @@ struct AuditionDetailsEditorView: View {
 
                     Text(value)
                         .font(Theme.Typography.bodyRegular)
-                        .foregroundStyle(Theme.Colors.textPrimary)
+                        .foregroundStyle(isWarning ? Theme.Colors.errorCrimson : Theme.Colors.textPrimary)
                         .lineLimit(1)
                 }
 
@@ -526,48 +735,81 @@ struct AuditionDetailsEditorView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Save Action (Creates or Updates)
+    // MARK: - Validation & Save Action
 
-    private func saveAudition() {
+    private func attemptSaveAudition() {
+        if !isProjectNameValid {
+            validationErrorMessage = "Please enter a project name before saving."
+            showingValidationAlert = true
+            return
+        }
+        if !isRoleNameValid {
+            validationErrorMessage = "Please enter a role or character name before saving."
+            showingValidationAlert = true
+            return
+        }
+        if !isRecipientEmailValid {
+            validationErrorMessage = "The recipient email address does not appear to be valid."
+            showingValidationAlert = true
+            return
+        }
+        if isDeadlineInPast {
+            showingPastDeadlineAlert = true
+            return
+        }
+        commitSaveAudition()
+    }
+
+    private func commitSaveAudition() {
+        let trimmedProject = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedRole = roleName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedRoleDesc = roleDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedEmail = recipientEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+
         let rules = existingAudition?.validationRules ?? ValidationRules(
             isFromNotice: true,
             requiredHeadshotRatio: parsedCall?.requiredHeadshotRatio ?? .ratio4x5,
             maxSlateSeconds: parsedCall?.maxSlateSeconds ?? 45.0,
             maxClipSeconds: parsedCall?.maxClipSeconds ?? 180.0,
             requiredPortrait: nil,
-            fileNamePattern: "\(roleName.replacingOccurrences(of: " ", with: "_"))_Audition",
+            fileNamePattern: "\(trimmedRole.replacingOccurrences(of: " ", with: "_"))_Audition",
             maxPerClipSizeMB: parsedCall?.maxPerClipSizeMB ?? 100.0
         )
 
         let cleanScriptText = scriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : scriptText
 
         if let existing = existingAudition {
-            existing.projectName = projectName.trimmingCharacters(in: .whitespaces)
+            cleanupOrphanedCueAudio(previousCues: existing.cueLines, newCues: cueLines)
+
+            existing.projectName = trimmedProject
             existing.production = productionType
-            existing.roleName = roleName.trimmingCharacters(in: .whitespaces)
-            existing.roleDescription = roleDescription.trimmingCharacters(in: .whitespaces)
+            existing.roleName = trimmedRole
+            existing.roleDescription = trimmedRoleDesc
             existing.deadline = deadline
             existing.reminderOffsetMinutes = reminderOffsetMinutes
-            existing.recipientEmail = recipientEmail.trimmingCharacters(in: .whitespaces)
+            existing.recipientEmail = trimmedEmail
             existing.requirements = requirements
             existing.scriptText = cleanScriptText
             existing.scriptFileName = cleanScriptText == nil ? nil : scriptFileName
             existing.cueLines = cueLines
             existing.validationRules = rules
 
-            try? appState.modelContext?.save()
-            appState.loadData()
+            appState.saveChanges()
+            AuditionReminderService.reschedule(
+                auditions: appState.auditions,
+                enabled: appState.settings.notifyAuditions
+            )
             onSaved?(existing)
             dismiss()
         } else {
             let audition = Audition(
-                projectName: projectName.trimmingCharacters(in: .whitespaces),
+                projectName: trimmedProject,
                 productionType: productionType.rawValue,
-                roleName: roleName.trimmingCharacters(in: .whitespaces),
-                roleDescription: roleDescription.trimmingCharacters(in: .whitespaces),
+                roleName: trimmedRole,
+                roleDescription: trimmedRoleDesc,
                 deadline: deadline,
                 reminderOffsetMinutes: reminderOffsetMinutes,
-                recipientEmail: recipientEmail.trimmingCharacters(in: .whitespaces),
+                recipientEmail: trimmedEmail,
                 requirements: requirements,
                 scriptText: cleanScriptText,
                 scriptFileName: cleanScriptText == nil ? nil : scriptFileName,
@@ -576,125 +818,216 @@ struct AuditionDetailsEditorView: View {
             )
 
             appState.addAudition(audition)
+            AuditionReminderService.reschedule(
+                auditions: appState.auditions,
+                enabled: appState.settings.notifyAuditions
+            )
             onSaved?(audition)
             dismiss()
+        }
+    }
+
+    private func cleanupOrphanedCueAudio(previousCues: [CueLine], newCues: [CueLine]) {
+        let keptPaths = Set(newCues.compactMap { cue -> String? in
+            guard let path = cue.audioFilePath else { return nil }
+            return MediaStorage.storedRelativePath(for: path)
+        })
+        for oldCue in previousCues {
+            guard let path = oldCue.audioFilePath else { continue }
+            let normalized = MediaStorage.storedRelativePath(for: path)
+            if !keptPaths.contains(normalized) {
+                MediaStorage.removeFile(at: path)
+            }
         }
     }
 
     // MARK: - Process Sides Imports
 
     private func loadSidesPhotos(_ items: [PhotosPickerItem]) {
+        isProcessingSides = true
+        let fallbackRole = roleName.isEmpty ? "ACTOR" : roleName
+
         Task {
-            var images: [UIImage] = []
-            for item in items {
-                if let data = try? await item.loadTransferable(type: Data.self),
-                   let image = UIImage(data: data) {
-                    images.append(image)
+            do {
+                var images: [UIImage] = []
+                for item in items {
+                    if let data = try await item.loadTransferable(type: Data.self),
+                       let image = UIImage(data: data) {
+                        images.append(image)
+                    }
                 }
-            }
 
-            guard !images.isEmpty else { return }
-            var combinedText = ""
-            for img in images {
-                let txt = (try? await CastingCallParserService.shared.extractRawText(from: img)) ?? ""
-                if !txt.isEmpty {
-                    combinedText += (combinedText.isEmpty ? "" : "\n\n") + txt
+                guard !images.isEmpty else {
+                    await MainActor.run {
+                        self.isProcessingSides = false
+                        self.presentImportError("Could not load any images from the selected photos.")
+                    }
+                    return
                 }
-            }
 
-            let parsed = CastingCallParserService.shared.parseSidesText(
-                combinedText,
-                defaultRole: roleName.isEmpty ? "ACTOR" : roleName
-            )
+                var combinedText = ""
+                for img in images {
+                    let txt = try await CastingCallParserService.shared.extractRawText(from: img)
+                    let trimmed = txt.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        combinedText += (combinedText.isEmpty ? "" : "\n\n") + trimmed
+                    }
+                }
 
-            await MainActor.run {
-                self.scriptText = parsed.scriptText
-                self.scriptFileName = items.count > 1 ? "\(items.count) Sides Photos" : "Sides Photo"
-                self.cueLines = parsed.cueLines
+                let parsed = CastingCallParserService.shared.parseSidesText(combinedText, defaultRole: fallbackRole)
+                await MainActor.run {
+                    self.isProcessingSides = false
+                    guard !parsed.scriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        self.presentImportError("No readable script text was found in the selected photos. Existing sides were kept unchanged.")
+                        return
+                    }
+                    self.scriptText = parsed.scriptText
+                    self.scriptFileName = items.count > 1 ? "\(items.count) Sides Photos" : "Sides Photo"
+                    self.cueLines = parsed.cueLines
+                }
+            } catch {
+                await MainActor.run {
+                    self.isProcessingSides = false
+                    self.presentImportError(error.localizedDescription)
+                }
             }
         }
     }
 
     private func processSidesScannedImages(_ images: [UIImage]) {
+        isProcessingSides = true
+        let fallbackRole = roleName.isEmpty ? "ACTOR" : roleName
+
         Task {
-            var combinedText = ""
-            for img in images {
-                let txt = (try? await CastingCallParserService.shared.extractRawText(from: img)) ?? ""
-                if !txt.isEmpty {
-                    combinedText += (combinedText.isEmpty ? "" : "\n\n") + txt
+            do {
+                var combinedText = ""
+                for img in images {
+                    let txt = try await CastingCallParserService.shared.extractRawText(from: img)
+                    let trimmed = txt.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        combinedText += (combinedText.isEmpty ? "" : "\n\n") + trimmed
+                    }
                 }
-            }
 
-            let parsed = CastingCallParserService.shared.parseSidesText(
-                combinedText,
-                defaultRole: roleName.isEmpty ? "ACTOR" : roleName
-            )
-
-            await MainActor.run {
-                self.scriptText = parsed.scriptText
-                self.scriptFileName = images.count > 1 ? "\(images.count) Scanned Pages" : "Scanned Sides.jpg"
-                self.cueLines = parsed.cueLines
+                let parsed = CastingCallParserService.shared.parseSidesText(combinedText, defaultRole: fallbackRole)
+                await MainActor.run {
+                    self.isProcessingSides = false
+                    guard !parsed.scriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        self.presentImportError("No readable text was detected in the scanned pages. Existing sides were kept unchanged.")
+                        return
+                    }
+                    self.scriptText = parsed.scriptText
+                    self.scriptFileName = images.count > 1 ? "\(images.count) Scanned Pages" : "Scanned Sides.jpg"
+                    self.cueLines = parsed.cueLines
+                }
+            } catch {
+                await MainActor.run {
+                    self.isProcessingSides = false
+                    self.presentImportError(error.localizedDescription)
+                }
             }
         }
     }
 
     private func handleSidesFileImport(_ result: Result<[URL], Error>) {
-        if case .success(let urls) = result, !urls.isEmpty {
+        switch result {
+        case .failure(let error):
+            presentImportError(error.localizedDescription)
+        case .success(let urls):
+            guard !urls.isEmpty else { return }
+            isProcessingSides = true
+            let fallbackRole = roleName.isEmpty ? "ACTOR" : roleName
+
             Task {
-                var combinedText = ""
-                for url in urls {
-                    let accessing = url.startAccessingSecurityScopedResource()
-                    defer {
-                        if accessing {
-                            url.stopAccessingSecurityScopedResource()
+                do {
+                    var combinedText = ""
+                    var firstError: Error?
+
+                    for url in urls {
+                        let accessing = url.startAccessingSecurityScopedResource()
+                        defer {
+                            if accessing {
+                                url.stopAccessingSecurityScopedResource()
+                            }
+                        }
+
+                        do {
+                            let data = try Data(contentsOf: url)
+                            let filename = url.lastPathComponent.lowercased()
+
+                            let extracted: String
+                            if filename.hasSuffix(".pdf") {
+                                extracted = try await CastingCallParserService.shared.extractRawText(fromPDF: data)
+                            } else if filename.hasSuffix(".docx") {
+                                extracted = try await CastingCallParserService.shared.extractRawText(fromDocx: data)
+                            } else if let image = UIImage(data: data) {
+                                extracted = try await CastingCallParserService.shared.extractRawText(from: image)
+                            } else {
+                                extracted = String(data: data, encoding: .utf8) ?? ""
+                            }
+
+                            let trimmed = extracted.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !trimmed.isEmpty {
+                                combinedText += (combinedText.isEmpty ? "" : "\n\n") + trimmed
+                            }
+                        } catch {
+                            if firstError == nil {
+                                firstError = error
+                            }
                         }
                     }
 
-                    guard let data = try? Data(contentsOf: url) else { continue }
-                    let filename = url.lastPathComponent.lowercased()
-
-                    let extracted: String
-                    if filename.hasSuffix(".pdf") {
-                        extracted = (try? await CastingCallParserService.shared.extractRawText(fromPDF: data)) ?? ""
-                    } else if filename.hasSuffix(".docx") {
-                        extracted = (try? await CastingCallParserService.shared.extractRawText(fromDocx: data)) ?? ""
-                    } else {
-                        extracted = String(data: data, encoding: .utf8) ?? ""
+                    if combinedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let firstError {
+                        throw firstError
                     }
 
-                    if !extracted.isEmpty {
-                        combinedText += (combinedText.isEmpty ? "" : "\n\n") + extracted
+                    let parsed = CastingCallParserService.shared.parseSidesText(combinedText, defaultRole: fallbackRole)
+                    await MainActor.run {
+                        self.isProcessingSides = false
+                        guard !parsed.scriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                            self.presentImportError("No readable script text was found in the selected files. Existing sides were kept unchanged.")
+                            return
+                        }
+                        self.scriptText = parsed.scriptText
+                        self.scriptFileName = urls.count > 1 ? "\(urls.count) Files Attached" : (urls.first?.lastPathComponent ?? "Sides")
+                        self.cueLines = parsed.cueLines
                     }
-                }
-
-                let parsed = CastingCallParserService.shared.parseSidesText(
-                    combinedText,
-                    defaultRole: roleName.isEmpty ? "ACTOR" : roleName
-                )
-
-                await MainActor.run {
-                    self.scriptText = parsed.scriptText
-                    self.scriptFileName = urls.count > 1 ? "\(urls.count) Files Attached" : (urls.first?.lastPathComponent ?? "Sides")
-                    self.cueLines = parsed.cueLines
+                } catch {
+                    await MainActor.run {
+                        self.isProcessingSides = false
+                        self.presentImportError(error.localizedDescription)
+                    }
                 }
             }
         }
     }
 
-    // MARK: - Native Sheet Editors
+    private func presentImportError(_ message: String) {
+        importErrorMessage = message
+        showingImportError = true
+    }
+
+    // MARK: - Native Sheet Editors (Draft-buffered with Cancel / Done)
 
     private var editProjectNameSheet: some View {
         NavigationStack {
             Form {
                 Section("Project Name") {
-                    TextField("Enter project title", text: $projectName)
+                    TextField("Enter project title", text: $draftProjectName)
                 }
             }
             .navigationTitle("Project Name")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { activeSheet = nil }
+                }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { activeSheet = nil }
+                    Button("Done") {
+                        projectName = draftProjectName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        activeSheet = nil
+                    }
+                    .disabled(draftProjectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
@@ -705,18 +1038,26 @@ struct AuditionDetailsEditorView: View {
         NavigationStack {
             Form {
                 Section("Character / Role Name") {
-                    TextField("Enter role name", text: $roleName)
+                    TextField("Enter role name", text: $draftRoleName)
                 }
                 Section("Role Description") {
-                    TextField("Character brief / age / details", text: $roleDescription, axis: .vertical)
+                    TextField("Character brief / age / details", text: $draftRoleDescription, axis: .vertical)
                         .lineLimit(3...6)
                 }
             }
             .navigationTitle("Role Details")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { activeSheet = nil }
+                }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { activeSheet = nil }
+                    Button("Done") {
+                        roleName = draftRoleName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        roleDescription = draftRoleDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+                        activeSheet = nil
+                    }
+                    .disabled(draftRoleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
@@ -727,11 +1068,11 @@ struct AuditionDetailsEditorView: View {
         NavigationStack {
             Form {
                 Section("Deadline") {
-                    DatePicker("Submission Deadline", selection: $deadline, displayedComponents: [.date, .hourAndMinute])
+                    DatePicker("Submission Deadline", selection: $draftDeadline, displayedComponents: [.date, .hourAndMinute])
                 }
 
                 Section("Reminder") {
-                    Picker("Notify Me", selection: $reminderOffsetMinutes) {
+                    Picker("Notify Me", selection: $draftReminderOffsetMinutes) {
                         Text("30 minutes before").tag(30)
                         Text("1 hour before").tag(60)
                         Text("2 hours before").tag(120)
@@ -742,8 +1083,15 @@ struct AuditionDetailsEditorView: View {
             .navigationTitle("Deadline & Reminder")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { activeSheet = nil }
+                }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { activeSheet = nil }
+                    Button("Done") {
+                        deadline = draftDeadline
+                        reminderOffsetMinutes = draftReminderOffsetMinutes
+                        activeSheet = nil
+                    }
                 }
             }
         }
@@ -754,7 +1102,7 @@ struct AuditionDetailsEditorView: View {
         NavigationStack {
             Form {
                 Section("Casting / Submission Email") {
-                    TextField("e.g. casting@agency.com", text: $recipientEmail)
+                    TextField("e.g. casting@agency.com", text: $draftRecipientEmail)
                         .keyboardType(.emailAddress)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -763,20 +1111,25 @@ struct AuditionDetailsEditorView: View {
             .navigationTitle("Recipient Email")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { activeSheet = nil }
+                }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { activeSheet = nil }
+                    Button("Done") {
+                        recipientEmail = draftRecipientEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+                        activeSheet = nil
+                    }
                 }
             }
         }
         .presentationDetents([.fraction(0.35)])
     }
 
-    @State private var newRequirementTitle = ""
     private var editRequirementsSheet: some View {
         NavigationStack {
             List {
                 Section("Current Requirements") {
-                    ForEach(requirements) { req in
+                    ForEach(draftRequirements) { req in
                         HStack {
                             Text(req.title)
                                 .font(Theme.Typography.bodyRegular)
@@ -784,7 +1137,7 @@ struct AuditionDetailsEditorView: View {
                         }
                     }
                     .onDelete { indexSet in
-                        requirements.remove(atOffsets: indexSet)
+                        draftRequirements.remove(atOffsets: indexSet)
                     }
                 }
 
@@ -792,21 +1145,29 @@ struct AuditionDetailsEditorView: View {
                     HStack {
                         TextField("New requirement...", text: $newRequirementTitle)
                         Button {
-                            guard !newRequirementTitle.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                            requirements.append(SubmissionRequirement(title: newRequirementTitle.trimmingCharacters(in: .whitespaces)))
+                            let trimmed = newRequirementTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !trimmed.isEmpty else { return }
+                            draftRequirements.append(SubmissionRequirement(title: trimmed))
                             newRequirementTitle = ""
                         } label: {
                             Image(systemName: "plus.circle.fill")
                                 .foregroundStyle(Theme.Colors.accent)
                         }
+                        .accessibilityLabel("Add requirement")
                     }
                 }
             }
             .navigationTitle("Edit Requirements")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { activeSheet = nil }
+                }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { activeSheet = nil }
+                    Button("Done") {
+                        requirements = draftRequirements
+                        activeSheet = nil
+                    }
                 }
             }
         }
@@ -818,38 +1179,29 @@ struct AuditionDetailsEditorView: View {
             List {
                 Section("Choose Source") {
                     Button {
+                        pendingSidesSource = .photo
                         activeSheet = nil
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            showingSidesPhotoPicker = true
-                        }
                     } label: {
                         Label("Photo / Camera Roll", systemImage: "photo")
                     }
 
                     Button {
+                        pendingSidesSource = .scan
                         activeSheet = nil
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            showingDocumentScanner = true
-                        }
                     } label: {
                         Label("Scan Document", systemImage: "doc.viewfinder")
                     }
 
                     Button {
+                        pendingSidesSource = .file
                         activeSheet = nil
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            showingFileImporter = true
-                        }
                     } label: {
                         Label("Files (PDF, DOCX, TXT)", systemImage: "folder")
                     }
 
                     Button {
+                        pendingSidesSource = .paste
                         activeSheet = nil
-                        pastedScriptBuffer = scriptText
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            showingPasteEditor = true
-                        }
                     } label: {
                         Label("Type or Paste Sides", systemImage: "square.and.pencil")
                     }
@@ -893,16 +1245,22 @@ struct AuditionDetailsEditorView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Use Text") {
-                        let txt = pastedScriptBuffer
-                        showingPasteEditor = false
+                        let txt = pastedScriptBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !txt.isEmpty else { return }
                         let parsed = CastingCallParserService.shared.parseSidesText(
                             txt,
                             defaultRole: roleName.isEmpty ? "ACTOR" : roleName
                         )
+                        showingPasteEditor = false
+                        guard !parsed.scriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                            presentImportError("No readable script text was detected. Existing sides were kept unchanged.")
+                            return
+                        }
                         self.scriptText = parsed.scriptText
                         self.scriptFileName = "Pasted Sides.txt"
                         self.cueLines = parsed.cueLines
                     }
+                    .disabled(pastedScriptBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }

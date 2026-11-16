@@ -8,6 +8,7 @@
 
 import SwiftUI
 import SwiftData
+import UserNotifications
 
 @main
 struct OneTakeApp: App {
@@ -18,6 +19,7 @@ struct OneTakeApp: App {
     private let containerInitWarning: String?
 
     init() {
+        UNUserNotificationCenter.current().delegate = AuditionReminderNotificationDelegate.shared
         let schema = Schema([
             UserProfile.self,
             Audition.self,

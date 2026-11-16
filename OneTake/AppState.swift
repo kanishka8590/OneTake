@@ -619,6 +619,10 @@ final class AppState {
             try modelContext?.save()
             lastPersistenceError = nil
             loadData()
+            AuditionReminderService.reschedule(
+                auditions: auditions,
+                enabled: settings.notifyAuditions
+            )
         } catch {
             lastPersistenceError = error.localizedDescription
             print("Failed to save: \(error)")

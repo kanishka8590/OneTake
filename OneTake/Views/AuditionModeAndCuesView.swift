@@ -37,6 +37,7 @@ struct AuditionModeAndCuesView: View {
     // Navigation and flow
     @State private var cueLines: [CueLine] = []
     @State private var showingCueRecorder = false
+    @State private var shouldOpenBriefingAfterCueRecorder = false
     @State private var showingBriefing = false
     @State private var shouldOpenRecorderAfterBriefing = false
     @State private var auditionRecorderRoute: AuditionRecorderRoute?
@@ -54,15 +55,11 @@ struct AuditionModeAndCuesView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        // Title & Subtitle Header
                         headerSection
-
-                        // Single Card with Thin Purple Border
                         scriptCardSection
 
                         Spacer(minLength: 28)
 
-                        // Bottom CTA
                         Button {
                             handleContinue()
                         } label: {
@@ -89,18 +86,19 @@ struct AuditionModeAndCuesView: View {
             .onAppear {
                 parseAndInitializeScript()
             }
-            .sheet(isPresented: $showingCueRecorder) {
+            .sheet(isPresented: $showingCueRecorder, onDismiss: {
+                guard shouldOpenBriefingAfterCueRecorder else { return }
+                shouldOpenBriefingAfterCueRecorder = false
+                showingBriefing = true
+            }) {
                 CueRecorderView(
                     audition: audition,
                     cueLines: $cueLines
                 ) {
-                    // Sync binding back to audition model (cueLines already saved by CueRecorderView)
                     audition.cueLines = cueLines
-                    try? appState.modelContext?.save()
+                    appState.saveChanges()
+                    shouldOpenBriefingAfterCueRecorder = true
                     showingCueRecorder = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        showingBriefing = true
-                    }
                 }
             }
             .sheet(isPresented: $showingBriefing, onDismiss: {
@@ -125,16 +123,17 @@ struct AuditionModeAndCuesView: View {
                     isSlate: false
                 ) { savedTake in
                     auditionRecorderRoute = nil
-                    audition.auditionTakes.append(savedTake)
-                    audition.selectedAuditionTakeID = savedTake.id
+                    var normalizedTake = savedTake
+                    normalizedTake.filePath = MediaStorage.storedRelativePath(for: savedTake.filePath)
+                    audition.auditionTakes.append(normalizedTake)
+                    audition.selectedAuditionTakeID = normalizedTake.id
                     for idx in audition.requirements.indices {
                         let lower = audition.requirements[idx].title.lowercased()
                         if lower.contains("audition") || lower.contains("self-tape") {
                             audition.requirements[idx].isCompleted = true
                         }
                     }
-                    try? appState.modelContext?.save()
-                    appState.loadData()
+                    appState.saveChanges()
                     onAuditionTakeSaved()
                     dismiss()
                 }
@@ -171,7 +170,7 @@ struct AuditionModeAndCuesView: View {
         .padding(.horizontal, 4)
     }
 
-    // MARK: - Script Card with Thin Purple Border
+    // MARK: - Script Card
 
     private var scriptCardSection: some View {
         Group {
@@ -233,16 +232,15 @@ struct AuditionModeAndCuesView: View {
             }
         } label: {
             HStack(alignment: .top, spacing: 10) {
-                // Speaker Tag if dialogue detected
                 if isDialogueDetected && !line.speaker.isEmpty {
                     Text(line.speaker.uppercased())
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(isActive ? Theme.Colors.accent : Theme.Colors.textSecondary)
                         .padding(.top, 2)
-                        .frame(width: 58, alignment: .leading)
+                        .frame(minWidth: 58, maxWidth: 88, alignment: .leading)
+                        .lineLimit(2)
                 }
 
-                // Line Text
                 Text(line.text)
                     .font(.system(size: 19, weight: isActive ? .semibold : .regular))
                     .italic(line.text.trimmingCharacters(in: .whitespaces).hasPrefix("("))
@@ -250,7 +248,6 @@ struct AuditionModeAndCuesView: View {
                     .lineSpacing(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                // State Badge
                 if isOriginalCue {
                     if isActive {
                         Text("CUE")
@@ -297,8 +294,12 @@ struct AuditionModeAndCuesView: View {
     // MARK: - Continue Handling
 
     private func handleContinue() {
+        let previousCues = audition.cueLines
+
         guard hasScript else {
+            removeOrphanedCueAudio(previousCues: previousCues, keptCues: [])
             audition.cueLines = []
+            appState.saveChanges()
             showingBriefing = true
             return
         }
@@ -306,35 +307,67 @@ struct AuditionModeAndCuesView: View {
         let activeCues = scriptLines.filter { $0.isCurrentlyActiveCue }
 
         if !activeCues.isEmpty {
-            // Every selected row is a reader cue; only the immediately preceding unselected
-            // row is eligible to trigger it during the take.
+            var remainingExisting = previousCues
             var generatedCues: [CueLine] = []
 
-            for (index, item) in scriptLines.enumerated() {
-                if item.isCurrentlyActiveCue {
-                    let precedingActorLine: String
-                    if index > 0, !scriptLines[index - 1].isCurrentlyActiveCue {
-                        precedingActorLine = scriptLines[index - 1].text
-                    } else {
-                        precedingActorLine = ""
-                    }
+            for (index, item) in scriptLines.enumerated() where item.isCurrentlyActiveCue {
+                let precedingActorLine: String
+                if index > 0, !scriptLines[index - 1].isCurrentlyActiveCue {
+                    precedingActorLine = scriptLines[index - 1].text
+                } else {
+                    precedingActorLine = ""
+                }
+
+                let resolvedSpeaker = item.speaker.isEmpty ? "READER" : item.speaker
+                let matchedIndex = Self.findMatchingCueIndex(
+                    in: remainingExisting,
+                    speaker: resolvedSpeaker,
+                    text: item.text
+                )
+
+                if let matchedIndex {
+                    var preserved = remainingExisting.remove(at: matchedIndex)
+                    preserved.orderIndex = generatedCues.count
+                    preserved.speaker = resolvedSpeaker
+                    preserved.cueText = item.text
+                    preserved.precedingActorLine = precedingActorLine
+                    preserved.isAutoDetected = item.isAutoDetectedCue || preserved.isAutoDetected
+                    generatedCues.append(preserved)
+                } else {
                     generatedCues.append(CueLine(
                         orderIndex: generatedCues.count,
-                        speaker: item.speaker.isEmpty ? "READER" : item.speaker,
+                        speaker: resolvedSpeaker,
                         cueText: item.text,
                         precedingActorLine: precedingActorLine,
-                        isAutoDetected: false
+                        isAutoDetected: item.isAutoDetectedCue
                     ))
                 }
             }
 
+            removeOrphanedCueAudio(previousCues: previousCues, keptCues: generatedCues)
             self.cueLines = generatedCues
             audition.cueLines = generatedCues
+            appState.saveChanges()
             showingCueRecorder = true
         } else {
-            // 0 Cues Selected -> Direct to TalkToOneTakeBriefingView
+            removeOrphanedCueAudio(previousCues: previousCues, keptCues: [])
             audition.cueLines = []
+            appState.saveChanges()
             showingBriefing = true
+        }
+    }
+
+    private func removeOrphanedCueAudio(previousCues: [CueLine], keptCues: [CueLine]) {
+        let keptPaths = Set(keptCues.compactMap { cue -> String? in
+            guard let path = cue.audioFilePath else { return nil }
+            return MediaStorage.storedRelativePath(for: path)
+        })
+        for oldCue in previousCues {
+            guard let path = oldCue.audioFilePath else { continue }
+            let normalized = MediaStorage.storedRelativePath(for: path)
+            if !keptPaths.contains(normalized) {
+                MediaStorage.removeFile(at: path)
+            }
         }
     }
 
@@ -342,41 +375,235 @@ struct AuditionModeAndCuesView: View {
 
     private func parseAndInitializeScript() {
         guard hasScript, let script = audition.scriptText else {
-            // Strictly empty when scriptText is empty — NO fallback to rawCastingCallText, casting call notes, or character descriptions
             self.scriptLines = []
             self.isDialogueDetected = false
             return
         }
 
-        let rawText = script
-        let rawParagraphs = rawText.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let result = Self.buildDisplayLines(
+            from: script,
+            roleName: audition.roleName,
+            existingCueLines: audition.cueLines
+        )
+        self.isDialogueDetected = result.isDialogueDetected
+        self.scriptLines = result.lines
+    }
 
-        var lines: [ScriptDisplayLine] = []
-        var detectedSpeakers: Set<String> = []
+    /// Parses `"SPEAKER: line"`, `"SPEAKER:\ndialogue"`, multi-word character names (`"LADY MACBETH"`),
+    /// and colonless screenplay format while reconciling saved `CueLine` selections.
+    nonisolated static func buildDisplayLines(
+        from script: String,
+        roleName: String,
+        existingCueLines: [CueLine]
+    ) -> (lines: [ScriptDisplayLine], isDialogueDetected: Bool) {
+        let parsedTurns = parseScriptTurns(from: script)
+        guard !parsedTurns.isEmpty else { return ([], false) }
 
-        for (idx, p) in rawParagraphs.enumerated() {
-            var speaker = ""
-            var cleanText = p
+        var speakerCounts: [String: Int] = [:]
+        for turn in parsedTurns where !turn.speaker.isEmpty {
+            speakerCounts[turn.speaker.uppercased(), default: 0] += 1
+        }
+        let isDialogueDetected = speakerCounts.count >= 2
 
-            if let colonIndex = p.firstIndex(of: ":") {
-                let candidateSpeaker = String(p[..<colonIndex]).trimmingCharacters(in: .whitespaces)
-                if candidateSpeaker.count <= 25 && !candidateSpeaker.contains(" ") {
-                    speaker = candidateSpeaker
-                    detectedSpeakers.insert(candidateSpeaker.uppercased())
-                    cleanText = String(p[p.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
+        let actorRole: String? = {
+            guard isDialogueDetected else { return nil }
+            let normalizedRole = roleName.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            if !normalizedRole.isEmpty {
+                if let exact = speakerCounts.keys.first(where: { $0 == normalizedRole }) {
+                    return exact
+                }
+                if let partial = speakerCounts.keys.first(where: { $0.contains(normalizedRole) || normalizedRole.contains($0) }) {
+                    return partial
+                }
+            }
+            return speakerCounts.sorted { lhs, rhs in
+                if lhs.value != rhs.value { return lhs.value > rhs.value }
+                return lhs.key < rhs.key
+            }.first?.key
+        }()
+
+        var remainingExisting = existingCueLines
+        let hasExistingAutoCues = existingCueLines.contains(where: \.isAutoDetected)
+        let hasExistingAnyCues = !existingCueLines.isEmpty
+
+        let displayLines = parsedTurns.enumerated().map { idx, turn -> ScriptDisplayLine in
+            let autoCandidate = isDialogueDetected
+                && !turn.speaker.isEmpty
+                && turn.speaker.uppercased() != actorRole
+
+            if let matchIdx = findMatchingCueIndex(
+                in: remainingExisting,
+                speaker: turn.speaker,
+                text: turn.text
+            ) {
+                let matched = remainingExisting.remove(at: matchIdx)
+                let isAuto = matched.isAutoDetected || autoCandidate
+                return ScriptDisplayLine(
+                    id: idx,
+                    text: turn.text,
+                    speaker: turn.speaker,
+                    isAutoDetectedCue: isAuto,
+                    isUserAddedCue: !isAuto,
+                    isUserRemovedCue: false
+                )
+            } else if autoCandidate {
+                let wasPreviouslyRemoved = hasExistingAutoCues || hasExistingAnyCues
+                return ScriptDisplayLine(
+                    id: idx,
+                    text: turn.text,
+                    speaker: turn.speaker,
+                    isAutoDetectedCue: true,
+                    isUserAddedCue: false,
+                    isUserRemovedCue: wasPreviouslyRemoved
+                )
+            } else {
+                return ScriptDisplayLine(
+                    id: idx,
+                    text: turn.text,
+                    speaker: turn.speaker,
+                    isAutoDetectedCue: false
+                )
+            }
+        }
+
+        return (displayLines, isDialogueDetected)
+    }
+
+    private nonisolated static func findMatchingCueIndex(
+        in cues: [CueLine],
+        speaker: String,
+        text: String
+    ) -> Int? {
+        let normText = normalizedLine(text)
+        let normSpeaker = speaker.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+
+        if !normSpeaker.isEmpty,
+           let exactIdx = cues.firstIndex(where: {
+               $0.speaker.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == normSpeaker
+                   && normalizedLine($0.cueText) == normText
+           }) {
+            return exactIdx
+        }
+        return cues.firstIndex { normalizedLine($0.cueText) == normText }
+    }
+
+    private nonisolated static func normalizedLine(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .lowercased()
+    }
+
+    private nonisolated static func parseScriptTurns(from script: String) -> [(speaker: String, text: String)] {
+        let rawLines = script
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+
+        let colonRegex = try? NSRegularExpression(
+            pattern: #"^([A-Z0-9][A-Z0-9\s.'#-]{1,29}?)(?:\s*\([^)]*\))?\s*:(.*)$"#,
+            options: []
+        )
+
+        var turns: [(speaker: String, text: String)] = []
+        var activeSpeaker: String?
+        var activeLines: [String] = []
+
+        func flushActive() {
+            let joined = activeLines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !joined.isEmpty {
+                turns.append((speaker: activeSpeaker ?? "", text: joined))
+            }
+            activeSpeaker = nil
+            activeLines = []
+        }
+
+        for index in rawLines.indices {
+            let line = rawLines[index]
+            if line.isEmpty {
+                if !activeLines.isEmpty {
+                    flushActive()
+                }
+                continue
+            }
+
+            // 1. Colon format: "SPEAKER: dialogue" or "SPEAKER:\ndialogue"
+            let nsRange = NSRange(line.startIndex..., in: line)
+            if let match = colonRegex?.firstMatch(in: line, range: nsRange),
+               let speakerRange = Range(match.range(at: 1), in: line),
+               let bodyRange = Range(match.range(at: 2), in: line) {
+                let candidateSpeaker = String(line[speakerRange]).trimmingCharacters(in: .whitespaces).uppercased()
+                let wordCount = candidateSpeaker.split(whereSeparator: \.isWhitespace).count
+                if wordCount <= 4 {
+                    flushActive()
+                    activeSpeaker = candidateSpeaker
+                    let initialBody = String(line[bodyRange]).trimmingCharacters(in: .whitespaces)
+                    if !initialBody.isEmpty {
+                        activeLines.append(initialBody)
+                    }
+                    continue
                 }
             }
 
-            lines.append(ScriptDisplayLine(
-                id: idx,
-                text: cleanText.isEmpty ? p : cleanText,
-                speaker: speaker,
-                isAutoDetectedCue: false
-            ))
+            // 2. Screenplay format without colons: "LADY MACBETH\nOut, damned spot!"
+            if let screenplaySpeaker = detectColonlessSpeaker(at: index, in: rawLines) {
+                flushActive()
+                activeSpeaker = screenplaySpeaker
+                continue
+            }
+
+            // 3. Skip standalone parenthetical between speaker header and dialogue
+            if activeSpeaker != nil && activeLines.isEmpty && line.hasPrefix("(") && line.hasSuffix(")") {
+                continue
+            }
+
+            if activeSpeaker != nil {
+                activeLines.append(line)
+            } else {
+                turns.append((speaker: "", text: line))
+            }
         }
 
-        self.isDialogueDetected = detectedSpeakers.count >= 2
-        self.scriptLines = lines
+        flushActive()
+        return turns
+    }
+
+    private nonisolated static func detectColonlessSpeaker(at index: Int, in lines: [String]) -> String? {
+        let trimmed = lines[index]
+        let clean = trimmed.replacingOccurrences(
+            of: #"\s*\((?:V\.O\.|O\.S\.|O\.C\.|CONT'D|CONTD|FILTERED|OFF)\)\s*$"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        ).trimmingCharacters(in: .whitespaces)
+
+        guard (2...30).contains(clean.count),
+              !clean.contains(":"),
+              !clean.hasPrefix("INT."),
+              !clean.hasPrefix("EXT."),
+              !clean.hasPrefix("INT/EXT"),
+              !clean.hasSuffix("?"),
+              !clean.hasSuffix("!"),
+              !clean.hasSuffix("."),
+              clean.rangeOfCharacter(from: .lowercaseLetters) == nil,
+              clean.rangeOfCharacter(from: .letters) != nil else {
+            return nil
+        }
+
+        let words = clean.split(whereSeparator: \.isWhitespace)
+        guard (1...4).contains(words.count) else { return nil }
+
+        // Must be followed before a blank line by dialogue (optionally after a parenthetical)
+        var lookahead = index + 1
+        while lookahead < lines.count {
+            let next = lines[lookahead]
+            if next.isEmpty { return nil }
+            if next.hasPrefix("(") && next.hasSuffix(")") {
+                lookahead += 1
+                continue
+            }
+            if next.contains(":") { return nil }
+            return clean.uppercased()
+        }
+        return nil
     }
 
     private var teleprompterScriptLines: [String] {

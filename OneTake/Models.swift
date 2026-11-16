@@ -713,7 +713,9 @@ final class AppSettings {
         "notifyAuditions",
         "notifySubmissions",
         "notifyPractice",
-        "notifyProductUpdates"
+        "notifyProductUpdates",
+        "framingTipsOutLoud",
+        "countdownOutLoud"
     ]
 
     // MARK: Private Helpers
@@ -750,6 +752,8 @@ final class AppSettings {
         self.notifySubmissions = Self.readValue("notifySubmissions", from: defaults, prefix: p, fallback: true)
         self.notifyPractice = Self.readValue("notifyPractice", from: defaults, prefix: p, fallback: true)
         self.notifyProductUpdates = Self.readValue("notifyProductUpdates", from: defaults, prefix: p, fallback: false)
+        self.framingTipsOutLoud = Self.readValue("framingTipsOutLoud", from: defaults, prefix: p, fallback: true)
+        self.countdownOutLoud = Self.readValue("countdownOutLoud", from: defaults, prefix: p, fallback: true)
     }
 
     func resetToDefaults() {
@@ -768,6 +772,8 @@ final class AppSettings {
         notifySubmissions = true
         notifyPractice = true
         notifyProductUpdates = false
+        framingTipsOutLoud = true
+        countdownOutLoud = true
 
         for name in Self.settingKeys {
             defaults.removeObject(forKey: key(name))
@@ -857,5 +863,15 @@ final class AppSettings {
 
     var notifyProductUpdates: Bool {
         didSet { setValue("notifyProductUpdates", value: notifyProductUpdates) }
+    }
+
+    // MARK: Briefing / Voice Feedback
+
+    var framingTipsOutLoud: Bool {
+        didSet { setValue("framingTipsOutLoud", value: framingTipsOutLoud) }
+    }
+
+    var countdownOutLoud: Bool {
+        didSet { setValue("countdownOutLoud", value: countdownOutLoud) }
     }
 }

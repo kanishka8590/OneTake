@@ -1,6 +1,61 @@
 import SwiftUI
 import PhotosUI
 import AVFoundation
+import SwiftData
+
+/// Shared slate script generator used by both `SlateProfileSetupView` and `TalkToOneTakeBriefingView`
+/// so the generated teleprompter text is always consistent.
+nonisolated enum SlateScriptTemplate {
+    static func build(
+        name: String,
+        height: String,
+        age: String,
+        basedIn: String,
+        representation: String,
+        previousWork: [String],
+        roleName: String,
+        projectName: String
+    ) -> String {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedHeight = height.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAge = age.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBasedIn = basedIn.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedRep = representation.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedRole = roleName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedProject = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var parts: [String] = []
+        parts.append("Hi, my name is \(trimmedName.isEmpty ? "your name" : trimmedName).")
+
+        if !trimmedHeight.isEmpty {
+            parts.append("I am \(trimmedHeight) tall.")
+        }
+        if !trimmedAge.isEmpty, trimmedAge != "0" {
+            parts.append("I am \(trimmedAge) years old.")
+        }
+        if !trimmedBasedIn.isEmpty {
+            parts.append("I am based in \(trimmedBasedIn).")
+        }
+        if !trimmedRep.isEmpty {
+            parts.append("I am represented by \(trimmedRep).")
+        }
+
+        let role = trimmedRole.isEmpty ? "this role" : trimmedRole
+        let project = trimmedProject.isEmpty ? "this project" : trimmedProject
+        parts.append("Today I am reading for the role of \(role) in \(project).")
+
+        let creds = previousWork
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .prefix(2)
+        if !creds.isEmpty {
+            parts.append("Recently, you may have seen my work in \(creds.joined(separator: " and ")).")
+        }
+
+        parts.append("I am available for the shooting dates of this project.")
+        return parts.joined(separator: " ")
+    }
+}
 
 private struct SlateRecorderRoute: Identifiable {
     let id = UUID()
@@ -20,7 +75,6 @@ struct SlateProfileSetupView: View {
     @State private var basedIn: String = ""
     @State private var representation: String = ""
     @State private var previousWorkTags: [String] = []
-    @State private var newWorkTag: String = ""
     @State private var generatedSlateScript: String = ""
 
     // Editing modal state
@@ -53,7 +107,6 @@ struct SlateProfileSetupView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
-                        // Header
                         VStack(alignment: .leading, spacing: 6) {
                             Text("How casting meets you")
                                 .font(.system(size: 26, weight: .bold))
@@ -66,7 +119,6 @@ struct SlateProfileSetupView: View {
                         .padding(.top, 12)
                         .padding(.horizontal, 4)
 
-                        // SLATE PREVIEW White Card Layout
                         VStack(alignment: .leading, spacing: 8) {
                             Text("SLATE PREVIEW")
                                 .font(.system(size: 11, weight: .bold))
@@ -75,37 +127,42 @@ struct SlateProfileSetupView: View {
 
                             VStack(spacing: 0) {
                                 slatePreviewRow(
-                                    value: actorName.isEmpty ? "Your Name" : actorName,
+                                    value: actorName.isEmpty ? "Add your name" : actorName,
                                     label: "Name",
-                                    field: .name
+                                    field: .name,
+                                    isDimmedValue: actorName.isEmpty
                                 )
                                 Divider().padding(.horizontal, 16)
 
                                 slatePreviewRow(
-                                    value: height.isEmpty ? "5'8\"" : height,
+                                    value: height.isEmpty ? "Add height" : height,
                                     label: "height",
-                                    field: .height
+                                    field: .height,
+                                    isDimmedValue: height.isEmpty
                                 )
                                 Divider().padding(.horizontal, 16)
 
                                 slatePreviewRow(
-                                    value: age.isEmpty ? "25" : age,
+                                    value: age.isEmpty ? "Add age" : age,
                                     label: "age",
-                                    field: .age
+                                    field: .age,
+                                    isDimmedValue: age.isEmpty
                                 )
                                 Divider().padding(.horizontal, 16)
 
                                 slatePreviewRow(
-                                    value: basedIn.isEmpty ? "Mumbai" : basedIn,
+                                    value: basedIn.isEmpty ? "Add city" : basedIn,
                                     label: "based in",
-                                    field: .basedIn
+                                    field: .basedIn,
+                                    isDimmedValue: basedIn.isEmpty
                                 )
                                 Divider().padding(.horizontal, 16)
 
                                 slatePreviewRow(
                                     value: representation.isEmpty ? "Self-represented" : representation,
                                     label: "representation",
-                                    field: .representation
+                                    field: .representation,
+                                    isDimmedValue: representation.isEmpty
                                 )
                                 Divider().padding(.horizontal, 16)
 
@@ -123,7 +180,6 @@ struct SlateProfileSetupView: View {
 
                         Spacer(minLength: 40)
 
-                        // Dark Plum Continue Button
                         Button {
                             updateGeneratedScript()
                             finalSlateScriptToRecord = generatedSlateScript
@@ -184,11 +240,14 @@ struct SlateProfileSetupView: View {
                     onTakeSaved: { savedTake in
                         returnToBriefingAfterRecorder = false
                         slateRecorderRoute = nil
-                        audition.slateTakes.append(savedTake)
-                        audition.selectedSlateTakeID = savedTake.id
+                        var normalizedTake = savedTake
+                        normalizedTake.filePath = MediaStorage.storedRelativePath(for: savedTake.filePath)
+                        audition.slateTakes.append(normalizedTake)
+                        audition.selectedSlateTakeID = normalizedTake.id
                         if let idx = audition.requirements.firstIndex(where: { $0.title.lowercased().contains("slate") }) {
                             audition.requirements[idx].isCompleted = true
                         }
+                        appState.saveChanges()
                         onSlateSaved()
                         dismiss()
                     },
@@ -201,7 +260,6 @@ struct SlateProfileSetupView: View {
     }
 
     // MARK: - Slate Preview Row
-    // Large bold value on left, subtle right-aligned gray label on right
 
     private func slatePreviewRow(
         value: String,
@@ -260,6 +318,7 @@ struct SlateProfileSetupView: View {
                 TextField(field.rawValue, text: $editBuffer)
                     .font(.system(size: 17, weight: .medium))
                     .foregroundStyle(Theme.Colors.textPrimary)
+                    .keyboardType(field == .age ? .numberPad : .default)
                     .padding(14)
                     .background(Theme.Colors.controlSurface)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -292,7 +351,7 @@ struct SlateProfileSetupView: View {
     }
 
     private func commitEdit(for field: SlateField) {
-        let trimmed = editBuffer.trimmingCharacters(in: .whitespaces)
+        let trimmed = editBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
         switch field {
         case .name:
             actorName = trimmed
@@ -308,10 +367,38 @@ struct SlateProfileSetupView: View {
             if trimmed.isEmpty {
                 previousWorkTags = []
             } else {
-                previousWorkTags = trimmed.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                previousWorkTags = trimmed
+                    .components(separatedBy: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
             }
         }
+        persistProfileEdits()
         updateGeneratedScript()
+    }
+
+    private func persistProfileEdits() {
+        let parsedAge = Int(age.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+        if let user = appState.currentUser {
+            user.name = actorName
+            user.height = height
+            user.age = parsedAge
+            user.basedIn = basedIn
+            user.representation = representation.isEmpty ? "Self-represented" : representation
+            user.previousWork = previousWorkTags
+        } else {
+            let profile = UserProfile(
+                name: actorName,
+                height: height,
+                age: parsedAge,
+                basedIn: basedIn,
+                representation: representation.isEmpty ? "Self-represented" : representation,
+                previousWork: previousWorkTags
+            )
+            appState.modelContext?.insert(profile)
+            appState.currentUser = profile
+        }
+        appState.saveChanges()
     }
 
     // MARK: - Defaults & Script Generator
@@ -325,43 +412,26 @@ struct SlateProfileSetupView: View {
             representation = user.representation
             previousWorkTags = user.previousWork
         } else {
-            actorName = "Alex Morgan"
-            height = "5'8\""
-            age = "25"
-            basedIn = "Mumbai"
+            actorName = ""
+            height = ""
+            age = ""
+            basedIn = ""
             representation = "Self-represented"
+            previousWorkTags = []
         }
         updateGeneratedScript()
     }
 
     private func updateGeneratedScript() {
-        var parts: [String] = []
-        let name = actorName.isEmpty ? "Alex Morgan" : actorName
-        parts.append("Hi, my name is \(name).")
-
-        if !height.isEmpty {
-            parts.append("I am \(height) tall.")
-        }
-        if !age.isEmpty {
-            parts.append("I am \(age) years old.")
-        }
-        if !basedIn.isEmpty {
-            parts.append("I am based in \(basedIn).")
-        }
-        if !representation.isEmpty {
-            parts.append("I am represented by \(representation).")
-        }
-
-        let role = audition.roleName.isEmpty ? "this role" : audition.roleName
-        let project = audition.projectName.isEmpty ? "your project" : audition.projectName
-        parts.append("Today I am reading for the role of \(role) in \(project).")
-
-        if !previousWorkTags.isEmpty {
-            let creds = previousWorkTags.prefix(2).joined(separator: " and ")
-            parts.append("Recently, you may have seen my work in \(creds).")
-        }
-
-        parts.append("I am available for the shooting dates of this project.")
-        generatedSlateScript = parts.joined(separator: " ")
+        generatedSlateScript = SlateScriptTemplate.build(
+            name: actorName,
+            height: height,
+            age: age,
+            basedIn: basedIn,
+            representation: representation,
+            previousWork: previousWorkTags,
+            roleName: audition.roleName,
+            projectName: audition.projectName
+        )
     }
 }

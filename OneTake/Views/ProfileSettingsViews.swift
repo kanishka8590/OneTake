@@ -97,6 +97,12 @@ struct NotificationPreferencesView: View {
         .task {
             await requestAuthorization()
         }
+        .onChange(of: appState.settings.notifyAuditions) { _, isEnabled in
+            AuditionReminderService.reschedule(
+                auditions: appState.auditions,
+                enabled: isEnabled
+            )
+        }
     }
 
     private func requestAuthorization() async {

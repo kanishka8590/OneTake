@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import PhotosUI
+import UniformTypeIdentifiers
 
 enum AuditionListFilter: String, CaseIterable, Identifiable {
     case active = "Active"
@@ -10,13 +11,11 @@ enum AuditionListFilter: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-enum AddAuditionSourceOption: Identifiable {
+private enum PendingAddSource {
     case photo
     case scan
     case file
     case typeIt
-
-    var id: Int { hashValue }
 }
 
 /// The editor is presented only when it has a complete parsed casting call.
@@ -41,6 +40,7 @@ struct AuditionsListView: View {
 
     @State private var selectedFilter: AuditionListFilter = .active
     @State private var showingAddSourceSheet = false
+    @State private var pendingAddSource: PendingAddSource?
     @State private var auditionToDelete: Audition?
     @State private var showingDeleteConfirmation = false
 
@@ -54,10 +54,12 @@ struct AuditionsListView: View {
     @State private var pendingScannedImages: [UIImage] = []
     @State private var pendingPastedText: String?
 
-    // Parsing progress & navigation
+    // Parsing progress, errors & navigation
     @State private var isParsingCall = false
     @State private var parsingSourceTitle = ""
     @State private var editorPresentation: AuditionEditorPresentation?
+    @State private var importErrorMessage: String?
+    @State private var showingImportError = false
 
     var filteredAuditions: [Audition] {
         switch selectedFilter {
@@ -117,7 +119,7 @@ struct AuditionsListView: View {
                         }
                     }
                     .listStyle(.insetGrouped)
-                        .scrollContentBackground(.hidden)
+                    .scrollContentBackground(.hidden)
                 }
 
                 if isParsingCall {
@@ -145,7 +147,6 @@ struct AuditionsListView: View {
                         }
                         .padding(.vertical, 4)
                         .padding(.horizontal, 8)
-
                     }
                 }
 
@@ -159,10 +160,11 @@ struct AuditionsListView: View {
                             .foregroundStyle(Theme.Colors.accent)
                             .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
                     }
+                    .accessibilityLabel("Add audition")
                 }
             }
             // Compact Add Source Bottom Sheet
-            .sheet(isPresented: $showingAddSourceSheet) {
+            .sheet(isPresented: $showingAddSourceSheet, onDismiss: triggerPendingAddSource) {
                 addAuditionBottomSheet
                     .presentationDetents([.height(225)])
                     .presentationDragIndicator(.visible)
@@ -190,6 +192,10 @@ struct AuditionsListView: View {
                 } onCancel: {
                     pendingScannedImages = []
                     showingDocumentScanner = false
+                } onError: { error in
+                    pendingScannedImages = []
+                    showingDocumentScanner = false
+                    presentImportError(error.localizedDescription)
                 }
             }
             // Multi-File Importer
@@ -210,6 +216,13 @@ struct AuditionsListView: View {
                 AuditionDetailsEditorView(parsedCall: presentation.parsedCall) { _ in
                     editorPresentation = nil
                 }
+                .environment(appState)
+            }
+            // Import / parse error alert
+            .alert("Import Failed", isPresented: $showingImportError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(importErrorMessage ?? "Unable to read the selected casting call.")
             }
             // Delete confirmation
             .confirmationDialog(
@@ -231,7 +244,6 @@ struct AuditionsListView: View {
 
     private var addAuditionBottomSheet: some View {
         VStack(alignment: .leading, spacing: 20) {
-            // Header
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Add an audition")
@@ -255,40 +267,31 @@ struct AuditionsListView: View {
                         .background(Theme.Colors.lavenderSurface)
                         .clipShape(Circle())
                 }
+                .accessibilityLabel("Close")
             }
 
-            // 4-column horizontal grid of evenly sized circular lavender-tinted icon buttons
             HStack(spacing: 0) {
                 sourceOptionButton(title: "Photo", systemImage: "photo") {
+                    pendingAddSource = .photo
                     showingAddSourceSheet = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                        showingPhotoPicker = true
-                    }
                 }
                 .frame(maxWidth: .infinity)
 
                 sourceOptionButton(title: "Scan", systemImage: "doc.viewfinder") {
+                    pendingAddSource = .scan
                     showingAddSourceSheet = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                        showingDocumentScanner = true
-                    }
                 }
                 .frame(maxWidth: .infinity)
 
                 sourceOptionButton(title: "File", systemImage: "folder") {
+                    pendingAddSource = .file
                     showingAddSourceSheet = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                        showingFileImporter = true
-                    }
                 }
                 .frame(maxWidth: .infinity)
 
                 sourceOptionButton(title: "Type it", systemImage: "keyboard") {
+                    pendingAddSource = .typeIt
                     showingAddSourceSheet = false
-                    pastedScriptBuffer = ""
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                        showingPasteEditor = true
-                    }
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -296,7 +299,23 @@ struct AuditionsListView: View {
         .padding(.horizontal, 24)
         .padding(.top, 24)
         .padding(.bottom, 20)
+    }
+
+    private func triggerPendingAddSource() {
+        guard let source = pendingAddSource else { return }
+        pendingAddSource = nil
+        switch source {
+        case .photo:
+            showingPhotoPicker = true
+        case .scan:
+            showingDocumentScanner = true
+        case .file:
+            showingFileImporter = true
+        case .typeIt:
+            pastedScriptBuffer = ""
+            showingPasteEditor = true
         }
+    }
 
     private func sourceOptionButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
@@ -328,22 +347,37 @@ struct AuditionsListView: View {
                 isParsingCall = true
             }
 
-            var images: [UIImage] = []
-            for item in items {
-                if let data = try? await item.loadTransferable(type: Data.self),
-                   let image = UIImage(data: data) {
-                    images.append(image)
+            do {
+                var images: [UIImage] = []
+                for item in items {
+                    if let data = try await item.loadTransferable(type: Data.self),
+                       let image = UIImage(data: data) {
+                        images.append(image)
+                    }
                 }
-            }
 
-            guard !images.isEmpty else {
-                await MainActor.run { isParsingCall = false }
-                return
-            }
+                guard !images.isEmpty else {
+                    await MainActor.run {
+                        self.isParsingCall = false
+                        self.presentImportError("Could not load any images from the selected photos.")
+                    }
+                    return
+                }
 
-            let result = try? await CastingCallParserService.shared.parseImages(images)
-            await MainActor.run {
-                self.finishParsing(with: result)
+                let result = try await CastingCallParserService.shared.parseImages(images)
+                await MainActor.run {
+                    if result.rawExtractedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        self.isParsingCall = false
+                        self.presentImportError("No readable text was found in the selected photos.")
+                    } else {
+                        self.finishParsing(with: result)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.isParsingCall = false
+                    self.presentImportError(error.localizedDescription)
+                }
             }
         }
     }
@@ -354,9 +388,22 @@ struct AuditionsListView: View {
                 parsingSourceTitle = images.count > 1 ? "\(images.count) Pages Scanned" : "Document Scan"
                 isParsingCall = true
             }
-            let result = try? await CastingCallParserService.shared.parseImages(images)
-            await MainActor.run {
-                self.finishParsing(with: result)
+
+            do {
+                let result = try await CastingCallParserService.shared.parseImages(images)
+                await MainActor.run {
+                    if result.rawExtractedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        self.isParsingCall = false
+                        self.presentImportError("No readable text was detected in the scanned document.")
+                    } else {
+                        self.finishParsing(with: result)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.isParsingCall = false
+                    self.presentImportError(error.localizedDescription)
+                }
             }
         }
     }
@@ -379,14 +426,31 @@ struct AuditionsListView: View {
             isParsingCall = true
 
             Task {
-                let parsed = try? await CastingCallParserService.shared.parseMultipleFiles(urls: urls)
-                await MainActor.run {
-                    self.finishParsing(with: parsed)
+                do {
+                    let parsed = try await CastingCallParserService.shared.parseMultipleFiles(urls: urls)
+                    await MainActor.run {
+                        if parsed.rawExtractedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            self.isParsingCall = false
+                            self.presentImportError("No readable text could be extracted from the selected file(s).")
+                        } else {
+                            self.finishParsing(with: parsed)
+                        }
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.isParsingCall = false
+                        self.presentImportError(error.localizedDescription)
+                    }
                 }
             }
         case .failure(let error):
-            print("File import failed: \(error)")
+            presentImportError(error.localizedDescription)
         }
+    }
+
+    private func presentImportError(_ message: String) {
+        importErrorMessage = message
+        showingImportError = true
     }
 
     // MARK: - Paste Editor Sheet
@@ -434,7 +498,7 @@ struct AuditionsListView: View {
                         pendingPastedText = pastedScriptBuffer
                         showingPasteEditor = false
                     }
-                    .disabled(pastedScriptBuffer.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(pastedScriptBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
@@ -501,7 +565,6 @@ struct AuditionsListView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             }
-
             .padding(.top, 8)
             .padding(.horizontal, 32)
         }
@@ -522,7 +585,6 @@ struct AuditionCardRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Header: Project Name + Status / Ready Badge
             HStack(alignment: .center) {
                 Text(audition.projectName)
                     .font(.system(size: 22, weight: .bold))
@@ -544,7 +606,6 @@ struct AuditionCardRow: View {
                 }
             }
 
-            // Role and Production Type
             HStack(spacing: 6) {
                 HStack(spacing: 4) {
                     Text("Role:")
@@ -568,7 +629,6 @@ struct AuditionCardRow: View {
                     .lineLimit(1)
             }
 
-            // Deadline Indicator (Days Remaining Only)
             HStack(spacing: 5) {
                 Image(systemName: "clock")
                     .font(.system(size: 11.5, weight: .semibold))
@@ -579,7 +639,6 @@ struct AuditionCardRow: View {
                     .foregroundStyle(deadlineColor)
             }
 
-            // 3-Segmented Progress Bar
             HStack(spacing: 6) {
                 ForEach(0..<3) { idx in
                     Capsule()

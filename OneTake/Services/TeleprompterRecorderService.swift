@@ -64,6 +64,7 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     var qualityMetrics: PreTakeQualityMetrics = PreTakeQualityMetrics()
     var recordingDurationSeconds: Double = 0.0
     var voiceGuidanceEnabled: Bool = true
+    var countdownOutLoud: Bool = true
     var isVoiceListening: Bool = false
     var voiceStatus: LiveSpeechStatus = .idle
 
@@ -604,13 +605,17 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         guard seconds > 0 else {
             isCountingDown = false
             countdownRemaining = 0
-            speak("Action!", forceSpeak: true)
+            if countdownOutLoud {
+                speak("Action!", forceSpeak: true)
+            }
             beginRecordingNow()
             return
         }
 
         countdownRemaining = seconds
-        speak("\(seconds)", forceSpeak: true)
+        if countdownOutLoud {
+            speak("\(seconds)", forceSpeak: true)
+        }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             guard let self = self, self.isCountingDown else { return }
