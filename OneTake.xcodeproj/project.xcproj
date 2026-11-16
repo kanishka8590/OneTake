@@ -82,6 +82,8 @@
       ],
       "build-settings": {
         "BUNDLE_LOADER": "$(TEST_HOST)",
+        "CODE_SIGN_STYLE": "Automatic",
+        "DEVELOPMENT_TEAM": "W93H964P88",
         "GENERATE_INFOPLIST_FILE": "YES",
         "IPHONEOS_DEPLOYMENT_TARGET": "18.0",
         "PRODUCT_BUNDLE_IDENTIFIER": "com.porage.onetaketestsmk2",
