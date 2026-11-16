@@ -293,4 +293,34 @@ final class HeadshotFramingAndGuidanceTests: XCTestCase {
         XCTAssertTrue(service.isSessionRunning)
         #endif
     }
+
+    @MainActor
+    func testDisableVoiceTriggersResetsListeningAndStatus() {
+        let service = HeadshotGuidanceService.shared
+        defer { service.stopSession() }
+
+        service.voiceStatus = .starting
+        service.disableVoiceTriggers()
+        XCTAssertFalse(service.isVoiceListening)
+        XCTAssertEqual(service.voiceStatus, .idle)
+    }
+
+    func testAlignedGuidanceSpeechAvoidsTriggerWordSelfCapture() {
+        let eval = HeadshotGuidanceService.evaluatePoseGuide(
+            hasFace: true,
+            centerX: 0.5,
+            centerYTopDown: 0.42,
+            faceHeight: 0.34,
+            visionYawDegrees: 0.0,
+            posePrediction: nil,
+            lighting: .good,
+            isEyeLevel: true,
+            background: .clean,
+            targetAngle: .front,
+            autoCaptureEnabled: false
+        )
+        XCTAssertTrue(eval.isAligned)
+        XCTAssertFalse(eval.spoken.lowercased().contains("now"))
+        XCTAssertFalse(eval.spoken.lowercased().contains("action"))
+    }
 }

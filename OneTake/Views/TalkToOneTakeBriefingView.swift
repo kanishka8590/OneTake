@@ -27,42 +27,72 @@ struct TalkToOneTakeBriefingView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Theme.Colors.canvasBackground
-                    .ignoresSafeArea()
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        headerAvatarSection
-
-                        if isSlate {
-                            yourSlateSection
-                        }
-
-                        sayThisSection
-                        onetakeTalksBackSection
-
-                        Spacer(minLength: 24)
-
-                        Button {
-                            onReadyToRecord(editableScript)
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "record.circle")
-                                Text("Start Recording")
-                            }
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Theme.Colors.onAction)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(Theme.Colors.primaryPlum)
-                            .clipShape(Capsule())
-                        }
-                        .padding(.top, 4)
-                        .padding(.bottom, 32)
+            Form {
+                Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Stay in character without touching the screen.")
+                            .font(Theme.Typography.bodyRegular)
+                            .foregroundStyle(Theme.Colors.textSecondary)
                     }
-                    .padding(.horizontal, 20)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
                 }
+
+                if isSlate {
+                    Section {
+                        TextEditor(text: $editableScript)
+                            .font(Theme.Typography.bodyRegular)
+                            .foregroundStyle(Theme.Colors.textPrimary)
+                            .frame(minHeight: 110)
+                    } header: {
+                        Text("Your Slate")
+                    } footer: {
+                        Text("This scrolls in the teleprompter when recording starts.")
+                    }
+                }
+
+                Section("Voice Commands") {
+                    LabeledContent("\"Action\"") {
+                        Text("Starts recording")
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                    }
+                    LabeledContent("\"Cut\"") {
+                        Text("Stops recording")
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                    }
+                    LabeledContent("\"How do I look?\"") {
+                        Text("Checks framing and light")
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                    }
+                }
+
+                Section("Spoken Audio") {
+                    Toggle("Framing tips out loud", isOn: Bindable(appState.settings).framingTipsOutLoud)
+                        .tint(Theme.Colors.accent)
+                    Toggle("Count down out loud", isOn: Bindable(appState.settings).countdownOutLoud)
+                        .tint(Theme.Colors.accent)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
+            .safeAreaInset(edge: .bottom) {
+                Button {
+                    onReadyToRecord(editableScript)
+                } label: {
+                    Label("Start Recording", systemImage: "record.circle")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .nativeProminentGlassButton(tint: Theme.Colors.primaryPlum)
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 12)
+                .background(
+                    Theme.Colors.canvasBackground
+                        .opacity(0.92)
+                        .ignoresSafeArea(edges: .bottom)
+                )
             }
             .navigationTitle("Talk to OneTake")
             .navigationBarTitleDisplayMode(.inline)
@@ -74,67 +104,14 @@ struct TalkToOneTakeBriefingView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }
+
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        dismissActiveKeyboard()
+                    }
+                }
             }
-        }
-    }
-
-    // MARK: - Header & Avatar
-
-    private var headerAvatarSection: some View {
-        HStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(Theme.Colors.lavenderSurface)
-                    .frame(width: 52, height: 52)
-
-                Image(systemName: "waveform.circle")
-                    .font(.system(size: 32))
-                    .foregroundStyle(Theme.Colors.accent)
-            }
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Talk to OneTake")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(Theme.Colors.textPrimary)
-
-                Text("Voice commands let you stay in character without touching the screen.")
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundStyle(Theme.Colors.textSecondary)
-                    .lineLimit(2)
-            }
-        }
-        .padding(.top, 12)
-    }
-
-    // MARK: - YOUR SLATE Section (Slate mode only)
-
-    private var yourSlateSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("YOUR SLATE")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Theme.Colors.textSecondary)
-
-                Spacer()
-
-                Text("This scrolls in the teleprompter when recording starts.")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.Colors.textSecondary)
-            }
-            .padding(.horizontal, 4)
-
-            TextEditor(text: $editableScript)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(Theme.Colors.textPrimary)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 130)
-                .padding(10)
-                .background(Theme.Colors.controlSurface)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.Colors.controlBorder, lineWidth: 1))
-                .padding(16)
-                .background(Theme.Colors.lavenderSurface.opacity(0.85))
-                .clipShape(RoundedRectangle(cornerRadius: 16))
         }
     }
 
@@ -154,95 +131,5 @@ struct TalkToOneTakeBriefingView: View {
             roleName: audition.roleName,
             projectName: audition.projectName
         )
-    }
-
-    // MARK: - SAY THIS Section
-
-    private var sayThisSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("SAY THIS")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(Theme.Colors.textSecondary)
-                .padding(.horizontal, 4)
-
-            VStack(spacing: 0) {
-                voiceCommandRow(phrase: "\"Action\"", actionDescription: "Starts Recording")
-                Divider().padding(.horizontal, 16)
-                voiceCommandRow(phrase: "\"Cut\"", actionDescription: "Stops Recording")
-                Divider().padding(.horizontal, 16)
-                voiceCommandRow(phrase: "\"How do I look?\"", actionDescription: "Checks framing and light")
-            }
-            .background(Theme.Colors.cardSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 2)
-        }
-    }
-
-    private func voiceCommandRow(phrase: String, actionDescription: String) -> some View {
-        HStack(spacing: 12) {
-            Text(phrase)
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(Theme.Colors.accent)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(Theme.Colors.lavenderSurface)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-
-            Spacer()
-
-            Text(actionDescription)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Theme.Colors.textPrimary)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-    }
-
-    // MARK: - ONETAKE TALKS BACK Section
-
-    private var onetakeTalksBackSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("ONETAKE TALKS BACK")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(Theme.Colors.textSecondary)
-                .padding(.horizontal, 4)
-
-            VStack(spacing: 0) {
-                HStack {
-                    Text("Framing tips out loud")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(Theme.Colors.textPrimary)
-
-                    Spacer()
-
-                    Toggle("", isOn: Bindable(appState.settings).framingTipsOutLoud)
-                        .tint(Theme.Colors.accent)
-                        .labelsHidden()
-                        .accessibilityLabel("Framing tips out loud")
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-
-                Divider().padding(.horizontal, 16)
-
-                HStack {
-                    Text("Count down out loud")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(Theme.Colors.textPrimary)
-
-                    Spacer()
-
-                    Toggle("", isOn: Bindable(appState.settings).countdownOutLoud)
-                        .tint(Theme.Colors.accent)
-                        .labelsHidden()
-                        .accessibilityLabel("Count down out loud")
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-            }
-            .background(Theme.Colors.cardSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 2)
-        }
     }
 }

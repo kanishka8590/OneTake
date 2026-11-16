@@ -28,6 +28,7 @@ struct HeadshotGuidanceView: View {
     @State private var showVoiceGuideIntro = true
     @State private var showingMatchGuide = false
     @State private var autoCaptureHoldTask: Task<Void, Never>?
+    @State private var autoCaptureCancelTask: Task<Void, Never>?
     @State private var gestureHoldTask: Task<Void, Never>?
     @State private var lastGestureTriggerAt: Date = .distantPast
 
@@ -85,6 +86,7 @@ struct HeadshotGuidanceView: View {
         }
         .onDisappear {
             autoCaptureHoldTask?.cancel()
+            autoCaptureCancelTask?.cancel()
             gestureHoldTask?.cancel()
             guidanceService.onShutterTriggered = previousShutterCallback
             previousShutterCallback = nil
@@ -94,6 +96,7 @@ struct HeadshotGuidanceView: View {
             switch newPhase {
             case .background, .inactive:
                 autoCaptureHoldTask?.cancel()
+                autoCaptureCancelTask?.cancel()
                 gestureHoldTask?.cancel()
                 guidanceService.stopSession()
             case .active:
@@ -180,26 +183,51 @@ struct HeadshotGuidanceView: View {
     }
 
     private func updateAutoCaptureSchedule() {
-        autoCaptureHoldTask?.cancel()
-        autoCaptureHoldTask = nil
-        guard guidanceService.autoCaptureEnabled,
-              guidanceService.feedback.allChecksPassed,
-              !guidanceService.isCapturing,
-              !showVoiceGuideIntro,
-              !showingMatchGuide,
-              !showingReviewSheet else { return }
+        let eligible = guidanceService.autoCaptureEnabled
+            && !guidanceService.isCapturing
+            && !showVoiceGuideIntro
+            && !showingMatchGuide
+            && !showingReviewSheet
 
-        autoCaptureHoldTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            guard !Task.isCancelled,
-                  guidanceService.autoCaptureEnabled,
-                  guidanceService.feedback.allChecksPassed,
-                  !guidanceService.isCapturing,
-                  !showVoiceGuideIntro,
-                  !showingMatchGuide,
-                  !showingReviewSheet else { return }
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            triggerBatchCapture(requireAlignment: true)
+        guard eligible else {
+            autoCaptureHoldTask?.cancel()
+            autoCaptureHoldTask = nil
+            autoCaptureCancelTask?.cancel()
+            autoCaptureCancelTask = nil
+            return
+        }
+
+        if guidanceService.feedback.allChecksPassed {
+            autoCaptureCancelTask?.cancel()
+            autoCaptureCancelTask = nil
+            guard autoCaptureHoldTask == nil else { return }
+
+            autoCaptureHoldTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 750_000_000)
+                guard !Task.isCancelled,
+                      guidanceService.autoCaptureEnabled,
+                      guidanceService.feedback.allChecksPassed,
+                      !guidanceService.isCapturing,
+                      !showVoiceGuideIntro,
+                      !showingMatchGuide,
+                      !showingReviewSheet else {
+                    autoCaptureHoldTask = nil
+                    return
+                }
+                autoCaptureHoldTask = nil
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                triggerBatchCapture(requireAlignment: true)
+            }
+        } else if autoCaptureHoldTask != nil && autoCaptureCancelTask == nil {
+            autoCaptureCancelTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 450_000_000)
+                guard !Task.isCancelled else { return }
+                autoCaptureCancelTask = nil
+                if !guidanceService.feedback.allChecksPassed {
+                    autoCaptureHoldTask?.cancel()
+                    autoCaptureHoldTask = nil
+                }
+            }
         }
     }
 
@@ -241,26 +269,44 @@ struct HeadshotGuidanceView: View {
                 .disabled(guidanceService.isCapturing)
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Button {
                     guidanceService.gesturesEnabled.toggle()
                 } label: {
                     Label(
-                        guidanceService.gesturesEnabled ? "Gesture On" : "Gesture Off",
-                        systemImage: guidanceService.gesturesEnabled ? "hand.raised" : "hand.raised.slash"
+                        "Gesture",
+                        systemImage: guidanceService.gesturesEnabled ? "hand.raised.fill" : "hand.raised.slash"
                     )
                     .font(.system(size: 12, weight: .semibold))
                 }
                 .nativeGlassCapsuleButton(
                     tint: guidanceService.gesturesEnabled ? Theme.Colors.cameraGuideGold : nil
                 )
-                .accessibilityLabel("Toggle open palm gesture capture")
+                .accessibilityLabel(guidanceService.gesturesEnabled ? "Disable open palm gesture capture" : "Enable open palm gesture capture")
+
+                Button {
+                    if guidanceService.isVoiceListening || guidanceService.voiceStatus == .starting {
+                        guidanceService.disableVoiceTriggers()
+                    } else {
+                        guidanceService.enableVoiceTriggers()
+                    }
+                } label: {
+                    Label(
+                        voiceButtonTitle,
+                        systemImage: (guidanceService.isVoiceListening || guidanceService.voiceStatus == .starting) ? "mic.fill" : "mic.slash"
+                    )
+                    .font(.system(size: 12, weight: .semibold))
+                }
+                .nativeGlassCapsuleButton(
+                    tint: guidanceService.isVoiceListening ? .green : (guidanceService.voiceStatus == .starting ? Theme.Colors.cameraGuideGold : nil)
+                )
+                .accessibilityLabel(guidanceService.isVoiceListening ? "Disable voice command activation" : "Enable voice command activation")
 
                 Button {
                     guidanceService.autoCaptureEnabled.toggle()
                 } label: {
                     Label(
-                        guidanceService.autoCaptureEnabled ? "Auto On" : "Auto Off",
+                        "Auto",
                         systemImage: guidanceService.autoCaptureEnabled ? "sparkles" : "camera.metering.spot"
                     )
                     .font(.system(size: 12, weight: .semibold))
@@ -268,8 +314,16 @@ struct HeadshotGuidanceView: View {
                 .nativeGlassCapsuleButton(
                     tint: guidanceService.autoCaptureEnabled ? .green : nil
                 )
-                .accessibilityLabel("Toggle automatic capture when aligned")
+                .accessibilityLabel(guidanceService.autoCaptureEnabled ? "Disable automatic capture when aligned" : "Enable automatic capture when aligned")
             }
+        }
+    }
+
+    private var voiceButtonTitle: String {
+        switch guidanceService.voiceStatus {
+        case .listening: return "Voice On"
+        case .starting: return "Voice…"
+        default: return "Voice"
         }
     }
 
@@ -400,9 +454,7 @@ struct HeadshotGuidanceView: View {
                 }
             }
             .padding(24)
-            .background(Theme.Colors.cameraPanel)
-            .clipShape(RoundedRectangle(cornerRadius: 20))
-            .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.14), lineWidth: 1))
+            .nativeGlassRoundedSurface(cornerRadius: 20)
             .padding(.horizontal, 28)
         }
     }
@@ -486,7 +538,9 @@ struct HeadshotGuidanceView: View {
                 .nativeGlassCapsuleSurface()
 
                 Button {
-                    if !guidanceService.isVoiceListening {
+                    if guidanceService.isVoiceListening || guidanceService.voiceStatus == .starting {
+                        guidanceService.disableVoiceTriggers()
+                    } else {
                         guidanceService.enableVoiceTriggers()
                     }
                 } label: {
@@ -638,113 +692,88 @@ struct HeadshotGuidanceView: View {
         }
     }
 
-    // MARK: - One-Time "Talk to OneTake" Voice Guide Card Overlay
+    // MARK: - Minimalist "Talk to OneTake" Voice Guide Overlay
 
     private var talkToOneTakeGuideOverlay: some View {
         ZStack {
-            Color.black.opacity(0.7)
+            Color.black.opacity(0.55)
                 .ignoresSafeArea()
 
-            VStack(spacing: 20) {
-                VStack(spacing: 8) {
-                    ZStack {
-                        Circle()
-                            .fill(Theme.Colors.cameraGuideGoldFill.opacity(0.2))
-                            .frame(width: 58, height: 58)
-
-                        Image(systemName: "waveform.badge.mic")
-                            .font(.system(size: 26, weight: .semibold))
-                            .foregroundStyle(Theme.Colors.cameraGuideGold)
-                    }
-
-                    Text("Talk to OneTake")
-                        .font(.system(size: 22, weight: .bold))
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Talk to OneTake", systemImage: "waveform")
+                        .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(.white)
 
-                    Text("Hands-free voice commands for your headshot session")
+                    Text("Hands-free voice triggers for your session")
                         .font(.system(size: 13))
-                        .foregroundStyle(Color.white.opacity(0.65))
-                        .multilineTextAlignment(.center)
+                        .foregroundStyle(Color.white.opacity(0.7))
                 }
-                .padding(.top, 4)
 
-                VStack(spacing: 14) {
-                    headshotVoiceRow(
-                        phrase: "\"How do I look?\"",
-                        desc: "Check live framing, angle & lighting aloud",
-                        icon: "waveform",
-                        iconColor: Theme.Colors.cameraGuideLilac
-                    )
-
-                    Divider().background(Color.white.opacity(0.12))
-
+                VStack(spacing: 12) {
                     headshotVoiceRow(
                         phrase: "\"Action\" or \"Now\"",
-                        desc: "Hands-free shutter capture with 3s countdown",
-                        icon: "camera",
-                        iconColor: Color.green
+                        desc: "Take photo after 3s countdown",
+                        icon: "camera"
+                    )
+
+                    Divider().overlay(Color.white.opacity(0.12))
+
+                    headshotVoiceRow(
+                        phrase: "\"How do I look?\"",
+                        desc: "Hear live framing & lighting check",
+                        icon: "sparkles"
                     )
                 }
-                .padding(16)
-                .background(Color.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.12), lineWidth: 1))
 
                 VStack(spacing: 10) {
                     Button {
                         guidanceService.enableVoiceTriggers()
-                        withAnimation(.easeInOut(duration: 0.25)) {
+                        withAnimation(.easeInOut(duration: 0.22)) {
                             showVoiceGuideIntro = false
                         }
                         guidanceService.announceAngle(currentAngle)
                     } label: {
-                        Text("Enable Voice Triggers")
-                            .font(.system(size: 16, weight: .bold))
+                        Text("Enable Voice Commands")
+                            .font(.system(size: 15, weight: .semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
                     }
                     .nativeProminentGlassButton(tint: Theme.Colors.primaryPlum)
 
                     Button {
-                        withAnimation(.easeInOut(duration: 0.25)) {
+                        withAnimation(.easeInOut(duration: 0.22)) {
                             showVoiceGuideIntro = false
                         }
                         guidanceService.announceAngle(currentAngle)
                     } label: {
-                        Text("Continue Without Voice")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Color.white.opacity(0.85))
-                            .padding(.vertical, 8)
+                        Text("Not Now")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(Color.white.opacity(0.78))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(24)
-            .background(Theme.Colors.cameraPanel)
-            .clipShape(RoundedRectangle(cornerRadius: 24))
-            .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.white.opacity(0.15), lineWidth: 1))
-            .shadow(color: Color.black.opacity(0.5), radius: 30, x: 0, y: 15)
-            .padding(.horizontal, 24)
-            .transition(.scale(scale: 0.95).combined(with: .opacity))
+            .padding(22)
+            .nativeGlassRoundedSurface(cornerRadius: 24)
+            .padding(.horizontal, 28)
+            .transition(.scale(scale: 0.96).combined(with: .opacity))
         }
         .zIndex(100)
     }
 
-    private func headshotVoiceRow(phrase: String, desc: String, icon: String, iconColor: Color) -> some View {
+    private func headshotVoiceRow(phrase: String, desc: String, icon: String) -> some View {
         HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(iconColor.opacity(0.16))
-                    .frame(width: 38, height: 38)
-
-                Image(systemName: icon)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(iconColor)
-            }
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.85))
+                .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(phrase)
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
 
                 Text(desc)
@@ -891,62 +920,3 @@ struct HeadshotGuidanceView: View {
 
 // MARK: - Compatibility Typealias
 typealias HeadshotCaptureView = HeadshotGuidanceView
-
-private extension View {
-    @ViewBuilder
-    func nativeGlassCircleButton() -> some View {
-        if #available(iOS 26.0, *) {
-            self
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-        } else {
-            self
-                .padding(8)
-                .background(.ultraThinMaterial, in: Circle())
-        }
-    }
-
-    @ViewBuilder
-    func nativeGlassCapsuleButton(tint: Color? = nil) -> some View {
-        if #available(iOS 26.0, *) {
-            if let tint {
-                self
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.capsule)
-                    .tint(tint)
-            } else {
-                self
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.capsule)
-            }
-        } else {
-            self
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background((tint ?? .black).opacity(tint == nil ? 0.45 : 0.28), in: Capsule())
-        }
-    }
-
-    @ViewBuilder
-    func nativeGlassCapsuleSurface() -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.regular, in: .capsule)
-        } else {
-            self.background(.ultraThinMaterial, in: Capsule())
-        }
-    }
-
-    @ViewBuilder
-    func nativeProminentGlassButton(tint: Color) -> some View {
-        if #available(iOS 26.0, *) {
-            self
-                .buttonStyle(.glassProminent)
-                .buttonBorderShape(.capsule)
-                .tint(tint)
-        } else {
-            self
-                .foregroundStyle(.white)
-                .background(tint, in: Capsule())
-        }
-    }
-}

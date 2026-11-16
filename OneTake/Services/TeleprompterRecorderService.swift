@@ -790,7 +790,15 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         }
         guard !isVoiceListening else { return }
 
-        speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+        let preferredLocale = Locale.current.identifier.replacingOccurrences(of: "_", with: "-")
+        if preferredLocale.lowercased().hasPrefix("en"),
+           let localized = SFSpeechRecognizer(locale: Locale(identifier: preferredLocale)),
+           localized.isAvailable {
+            speechRecognizer = localized
+        } else {
+            speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+                ?? SFSpeechRecognizer(locale: Locale.current)
+        }
         speechRecognizer?.delegate = self
         guard let speechRecognizer, speechRecognizer.isAvailable else {
             voiceStatus = .unavailable
@@ -804,9 +812,9 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         }
 
         let inputNode = speechAudioEngine.inputNode
-        let inputFormat = inputNode.inputFormat(forBus: 0)
         let outputFormat = inputNode.outputFormat(forBus: 0)
-        guard let tapFormat = [inputFormat, outputFormat].first(where: { $0.sampleRate > 0 && $0.channelCount > 0 }) else {
+        let inputFormat = inputNode.inputFormat(forBus: 0)
+        guard let tapFormat = [outputFormat, inputFormat].first(where: { $0.sampleRate > 0 && $0.channelCount > 0 }) else {
             print("Invalid audio input formats in TeleprompterRecorderService")
             voiceStatus = .failed
             return
@@ -876,7 +884,8 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.taskHint = .dictation
-        request.requiresOnDeviceRecognition = false
+        request.addsPunctuation = false
+        request.requiresOnDeviceRecognition = speechRecognizer.supportsOnDeviceRecognition
         stateBox.recognitionRequest = request
 
         let taskID = UUID()

@@ -108,14 +108,9 @@ struct TeleprompterRecorderView: View {
                         onRecorderCancelled?()
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 36, height: 36)
-                            .background(Color.black.opacity(0.55))
-                            .clipShape(Circle())
-                            .overlay(Circle().stroke(Color.white.opacity(0.18), lineWidth: 1))
                     }
                     .disabled(recorderService.isRecording || recorderService.isCountingDown)
+                    .accessibilityLabel("Close camera")
                 }
 
                 ToolbarItem(placement: .principal) {
@@ -136,21 +131,15 @@ struct TeleprompterRecorderView: View {
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: 8) {
-                        Button {
-                            recorderService.cycleZoom()
-                        } label: {
-                            Text(String(format: "%.1fx", recorderService.currentZoomFactor))
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(Color.black.opacity(0.55))
-                                .clipShape(Capsule())
-                                .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
-                        }
-                        .disabled(recorderService.isRecording || recorderService.isCountingDown || recorderService.cameraPermissionDenied)
+                    Button {
+                        recorderService.cycleZoom()
+                    } label: {
+                        Text(String(format: "%.1fx", recorderService.currentZoomFactor))
+                            .font(.system(size: 13, weight: .semibold))
+                            .monospacedDigit()
                     }
+                    .disabled(recorderService.isRecording || recorderService.isCountingDown || recorderService.cameraPermissionDenied)
+                    .accessibilityLabel("Cycle camera zoom")
                 }
             }
             .onAppear {
@@ -292,17 +281,10 @@ struct TeleprompterRecorderView: View {
                 Button {
                     scrollOffset = 0.0
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.uturn.backward")
-                        Text("Reset")
-                    }
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(0.8))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.black.opacity(0.5))
-                    .clipShape(Capsule())
+                    Label("Reset", systemImage: "arrow.uturn.backward")
+                        .font(.system(size: 12, weight: .semibold))
                 }
+                .nativeGlassCapsuleButton()
                 .disabled(recorderService.isCountingDown)
 
                 Spacer()
@@ -310,17 +292,10 @@ struct TeleprompterRecorderView: View {
                 Button {
                     withAnimation { isShowingSpeedControl.toggle() }
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "speedometer")
-                        Text(String(format: "%.1fx Speed", scrollSpeed))
-                    }
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.black.opacity(0.5))
-                    .clipShape(Capsule())
+                    Label(String(format: "%.1fx Speed", scrollSpeed), systemImage: "speedometer")
+                        .font(.system(size: 12, weight: .semibold))
                 }
+                .nativeGlassCapsuleButton()
             }
 
             if isShowingSpeedControl {
@@ -332,14 +307,12 @@ struct TeleprompterRecorderView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(Color.black.opacity(0.75))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .nativeGlassRoundedSurface(cornerRadius: 12)
             }
 
             ZStack(alignment: .top) {
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(Color.black.opacity(0.55))
-                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.12), lineWidth: 1))
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.black.opacity(0.5))
 
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 14) {
@@ -406,20 +379,10 @@ struct TeleprompterRecorderView: View {
                 Button {
                     cueEngine.playNextCue()
                 } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "forward")
-                            .font(.system(size: 11, weight: .bold))
-                        Text("Play Next Cue")
-                            .font(.system(size: 12, weight: .bold))
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(
-                        Capsule()
-                            .fill(Color.purple.opacity(cueEngine.isCuePlaying ? 0.35 : 0.8))
-                    )
+                    Label("Play Next Cue", systemImage: "forward")
+                        .font(.system(size: 12, weight: .bold))
                 }
+                .nativeProminentGlassButton(tint: Theme.Colors.primaryPlum)
                 .disabled(cueEngine.isCuePlaying || cueEngine.currentCueIndex >= audition.cueLines.count)
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
@@ -435,9 +398,7 @@ struct TeleprompterRecorderView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Color.black.opacity(0.6))
-                .clipShape(Capsule())
-                .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+                .nativeGlassCapsuleSurface()
 
                 HStack(spacing: 5) {
                     Circle()
@@ -449,9 +410,7 @@ struct TeleprompterRecorderView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Color.black.opacity(0.6))
-                .clipShape(Capsule())
-                .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+                .nativeGlassCapsuleSurface()
 
                 HStack(spacing: 5) {
                     Circle()
@@ -463,26 +422,19 @@ struct TeleprompterRecorderView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Color.black.opacity(0.6))
-                .clipShape(Capsule())
-                .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+                .nativeGlassCapsuleSurface()
             }
 
             HStack(spacing: 0) {
                 Button {
                     recorderService.voiceGuidanceEnabled.toggle()
                 } label: {
-                    ZStack {
-                        Circle()
-                            .fill(Color.black.opacity(0.55))
-                            .frame(width: 50, height: 50)
-                            .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
-
-                        Image(systemName: recorderService.voiceGuidanceEnabled ? "speaker.wave.2" : "speaker.slash")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(recorderService.voiceGuidanceEnabled ? Color.white : Color.white.opacity(0.45))
-                    }
+                    Image(systemName: recorderService.voiceGuidanceEnabled ? "speaker.wave.2" : "speaker.slash")
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 30, height: 30)
+                        .foregroundStyle(recorderService.voiceGuidanceEnabled ? Color.white : Color.white.opacity(0.45))
                 }
+                .nativeGlassCircleButton()
                 .accessibilityLabel(recorderService.voiceGuidanceEnabled ? "Disable voice guidance" : "Enable voice guidance")
 
                 Spacer()
@@ -510,6 +462,7 @@ struct TeleprompterRecorderView: View {
                         }
                     }
                 }
+                .buttonStyle(.plain)
                 .disabled(recorderService.isCountingDown || recorderService.cameraPermissionDenied)
 
                 Spacer()
@@ -517,17 +470,12 @@ struct TeleprompterRecorderView: View {
                 Button {
                     recorderService.flipCamera()
                 } label: {
-                    ZStack {
-                        Circle()
-                            .fill(Color.black.opacity(0.55))
-                            .frame(width: 50, height: 50)
-                            .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
-
-                        Image(systemName: "camera.rotate")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(Color.white)
-                    }
+                    Image(systemName: "camera.rotate")
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 30, height: 30)
+                        .foregroundStyle(Color.white)
                 }
+                .nativeGlassCircleButton()
                 .disabled(recorderService.isRecording || recorderService.isCountingDown || recorderService.cameraPermissionDenied)
                 .accessibilityLabel("Flip camera")
             }
