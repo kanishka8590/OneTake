@@ -177,9 +177,8 @@ struct AuditionPackageHubView: View {
                     dismiss()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Theme.Colors.textSecondary)
-                        .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.Colors.textPrimary)
                 }
                 .accessibilityLabel("Close")
             }
@@ -199,9 +198,8 @@ struct AuditionPackageHubView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(Theme.Colors.textSecondary)
-                        .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Theme.Colors.accent)
                 }
                 .accessibilityLabel("Audition options")
             }
