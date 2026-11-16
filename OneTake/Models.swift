@@ -554,6 +554,7 @@ final class Audition {
     var roleName: String = ""
     var roleDescription: String = ""
     var deadline: Date = Date()
+    var hasDeadline: Bool = true
     var reminderOffsetMinutes: Int = 60
     var recipientEmail: String = ""
     var statusRaw: String = AuditionStatus.active.rawValue
@@ -598,7 +599,7 @@ final class Audition {
     }
 
     var isOverdue: Bool {
-        deadline < Date.now && status == .active
+        hasDeadline && deadline < Date.now && status == .active
     }
 
     var daysUntilDeadline: Int {
@@ -651,6 +652,7 @@ final class Audition {
         roleName: String = "",
         roleDescription: String = "",
         deadline: Date = Date(),
+        hasDeadline: Bool = true,
         reminderOffsetMinutes: Int = 60,
         recipientEmail: String = "",
         statusRaw: String = AuditionStatus.active.rawValue,
@@ -674,6 +676,7 @@ final class Audition {
         self.roleName = roleName
         self.roleDescription = roleDescription
         self.deadline = deadline
+        self.hasDeadline = hasDeadline
         self.reminderOffsetMinutes = reminderOffsetMinutes
         self.recipientEmail = recipientEmail
         self.statusRaw = statusRaw

@@ -713,7 +713,7 @@ struct AuditionCardRow: View {
     }
 
     private var deadlineColor: Color {
-        if audition.status == .sent {
+        if audition.status == .sent || !audition.hasDeadline {
             return Theme.Colors.textSecondary
         }
         if audition.isOverdue {
@@ -729,6 +729,9 @@ struct AuditionCardRow: View {
     private var deadlineText: String {
         if audition.status == .sent {
             return "Submitted"
+        }
+        if !audition.hasDeadline {
+            return "No deadline"
         }
         if audition.isOverdue {
             return "Overdue"

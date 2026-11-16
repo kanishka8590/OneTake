@@ -14,6 +14,7 @@ nonisolated struct ParsedCastingCall: Sendable {
     var roleName: String = ""
     var roleDescription: String = ""
     var deadline: Date = Calendar.current.date(byAdding: .day, value: 3, to: Date()) ?? Date()
+    var hasDetectedDeadline: Bool = false
     var recipientEmail: String = ""
     var requirements: [SubmissionRequirement] = []
     var requiredHeadshotRatio: HeadshotAspectRatio = .ratio4x5
@@ -386,6 +387,7 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
         // 5. Deadline Extraction (only inspect notice/header lines, never screenplay dialogue lines)
         if let deadline = extractDeadline(from: lines, hasDialogue: dialogueResult.scriptText != nil) {
             result.deadline = deadline
+            result.hasDetectedDeadline = true
         }
 
         // 6. Constraints: Ratio, Slate Max, Clip Max, Size Max
@@ -745,6 +747,77 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
                 return date
             }
         }
+        return nil
+    }
+
+    /// Parses free-form user deadline text (e.g. "Nov 30, 5:00 PM", "30/11/2026 17:00",
+    /// "2026-12-15", "tomorrow 6pm") into a `Date`.
+    nonisolated func parseUserDeadlineInput(_ rawInput: String) -> Date? {
+        let trimmed = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        // Require at least one letter or date/time separator so bare integers don't misparse.
+        let hasCue = trimmed.contains { $0.isLetter || $0 == "/" || $0 == "-" || $0 == ":" }
+        guard hasCue else { return nil }
+
+        let posixFormatsWithTime = [
+            "yyyy-MM-dd HH:mm",
+            "yyyy-MM-dd h:mm a",
+            "yyyy-MM-dd h:mma",
+            "MMM d, yyyy h:mm a",
+            "MMM d, yyyy 'at' h:mm a",
+            "d MMM yyyy h:mm a",
+            "d MMM yyyy, h:mm a",
+            "d/M/yyyy HH:mm",
+            "d/M/yyyy h:mm a",
+            "d/M/yy HH:mm",
+            "d/M/yy h:mm a",
+            "M/d/yyyy HH:mm",
+            "M/d/yyyy h:mm a",
+            "d-M-yyyy HH:mm",
+            "d-M-yyyy h:mm a"
+        ]
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.isLenient = false
+
+        for format in posixFormatsWithTime {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: trimmed) {
+                return date
+            }
+        }
+
+        let posixDateOnlyFormats = [
+            "yyyy-MM-dd",
+            "d/M/yyyy",
+            "d/M/yy",
+            "d-M-yyyy",
+            "M/d/yyyy",
+            "d MMM yyyy",
+            "MMM d, yyyy"
+        ]
+
+        for format in posixDateOnlyFormats {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: trimmed) {
+                return Calendar.current.date(bySettingHour: 18, minute: 0, second: 0, of: date) ?? date
+            }
+        }
+
+        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue) {
+            let fullRange = NSRange(trimmed.startIndex..., in: trimmed)
+            let matches = detector.matches(in: trimmed, options: [], range: fullRange)
+            if let best = matches.max(by: { $0.range.length < $1.range.length }),
+               let date = best.date {
+                let coverage = Double(best.range.length) / Double(max(1, fullRange.length))
+                if coverage >= 0.5 || best.range.length >= 4 {
+                    return date
+                }
+            }
+        }
+
         return nil
     }
 

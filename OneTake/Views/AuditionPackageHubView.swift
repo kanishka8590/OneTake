@@ -383,11 +383,15 @@ struct AuditionPackageHubView: View {
     private var headerArtwork: String { audition.production == .theater ? Theme.Artwork.dramaBanner : Theme.Artwork.auditionBanner }
 
     private var cleanDeadlineString: String {
-        let diff = audition.deadline.timeIntervalSince(Date.now)
-        let timeRemaining: String
         if audition.status == .sent {
             return "Submitted • Complete"
-        } else if diff < 0 {
+        }
+        if !audition.hasDeadline {
+            return "Deadline not specified"
+        }
+        let diff = audition.deadline.timeIntervalSince(Date.now)
+        let timeRemaining: String
+        if diff < 0 {
             timeRemaining = "Overdue"
         } else if diff < 3600 {
             let mins = max(1, Int(diff / 60))

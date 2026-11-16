@@ -26,6 +26,7 @@ private struct EditorSnapshot: Equatable {
     var productionType: ProductionType
     var roleName: String
     var roleDescription: String
+    var hasDeadline: Bool
     var deadline: Date
     var reminderOffsetMinutes: Int
     var recipientEmail: String
@@ -53,7 +54,8 @@ struct AuditionDetailsEditorView: View {
     @State private var productionType: ProductionType = .featureFilm
     @State private var roleName: String = ""
     @State private var roleDescription: String = ""
-    @State private var deadline: Date = Date()
+    @State private var hasDeadline: Bool = false
+    @State private var deadline: Date = AuditionDetailsEditorView.defaultDeadlineDate()
     @State private var reminderOffsetMinutes: Int = 60
     @State private var recipientEmail: String = ""
     @State private var requirements: [SubmissionRequirement] = []
@@ -65,7 +67,11 @@ struct AuditionDetailsEditorView: View {
     @State private var draftProjectName: String = ""
     @State private var draftRoleName: String = ""
     @State private var draftRoleDescription: String = ""
-    @State private var draftDeadline: Date = Date()
+    @State private var draftHasDeadline: Bool = false
+    @State private var draftDeadline: Date = AuditionDetailsEditorView.defaultDeadlineDate()
+    @State private var draftDeadlineText: String = ""
+    @State private var lastParsedFromTyping: Date? = nil
+    @FocusState private var isDeadlineFieldFocused: Bool
     @State private var draftReminderOffsetMinutes: Int = 60
     @State private var draftRecipientEmail: String = ""
     @State private var draftRequirements: [SubmissionRequirement] = []
@@ -98,6 +104,7 @@ struct AuditionDetailsEditorView: View {
             productionType: productionType,
             roleName: roleName,
             roleDescription: roleDescription,
+            hasDeadline: hasDeadline,
             deadline: deadline,
             reminderOffsetMinutes: reminderOffsetMinutes,
             recipientEmail: recipientEmail,
@@ -129,7 +136,12 @@ struct AuditionDetailsEditorView: View {
     }
 
     private var isDeadlineInPast: Bool {
-        deadline < Date()
+        hasDeadline && deadline < Date()
+    }
+
+    private static func defaultDeadlineDate() -> Date {
+        let threeDays = Calendar.current.date(byAdding: .day, value: 3, to: Date()) ?? Date()
+        return Calendar.current.date(bySettingHour: 18, minute: 0, second: 0, of: threeDays) ?? threeDays
     }
 
     var body: some View {
@@ -208,7 +220,7 @@ struct AuditionDetailsEditorView: View {
                             VStack(spacing: 0) {
                                 editableRow(
                                     title: "Deadline & Reminder",
-                                    value: deadline.formatted(date: .abbreviated, time: .shortened),
+                                    value: hasDeadline ? deadline.formatted(date: .abbreviated, time: .shortened) : "Not specified (add deadline)",
                                     icon: "calendar.badge.clock",
                                     isWarning: isDeadlineInPast
                                 ) {
@@ -477,7 +489,8 @@ struct AuditionDetailsEditorView: View {
             productionType = existing.production
             roleName = existing.roleName
             roleDescription = existing.roleDescription
-            deadline = existing.deadline
+            hasDeadline = existing.hasDeadline
+            deadline = existing.hasDeadline ? existing.deadline : Self.defaultDeadlineDate()
             reminderOffsetMinutes = existing.reminderOffsetMinutes
             recipientEmail = existing.recipientEmail
             requirements = existing.requirements
@@ -489,7 +502,8 @@ struct AuditionDetailsEditorView: View {
             productionType = call.productionType
             roleName = call.roleName
             roleDescription = call.roleDescription
-            deadline = call.deadline
+            hasDeadline = call.hasDetectedDeadline
+            deadline = call.hasDetectedDeadline ? call.deadline : Self.defaultDeadlineDate()
             recipientEmail = call.recipientEmail
             requirements = call.requirements
             if let script = call.detectedScriptText, !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -501,6 +515,9 @@ struct AuditionDetailsEditorView: View {
                 scriptFileName = nil
                 cueLines = []
             }
+        } else {
+            hasDeadline = false
+            deadline = Self.defaultDeadlineDate()
         }
         initialSnapshot = currentSnapshot
     }
@@ -513,7 +530,10 @@ struct AuditionDetailsEditorView: View {
             draftRoleName = roleName
             draftRoleDescription = roleDescription
         case .deadline:
-            draftDeadline = deadline
+            draftHasDeadline = hasDeadline
+            draftDeadline = hasDeadline ? deadline : Self.defaultDeadlineDate()
+            draftDeadlineText = hasDeadline ? draftDeadline.formatted(date: .abbreviated, time: .shortened) : ""
+            lastParsedFromTyping = nil
             draftReminderOffsetMinutes = reminderOffsetMinutes
         case .recipientEmail:
             draftRecipientEmail = recipientEmail
@@ -788,6 +808,7 @@ struct AuditionDetailsEditorView: View {
             existing.roleName = trimmedRole
             existing.roleDescription = trimmedRoleDesc
             existing.deadline = deadline
+            existing.hasDeadline = hasDeadline
             existing.reminderOffsetMinutes = reminderOffsetMinutes
             existing.recipientEmail = trimmedEmail
             existing.requirements = requirements
@@ -813,6 +834,7 @@ struct AuditionDetailsEditorView: View {
                 roleName: trimmedRole,
                 roleDescription: trimmedRoleDesc,
                 deadline: deadline,
+                hasDeadline: hasDeadline,
                 reminderOffsetMinutes: reminderOffsetMinutes,
                 recipientEmail: trimmedEmail,
                 requirements: requirements,
@@ -1072,19 +1094,85 @@ struct AuditionDetailsEditorView: View {
         .presentationDetents([.fraction(0.55)])
     }
 
+    private var trimmedTypedDeadline: String {
+        draftDeadlineText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var parsedTypedDeadline: Date? {
+        CastingCallParserService.shared.parseUserDeadlineInput(trimmedTypedDeadline)
+    }
+
+    private var isTypedDeadlineInvalid: Bool {
+        draftHasDeadline && !trimmedTypedDeadline.isEmpty && parsedTypedDeadline == nil
+    }
+
     private var editDeadlineSheet: some View {
         NavigationStack {
             Form {
-                Section("Deadline") {
-                    DatePicker("Submission Deadline", selection: $draftDeadline, displayedComponents: [.date, .hourAndMinute])
+                Section {
+                    Toggle("Specify Deadline", isOn: $draftHasDeadline)
+                        .onChange(of: draftHasDeadline) { _, isOn in
+                            if !isOn {
+                                draftDeadlineText = ""
+                                lastParsedFromTyping = nil
+                            } else if draftDeadlineText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                draftDeadlineText = draftDeadline.formatted(date: .abbreviated, time: .shortened)
+                                lastParsedFromTyping = nil
+                            }
+                        }
+
+                    TextField("Type deadline (e.g. Nov 30, 5:00 PM)", text: $draftDeadlineText)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .submitLabel(.done)
+                        .focused($isDeadlineFieldFocused)
+                        .onChange(of: draftDeadlineText) { _, newValue in
+                            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !trimmed.isEmpty else {
+                                lastParsedFromTyping = nil
+                                return
+                            }
+                            if !draftHasDeadline {
+                                draftHasDeadline = true
+                            }
+                            if let parsed = CastingCallParserService.shared.parseUserDeadlineInput(trimmed) {
+                                lastParsedFromTyping = parsed
+                                draftDeadline = parsed
+                            }
+                        }
+
+                    if draftHasDeadline {
+                        DatePicker("Pick Date & Time", selection: $draftDeadline, displayedComponents: [.date, .hourAndMinute])
+                            .onChange(of: draftDeadline) { _, newDate in
+                                if let typed = lastParsedFromTyping, abs(typed.timeIntervalSince(newDate)) < 1.0 {
+                                    return
+                                }
+                                lastParsedFromTyping = nil
+                                isDeadlineFieldFocused = false
+                                draftDeadlineText = newDate.formatted(date: .abbreviated, time: .shortened)
+                            }
+                    }
+                } header: {
+                    Text("Deadline")
+                } footer: {
+                    if !draftHasDeadline {
+                        Text("Deadline not specified. Type a date and time above (like \"Nov 30, 5:00 PM\" or \"30/11/2026\") or turn on Specify Deadline.")
+                    } else if isTypedDeadlineInvalid {
+                        Text("Couldn't recognize \"\(trimmedTypedDeadline)\". Try e.g. \"Nov 30, 5:00 PM\", \"30/11/2026 17:00\", or pick a date below.")
+                            .foregroundStyle(Theme.Colors.warningAmber)
+                    } else {
+                        Text("Submission deadline: \(draftDeadline.formatted(date: .abbreviated, time: .shortened))")
+                    }
                 }
 
-                Section("Reminder") {
-                    Picker("Notify Me", selection: $draftReminderOffsetMinutes) {
-                        Text("30 minutes before").tag(30)
-                        Text("1 hour before").tag(60)
-                        Text("2 hours before").tag(120)
-                        Text("1 day before").tag(1440)
+                if draftHasDeadline {
+                    Section("Reminder") {
+                        Picker("Notify Me", selection: $draftReminderOffsetMinutes) {
+                            Text("30 minutes before").tag(30)
+                            Text("1 hour before").tag(60)
+                            Text("2 hours before").tag(120)
+                            Text("1 day before").tag(1440)
+                        }
                     }
                 }
             }
@@ -1096,14 +1184,22 @@ struct AuditionDetailsEditorView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
-                        deadline = draftDeadline
-                        reminderOffsetMinutes = draftReminderOffsetMinutes
+                        hasDeadline = draftHasDeadline
+                        if draftHasDeadline {
+                            if let parsed = parsedTypedDeadline {
+                                deadline = parsed
+                            } else {
+                                deadline = draftDeadline
+                            }
+                            reminderOffsetMinutes = draftReminderOffsetMinutes
+                        }
                         activeSheet = nil
                     }
+                    .disabled(isTypedDeadlineInvalid)
                 }
             }
         }
-        .presentationDetents([.fraction(0.5)])
+        .presentationDetents([.fraction(0.65)])
     }
 
     private var editRecipientEmailSheet: some View {

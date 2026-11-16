@@ -582,6 +582,77 @@ final class CastingCallParserAndRemindersTests: XCTestCase {
         XCTAssertEqual(AuditionListFilter.allCases.map(\.rawValue), ["Active", "Sent", "All"])
     }
 
+    func testMissingDeadlineLeavesHasDetectedDeadlineFalse() async {
+        let notice = """
+        CASTING CALL - THE QUIET HARBOR
+        Role: Supporting Lead
+        Send self-tape to casting@quietharbor.com
+        """
+        let parsed = await CastingCallParserService.shared.parseText(notice)
+        XCTAssertFalse(parsed.hasDetectedDeadline)
+
+        let noticeWithDeadline = """
+        CASTING CALL - THE QUIET HARBOR
+        Role: Supporting Lead
+        Deadline: December 15, 2026 at 5:00 PM
+        Send self-tape to casting@quietharbor.com
+        """
+        let parsedWithDeadline = await CastingCallParserService.shared.parseText(noticeWithDeadline)
+        XCTAssertTrue(parsedWithDeadline.hasDetectedDeadline)
+    }
+
+    func testParseUserDeadlineInputHandlesTypedDatesAndRejectsInvalidText() {
+        let parser = CastingCallParserService.shared
+
+        let slashDate = parser.parseUserDeadlineInput("30/11/2026 17:00")
+        XCTAssertNotNil(slashDate)
+        if let slashDate {
+            XCTAssertEqual(Calendar.current.component(.day, from: slashDate), 30)
+            XCTAssertEqual(Calendar.current.component(.month, from: slashDate), 11)
+            XCTAssertEqual(Calendar.current.component(.year, from: slashDate), 2026)
+            XCTAssertEqual(Calendar.current.component(.hour, from: slashDate), 17)
+        }
+
+        let naturalDate = parser.parseUserDeadlineInput("Nov 30, 2026 5:00 PM")
+        XCTAssertNotNil(naturalDate)
+        if let naturalDate {
+            XCTAssertEqual(Calendar.current.component(.day, from: naturalDate), 30)
+            XCTAssertEqual(Calendar.current.component(.month, from: naturalDate), 11)
+        }
+
+        let isoDate = parser.parseUserDeadlineInput("2026-12-15")
+        XCTAssertNotNil(isoDate)
+        if let isoDate {
+            XCTAssertEqual(Calendar.current.component(.day, from: isoDate), 15)
+            XCTAssertEqual(Calendar.current.component(.month, from: isoDate), 12)
+            XCTAssertEqual(Calendar.current.component(.hour, from: isoDate), 18)
+        }
+
+        XCTAssertNil(parser.parseUserDeadlineInput(""))
+        XCTAssertNil(parser.parseUserDeadlineInput("12"))
+        XCTAssertNil(parser.parseUserDeadlineInput("not a deadline at all"))
+    }
+
+    func testAuditionWithoutDeadlineIsNeverOverdueAndSkipsReminders() {
+        let pastDate = Date().addingTimeInterval(-7200)
+        let audition = Audition(
+            projectName: "No Deadline Indie",
+            roleName: "Maya",
+            deadline: pastDate,
+            hasDeadline: false
+        )
+
+        XCTAssertFalse(audition.isOverdue)
+
+        let planned = AuditionReminderService.plannedReminders(
+            for: [audition],
+            notifyAuditions: true,
+            notifySubmissions: true,
+            notifyPractice: true
+        )
+        XCTAssertTrue(planned.isEmpty)
+    }
+
     private func appendUInt16(_ value: UInt16, to data: inout Data) {
         data.append(UInt8(value & 0xff))
         data.append(UInt8(value >> 8))

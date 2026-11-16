@@ -87,7 +87,7 @@ enum AuditionReminderService {
         calendar: Calendar = .current
     ) -> [PlannedReminder] {
         var result: [PlannedReminder] = []
-        let upcoming = auditions.filter { $0.status == .active && $0.deadline > now }
+        let upcoming = auditions.filter { $0.status == .active && $0.hasDeadline && $0.deadline > now }
         let minSeparation: TimeInterval = 2 * 3600
 
         for audition in upcoming {

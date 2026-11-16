@@ -1125,6 +1125,9 @@ private struct DeliveryCelebrationView: View {
     }
 
     private var earlyLeadText: String {
+        guard audition.hasDeadline else {
+            return "Package sent."
+        }
         if audition.daysUntilDeadline > 1 {
             return "\(audition.daysUntilDeadline) days early."
         } else if audition.daysUntilDeadline == 1 {
