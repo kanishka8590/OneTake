@@ -27,11 +27,7 @@ struct ProfileView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Theme.Colors.canvasBackground
-                    .ignoresSafeArea()
-
-                List {
+            List {
                     // Header / Actor Card
                     Section {
                         actorHeaderCard
@@ -172,7 +168,7 @@ struct ProfileView: View {
                 }
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
-            }
+                .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.large)
             .task {

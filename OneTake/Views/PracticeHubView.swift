@@ -37,83 +37,84 @@ struct PracticeHubView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Theme.Colors.canvasBackground
-                    .ignoresSafeArea()
-
+            List {
                 if !appState.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    GlobalSearchView(appState: appState)
-                        .environment(appState)
+                    GlobalSearchSections(appState: appState)
                 } else if appState.practiceScripts.isEmpty {
-                    emptyStateView
+                    Section {
+                        emptyStateView
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    }
                 } else {
-                    List {
-                        Section {
-                            practiceHero
-                                .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-                                .listRowBackground(Color.clear)
-                        }
-                        Section {
-                            ForEach(appState.practiceScripts) { script in
-                                PracticeScriptCardRow(script: script) {
+                    Section {
+                        practiceHero
+                            .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                            .listRowBackground(Color.clear)
+                    }
+                    Section {
+                        ForEach(appState.practiceScripts) { script in
+                            PracticeScriptCardRow(script: script) {
+                                scriptToOpen = script
+                            } onReview: { session in
+                                reviewTarget = ScriptReviewTarget(script: script, session: session)
+                            } onRunAgain: {
+                                scriptToRunAgain = script
+                            }
+                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .contextMenu {
+                                Button {
                                     scriptToOpen = script
-                                } onReview: { session in
-                                    reviewTarget = ScriptReviewTarget(script: script, session: session)
-                                } onRunAgain: {
+                                } label: {
+                                    Label("Memorise & Practice", systemImage: "book.pages")
+                                }
+
+                                Button {
                                     scriptToRunAgain = script
+                                } label: {
+                                    Label("Run Scene Aloud", systemImage: "waveform")
                                 }
-                                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                                .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
-                                .contextMenu {
+
+                                if let latest = script.sessions.sorted(by: { $0.date > $1.date }).first {
                                     Button {
-                                        scriptToOpen = script
+                                        reviewTarget = ScriptReviewTarget(script: script, session: latest)
                                     } label: {
-                                        Label("Memorise & Practice", systemImage: "book.pages")
-                                    }
-
-                                    Button {
-                                        scriptToRunAgain = script
-                                    } label: {
-                                        Label("Run Scene Aloud", systemImage: "waveform")
-                                    }
-
-                                    if let latest = script.sessions.sorted(by: { $0.date > $1.date }).first {
-                                        Button {
-                                            reviewTarget = ScriptReviewTarget(script: script, session: latest)
-                                        } label: {
-                                            Label("Review Latest Run", systemImage: "doc.text.magnifyingglass")
-                                        }
-                                    }
-
-                                    Divider()
-
-                                    Button(role: .destructive) {
-                                        scriptToDelete = script
-                                        showingDeleteAlert = true
-                                    } label: {
-                                        Label("Delete Script", systemImage: "trash")
+                                        Label("Review Latest Run", systemImage: "doc.text.magnifyingglass")
                                     }
                                 }
-                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                    Button(role: .destructive) {
-                                        scriptToDelete = script
-                                        showingDeleteAlert = true
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
+
+                                Divider()
+
+                                Button(role: .destructive) {
+                                    scriptToDelete = script
+                                    showingDeleteAlert = true
+                                } label: {
+                                    Label("Delete Script", systemImage: "trash")
                                 }
                             }
-                        } header: {
-                            Text("Rehearsal Scripts (\(appState.practiceScripts.count))")
-                                .font(Theme.Typography.captionBadge)
-                                .foregroundStyle(Theme.Colors.textSecondary)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button(role: .destructive) {
+                                    scriptToDelete = script
+                                    showingDeleteAlert = true
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
                         }
+                    } header: {
+                        Text("Rehearsal Scripts (\(appState.practiceScripts.count))")
+                            .font(Theme.Typography.captionBadge)
+                            .foregroundStyle(Theme.Colors.textSecondary)
                     }
-                    .listStyle(.insetGrouped)
-                    .scrollContentBackground(.hidden)
                 }
             }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
+            .expandLargeNavigationTitleOnAppear()
             .navigationTitle("Practice")
             .navigationBarTitleDisplayMode(.large)
             .searchable(
@@ -241,24 +242,11 @@ struct PracticeHubView: View {
                     .font(Theme.Typography.sectionHeader)
                     .foregroundStyle(Theme.Colors.textPrimary)
 
-                Text("Add your sides, monologues, or scenes to memorize and rehearse your script.")
+                Text("Add your sides, monologues, or scenes using the + button above to memorize and rehearse your script.")
                     .font(Theme.Typography.bodyRegular)
                     .foregroundStyle(Theme.Colors.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
-            }
-            .padding(.top, 8)
-
-            Button {
-                showingAddSheet = true
-            } label: {
-                Label("Add a Scene", systemImage: "plus")
-                    .font(.system(size: 16, weight: .semibold))
-                    .frame(maxWidth: 200)
-                    .padding(.vertical, 12)
-                    .background(Theme.Colors.primaryPlum)
-                    .foregroundStyle(.white)
-                    .clipShape(Capsule())
             }
             .padding(.top, 8)
         }

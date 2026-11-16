@@ -75,91 +75,93 @@ struct AuditionsListView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Theme.Colors.canvasBackground
-                    .ignoresSafeArea()
-
+            List {
                 if !appState.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    GlobalSearchView(appState: appState)
-                        .environment(appState)
+                    GlobalSearchSections(appState: appState)
                 } else if filteredAuditions.isEmpty {
-                    emptyStateView
+                    Section {
+                        emptyStateView
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    }
                 } else {
-                    List {
-                        ForEach(filteredAuditions) { audition in
-                            NavigationLink {
-                                AuditionPackageHubView(audition: audition)
+                    ForEach(filteredAuditions) { audition in
+                        NavigationLink {
+                            AuditionPackageHubView(audition: audition)
+                        } label: {
+                            AuditionCardRow(audition: audition)
+                        }
+                        .contextMenu {
+                            Button {
+                                auditionToEdit = audition
                             } label: {
-                                AuditionCardRow(audition: audition)
+                                Label("Edit Details", systemImage: "pencil")
                             }
-                            .contextMenu {
+
+                            if audition.status == .active {
                                 Button {
-                                    auditionToEdit = audition
-                                } label: {
-                                    Label("Edit Details", systemImage: "pencil")
-                                }
-
-                                if audition.status == .active {
-                                    Button {
-                                        withAnimation {
-                                            appState.updateAuditionStatus(audition, to: .sent)
-                                        }
-                                    } label: {
-                                        Label("Mark as Sent", systemImage: "paperplane")
+                                    withAnimation {
+                                        appState.updateAuditionStatus(audition, to: .sent)
                                     }
-                                } else {
-                                    Button {
-                                        withAnimation {
-                                            appState.updateAuditionStatus(audition, to: .active)
-                                        }
-                                    } label: {
-                                        Label("Reactivate", systemImage: "arrow.uturn.backward")
-                                    }
-                                }
-
-                                Divider()
-
-                                Button(role: .destructive) {
-                                    auditionToDelete = audition
-                                    showingDeleteConfirmation = true
                                 } label: {
-                                    Label("Delete Audition", systemImage: "trash")
+                                    Label("Mark as Sent", systemImage: "paperplane")
+                                }
+                            } else {
+                                Button {
+                                    withAnimation {
+                                        appState.updateAuditionStatus(audition, to: .active)
+                                    }
+                                } label: {
+                                    Label("Reactivate", systemImage: "arrow.uturn.backward")
                                 }
                             }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button(role: .destructive) {
-                                    auditionToDelete = audition
-                                    showingDeleteConfirmation = true
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
 
-                                if audition.status == .active {
-                                    Button {
-                                        withAnimation {
-                                            appState.updateAuditionStatus(audition, to: .sent)
-                                        }
-                                    } label: {
-                                        Label("Mark Sent", systemImage: "paperplane")
+                            Divider()
+
+                            Button(role: .destructive) {
+                                auditionToDelete = audition
+                                showingDeleteConfirmation = true
+                            } label: {
+                                Label("Delete Audition", systemImage: "trash")
+                            }
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                auditionToDelete = audition
+                                showingDeleteConfirmation = true
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+
+                            if audition.status == .active {
+                                Button {
+                                    withAnimation {
+                                        appState.updateAuditionStatus(audition, to: .sent)
                                     }
-                                    .tint(Theme.Colors.successGreen)
-                                } else {
-                                    Button {
-                                        withAnimation {
-                                            appState.updateAuditionStatus(audition, to: .active)
-                                        }
-                                    } label: {
-                                        Label("Reactivate", systemImage: "arrow.uturn.backward")
-                                    }
-                                    .tint(Theme.Colors.accent)
+                                } label: {
+                                    Label("Mark Sent", systemImage: "paperplane")
                                 }
+                                .tint(Theme.Colors.successGreen)
+                            } else {
+                                Button {
+                                    withAnimation {
+                                        appState.updateAuditionStatus(audition, to: .active)
+                                    }
+                                } label: {
+                                    Label("Reactivate", systemImage: "arrow.uturn.backward")
+                                }
+                                .tint(Theme.Colors.accent)
                             }
                         }
                     }
-                    .listStyle(.insetGrouped)
-                    .scrollContentBackground(.hidden)
                 }
-
+            }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
+            .expandLargeNavigationTitleOnAppear()
+            .overlay {
                 if isParsingCall {
                     parsingOverlay
                 }
