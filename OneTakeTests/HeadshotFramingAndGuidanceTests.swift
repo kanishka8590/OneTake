@@ -280,11 +280,17 @@ final class HeadshotFramingAndGuidanceTests: XCTestCase {
         defer { service.stopSession() }
 
         service.startSession(for: .front, isDemoMode: false)
-        XCTAssertFalse(service.feedback.allChecksPassed, "Non-demo Simulator session must not fake passing checks")
+        XCTAssertFalse(service.feedback.allChecksPassed, "Non-demo session must not fake passing checks at startup")
+        #if targetEnvironment(simulator)
         XCTAssertNotNil(service.cameraErrorMessage)
+        #endif
 
         service.startSession(for: .front, isDemoMode: true)
+        #if targetEnvironment(simulator)
         XCTAssertTrue(service.feedback.allChecksPassed, "Demo Simulator session should populate simulated passing checks")
         XCTAssertNil(service.cameraErrorMessage)
+        #else
+        XCTAssertTrue(service.isSessionRunning)
+        #endif
     }
 }

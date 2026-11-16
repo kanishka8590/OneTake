@@ -1223,57 +1223,67 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         speechSynthesizer.speak(utterance)
     }
 
+    private var isUsingSimulatedRecording = false
+
     private func beginRecordingNow() {
         #if targetEnvironment(simulator)
-        guard isDemoMode else {
-            cameraErrorMessage = "Camera recording requires a physical device, or enable Demo Mode in Profile."
-            finishRecording(url: nil, duration: 0)
-            return
-        }
-
-        let tempURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("onetake_take_\(UUID().uuidString).mp4")
-        self.outputFileURL = tempURL
-        setRecordingState(true)
-        recordingDurationSeconds = 0.0
-        recordingStartTime = Date()
-        startRecordingTimer()
+        let shouldSimulate = true
         #else
-        guard stateBox.hasMovieFileOutput else {
-            cameraErrorMessage = cameraPermissionDenied
-                ? "Camera access is denied. Enable camera access in Settings to record."
-                : "Camera recording output is not ready yet."
-            finishRecording(url: nil, duration: 0)
-            return
-        }
+        let shouldSimulate = isDemoMode && !stateBox.hasMovieFileOutput
+        #endif
 
-        let tempURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("onetake_take_\(UUID().uuidString).mov")
-        self.outputFileURL = tempURL
-        setRecordingState(true)
-        recordingDurationSeconds = 0.0
-        recordingStartTime = Date()
-        startRecordingTimer()
-
-        sessionQueue.async { [weak self] in
-            guard let self, let output = self.sessionMovieFileOutput else {
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.setRecordingState(false)
-                    self.stopRecordingTimer()
-                    self.cameraErrorMessage = "Camera recording output is unavailable."
-                    self.finishRecording(url: nil, duration: 0)
-                }
+        if shouldSimulate {
+            guard isDemoMode else {
+                cameraErrorMessage = "Camera recording requires a physical device, or enable Demo Mode in Profile."
+                finishRecording(url: nil, duration: 0)
                 return
             }
-            self.configureVideoConnection(
-                output.connection(with: .video),
-                position: self.stateBox.cameraPosition,
-                mirrorFront: self.stateBox.mirrorFrontCamera
-            )
-            output.startRecording(to: tempURL, recordingDelegate: self)
+
+            isUsingSimulatedRecording = true
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("onetake_take_\(UUID().uuidString).mp4")
+            self.outputFileURL = tempURL
+            setRecordingState(true)
+            recordingDurationSeconds = 0.0
+            recordingStartTime = Date()
+            startRecordingTimer()
+        } else {
+            guard stateBox.hasMovieFileOutput else {
+                cameraErrorMessage = cameraPermissionDenied
+                    ? "Camera access is denied. Enable camera access in Settings to record."
+                    : "Camera recording output is not ready yet."
+                finishRecording(url: nil, duration: 0)
+                return
+            }
+
+            isUsingSimulatedRecording = false
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("onetake_take_\(UUID().uuidString).mov")
+            self.outputFileURL = tempURL
+            setRecordingState(true)
+            recordingDurationSeconds = 0.0
+            recordingStartTime = Date()
+            startRecordingTimer()
+
+            sessionQueue.async { [weak self] in
+                guard let self, let output = self.sessionMovieFileOutput else {
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.setRecordingState(false)
+                        self.stopRecordingTimer()
+                        self.cameraErrorMessage = "Camera recording output is unavailable."
+                        self.finishRecording(url: nil, duration: 0)
+                    }
+                    return
+                }
+                self.configureVideoConnection(
+                    output.connection(with: .video),
+                    position: self.stateBox.cameraPosition,
+                    mirrorFront: self.stateBox.mirrorFrontCamera
+                )
+                output.startRecording(to: tempURL, recordingDelegate: self)
+            }
         }
-        #endif
 
         // Ensure voice recognition stays active throughout recording for "Cut" and "How do I look?"
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
@@ -1291,42 +1301,43 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         setRecordingState(false)
         stopRecordingTimer()
 
-        #if targetEnvironment(simulator)
-        let duration = recordingDurationSeconds
-        let targetURL = outputFileURL
-        outputFileURL = nil
+        if isUsingSimulatedRecording {
+            isUsingSimulatedRecording = false
+            let duration = recordingDurationSeconds
+            let targetURL = outputFileURL
+            outputFileURL = nil
 
-        guard isDemoMode, let url = targetURL else {
-            cameraErrorMessage = "Camera recording requires a physical device, or enable Demo Mode in Profile."
-            finishRecording(url: nil, duration: duration)
-            return
-        }
-
-        simulatorRecordTask?.cancel()
-        simulatorRecordTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            let ok = await DemoMediaGenerator.writeQuickSimulatedClip(
-                to: url,
-                title: "Simulated Take",
-                subtitle: "OneTake Demo",
-                durationSeconds: max(1.0, duration)
-            )
-            guard !Task.isCancelled else {
-                try? FileManager.default.removeItem(at: url)
+            guard isDemoMode, let url = targetURL else {
+                cameraErrorMessage = "Camera recording requires a physical device, or enable Demo Mode in Profile."
+                finishRecording(url: nil, duration: duration)
                 return
             }
-            if ok {
-                self.finishRecording(url: url, duration: max(1.0, duration))
-            } else {
-                self.cameraErrorMessage = "Failed to generate simulated demo video."
-                self.finishRecording(url: nil, duration: duration)
+
+            simulatorRecordTask?.cancel()
+            simulatorRecordTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                let ok = await DemoMediaGenerator.writeQuickSimulatedClip(
+                    to: url,
+                    title: "Simulated Take",
+                    subtitle: "OneTake Demo",
+                    durationSeconds: max(1.0, duration)
+                )
+                guard !Task.isCancelled else {
+                    try? FileManager.default.removeItem(at: url)
+                    return
+                }
+                if ok {
+                    self.finishRecording(url: url, duration: max(1.0, duration))
+                } else {
+                    self.cameraErrorMessage = "Failed to generate simulated demo video."
+                    self.finishRecording(url: nil, duration: duration)
+                }
+            }
+        } else {
+            sessionQueue.async { [weak self] in
+                self?.sessionMovieFileOutput?.stopRecording()
             }
         }
-        #else
-        sessionQueue.async { [weak self] in
-            self?.sessionMovieFileOutput?.stopRecording()
-        }
-        #endif
     }
 
     private func setRecordingState(_ recording: Bool) {

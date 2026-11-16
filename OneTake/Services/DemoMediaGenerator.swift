@@ -193,7 +193,7 @@ nonisolated enum DemoMediaGenerator {
         let writerBox = UncheckedBox(value: writer)
 
         group.enter()
-        let videoQueue = DispatchQueue(label: "onetake.demo.video")
+        let videoQueue = DispatchQueue(label: "onetake.demo.video", qos: .userInitiated)
         var frameIndex = 0
         videoInput.requestMediaDataWhenReady(on: videoQueue) {
             let input = videoInputBox.value
@@ -220,7 +220,7 @@ nonisolated enum DemoMediaGenerator {
         }
 
         group.enter()
-        let audioQueue = DispatchQueue(label: "onetake.demo.audio")
+        let audioQueue = DispatchQueue(label: "onetake.demo.audio", qos: .userInitiated)
         let sampleRate = 44_100
         let totalSamples = Int(spec.durationSeconds * Double(sampleRate))
         let chunkFrames = 4_096
@@ -286,7 +286,7 @@ nonisolated enum DemoMediaGenerator {
         let writerBox = UncheckedBox(value: writer)
 
         group.enter()
-        let queue = DispatchQueue(label: "onetake.demo.audiocue")
+        let queue = DispatchQueue(label: "onetake.demo.audiocue", qos: .userInitiated)
         let sampleRate = 44_100
         let totalSamples = max(sampleRate / 2, Int(spec.durationSeconds * Double(sampleRate)))
         let chunkFrames = 4_096
