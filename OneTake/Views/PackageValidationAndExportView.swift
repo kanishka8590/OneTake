@@ -849,10 +849,6 @@ private struct VideoCompressorView: View {
                     }
                 }
                 Spacer()
-                Button { compress() } label: {
-                    Text(completed ? "Save Compressed File" : "Compress \(clipLabel)").primaryCapsuleButton()
-                }
-                .disabled(isCompressing)
             }
             .padding(20)
             .navigationTitle("Compress your \(clipLabel)").navigationBarTitleDisplayMode(.inline)
@@ -862,6 +858,19 @@ private struct VideoCompressorView: View {
                         simulation?.invalidate()
                         simulation = nil
                         dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    if isCompressing {
+                        ProgressView()
+                    } else {
+                        Button(completed ? "Save" : "Compress") {
+                            compress()
+                        }
+                        .font(Theme.Typography.cardTitle)
+                        .foregroundStyle(Theme.Colors.accent)
+                        .accessibilityLabel(completed ? "Save Compressed File" : "Compress \(clipLabel)")
                     }
                 }
             }

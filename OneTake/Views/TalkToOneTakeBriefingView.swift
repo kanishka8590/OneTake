@@ -75,25 +75,6 @@ struct TalkToOneTakeBriefingView: View {
             }
             .scrollContentBackground(.hidden)
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
-            .safeAreaInset(edge: .bottom) {
-                Button {
-                    onReadyToRecord(editableScript)
-                } label: {
-                    Label("Start Recording", systemImage: "record.circle")
-                        .font(.system(size: 16, weight: .semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                }
-                .nativeProminentGlassButton(tint: Theme.Colors.primaryPlum)
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
-                .padding(.bottom, 12)
-                .background(
-                    Theme.Colors.canvasBackground
-                        .opacity(0.92)
-                        .ignoresSafeArea(edges: .bottom)
-                )
-            }
             .navigationTitle("Talk to OneTake")
             .navigationBarTitleDisplayMode(.inline)
             .onAppear {
@@ -103,6 +84,15 @@ struct TalkToOneTakeBriefingView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Record") {
+                        onReadyToRecord(editableScript)
+                    }
+                    .font(Theme.Typography.cardTitle)
+                    .foregroundStyle(Theme.Colors.accent)
+                    .accessibilityLabel("Start Recording")
                 }
 
                 ToolbarItemGroup(placement: .keyboard) {

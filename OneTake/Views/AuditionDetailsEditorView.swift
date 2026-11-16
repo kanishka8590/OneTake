@@ -342,19 +342,10 @@ struct AuditionDetailsEditorView: View {
                                 sidesAttachedCard
                             }
                         }
-
-                        // Save Audition Button
-                        Button {
-                            attemptSaveAudition()
-                        } label: {
-                            Text(isEditingExisting ? "Save Changes" : "Save the Audition")
-                                .primaryCapsuleButton()
-                        }
-                        .padding(.top, 8)
-                        .padding(.bottom, 36)
                     }
                     .padding(.horizontal, Theme.Layout.screenHPadding)
                     .padding(.top, 16)
+                    .padding(.bottom, 28)
                 }
 
                 if isProcessingSides {
@@ -386,6 +377,15 @@ struct AuditionDetailsEditorView: View {
                             dismiss()
                         }
                     }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        attemptSaveAudition()
+                    }
+                    .font(Theme.Typography.cardTitle)
+                    .foregroundStyle(Theme.Colors.accent)
+                    .accessibilityLabel(isEditingExisting ? "Save Changes" : "Save the Audition")
                 }
             }
             .onAppear {

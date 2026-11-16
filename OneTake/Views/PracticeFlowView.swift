@@ -479,10 +479,17 @@ struct PracticeAuditionCueSelectionView: View {
     }
     var body: some View {
         NavigationStack {
-            ZStack { Theme.Colors.canvasBackground.ignoresSafeArea(); ScrollView { VStack(alignment: .leading, spacing: 20) { header; scriptCard; Button("Continue") { onContinue(makeCues()); dismiss() }.primaryCapsuleButton().padding(.bottom, 24) }.padding(.horizontal, 20) } }
+            ZStack { Theme.Colors.canvasBackground.ignoresSafeArea(); ScrollView { VStack(alignment: .leading, spacing: 20) { header; scriptCard }.padding(.horizontal, 20).padding(.bottom, 24) } }
             .navigationTitle("Add Cue Lines").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Continue") {
+                        onContinue(makeCues())
+                        dismiss()
+                    }
+                    .fontWeight(.bold)
+                }
             }
             .onAppear { parseAndInitializeScript() }
         }

@@ -845,19 +845,15 @@ struct HeadshotGuidanceView: View {
                         .padding(14)
                         .background(Color.white.opacity(0.06))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
-
-                        Button {
-                            showingMatchGuide = false
-                        } label: {
-                            Text("Done")
-                                .font(.system(size: 15, weight: .bold))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
-                        }
-                        .nativeProminentGlassButton(tint: Theme.Colors.primaryPlum)
-                        .padding(.top, 10)
                     }
                     .padding(24)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        showingMatchGuide = false
+                    }
                 }
             }
             .presentationDetents([.fraction(0.7), .large])

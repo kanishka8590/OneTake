@@ -158,49 +158,39 @@ struct TakeReviewView: View {
                             .padding(.horizontal, 24)
                         }
                     }
-                    .padding(.bottom, 16)
-                }
-                .safeAreaInset(edge: .bottom) {
-                    // Action Buttons: Retake vs Use Take
-                    HStack(spacing: 14) {
-                        Button {
-                            teardownPlayer()
-                            cleanupTempRawVideoIfNeeded()
-                            onRetake()
-                        } label: {
-                            Text("Retake")
-                                .secondaryLavenderButton()
-                        }
-                        .disabled(isExporting)
-
-                        Button {
-                            finalizeAndSaveTake()
-                        } label: {
-                            if isExporting {
-                                ProgressView().tint(.white)
-                            } else {
-                                Text("Use This Take")
-                            }
-                        }
-                        .primaryCapsuleButton()
-                        .disabled(isExporting)
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.top, 12)
-                    .padding(.bottom, 16)
-                    .background(Theme.Colors.canvasBackground)
+                    .padding(.bottom, 24)
                 }
             }
             .navigationTitle("Review Take")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                ToolbarItemGroup(placement: .topBarLeading) {
                     Button("Close") {
                         teardownPlayer()
                         cleanupTempRawVideoIfNeeded()
                         dismiss()
                     }
                     .disabled(isExporting)
+
+                    Button("Retake") {
+                        teardownPlayer()
+                        cleanupTempRawVideoIfNeeded()
+                        onRetake()
+                    }
+                    .disabled(isExporting)
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    if isExporting {
+                        ProgressView()
+                    } else {
+                        Button("Use Take") {
+                            finalizeAndSaveTake()
+                        }
+                        .font(Theme.Typography.cardTitle)
+                        .foregroundStyle(Theme.Colors.accent)
+                        .accessibilityLabel("Use This Take")
+                    }
                 }
             }
             .alert("Export Failed", isPresented: $showingExportError) {

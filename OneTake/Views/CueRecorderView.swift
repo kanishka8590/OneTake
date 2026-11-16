@@ -229,19 +229,6 @@ struct CueRecorderView: View {
                     }
 
                     Spacer()
-
-                    // Done & Save button
-                    Button {
-                        stopActiveRecordingIfNeeded()
-                        stopPlayback()
-                        onFinished()
-                        dismiss()
-                    } label: {
-                        Text(recordedCount == cueLines.count ? "Complete Scene Partner Setup" : "Save & Continue")
-                            .primaryCapsuleButton()
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 24)
                 }
             }
             .navigationTitle("Reader Cue Recorder")
@@ -253,6 +240,18 @@ struct CueRecorderView: View {
                         stopPlayback()
                         dismiss()
                     }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Continue") {
+                        stopActiveRecordingIfNeeded()
+                        stopPlayback()
+                        onFinished()
+                        dismiss()
+                    }
+                    .font(Theme.Typography.cardTitle)
+                    .foregroundStyle(Theme.Colors.accent)
+                    .accessibilityLabel(recordedCount == cueLines.count ? "Complete Scene Partner Setup" : "Save & Continue")
                 }
             }
             .alert("Recording Error", isPresented: $showingErrorAlert) {

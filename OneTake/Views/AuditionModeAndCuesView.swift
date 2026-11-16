@@ -57,23 +57,9 @@ struct AuditionModeAndCuesView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         headerSection
                         scriptCardSection
-
-                        Spacer(minLength: 28)
-
-                        Button {
-                            handleContinue()
-                        } label: {
-                            Text(hasScript ? "Continue" : "Continue to Record")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Theme.Colors.onAction)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .background(Theme.Colors.primaryPlum)
-                                .clipShape(Capsule())
-                        }
-                        .padding(.bottom, 24)
                     }
                     .padding(.horizontal, Theme.Layout.screenHPadding)
+                    .padding(.bottom, 24)
                 }
             }
             .navigationTitle(hasScript ? "Add Cue Lines" : "Audition Take")
@@ -81,6 +67,15 @@ struct AuditionModeAndCuesView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Continue") {
+                        handleContinue()
+                    }
+                    .font(Theme.Typography.cardTitle)
+                    .foregroundStyle(Theme.Colors.accent)
+                    .accessibilityLabel(hasScript ? "Continue" : "Continue to Record")
                 }
             }
             .onAppear {

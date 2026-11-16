@@ -255,6 +255,25 @@ struct EmailOTPView: View {
                         isPresented = false
                     }
                 }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    if !isOTPSent {
+                        Button("Send Code") {
+                            sendCode()
+                        }
+                        .font(Theme.Typography.cardTitle)
+                        .foregroundStyle(Theme.Colors.accent)
+                        .disabled(!isValidEmail)
+                    } else {
+                        Button("Continue") {
+                            verifyCode()
+                        }
+                        .font(Theme.Typography.cardTitle)
+                        .foregroundStyle(Theme.Colors.accent)
+                        .disabled(otpCode.count != 6)
+                        .accessibilityLabel("Continue in Demo Mode")
+                    }
+                }
             }
             .task(id: isOTPSent ? resendCountdown : -1) {
                 guard isOTPSent, resendCountdown > 0 else { return }
@@ -322,27 +341,11 @@ struct EmailOTPView: View {
             }
 
             Button {
-                sendCode()
-            } label: {
-                Text("Send Code")
-                    .font(Theme.Typography.cardTitle)
-                    .foregroundStyle(Theme.Colors.onAction)
-                    .frame(maxWidth: .infinity, minHeight: 50)
-                    .background(isValidEmail ? Theme.Colors.primaryPlum : Theme.Colors.primaryPlum.opacity(0.4))
-                    .clipShape(Capsule())
-            }
-            .disabled(!isValidEmail)
-            .frame(minHeight: Theme.Layout.minTapTarget)
-
-            Button {
                 enterDemoFromOTP(requireCode: false)
             } label: {
                 Text("Continue in Demo Mode")
-                    .font(Theme.Typography.cardTitle)
+                    .font(Theme.Typography.bodyRegular)
                     .foregroundStyle(Theme.Colors.accent)
-                    .frame(maxWidth: .infinity, minHeight: 50)
-                    .background(Theme.Colors.lavenderSurface)
-                    .clipShape(Capsule())
             }
             .frame(minHeight: Theme.Layout.minTapTarget)
         }
@@ -413,19 +416,6 @@ struct EmailOTPView: View {
                 }
                 Spacer()
             }
-
-            Button {
-                verifyCode()
-            } label: {
-                Text("Continue in Demo Mode")
-                    .font(Theme.Typography.cardTitle)
-                    .foregroundStyle(Theme.Colors.onAction)
-                    .frame(maxWidth: .infinity, minHeight: 50)
-                    .background(otpCode.count == 6 ? Theme.Colors.primaryPlum : Theme.Colors.primaryPlum.opacity(0.4))
-                    .clipShape(Capsule())
-            }
-            .disabled(otpCode.count != 6)
-            .frame(minHeight: Theme.Layout.minTapTarget)
         }
         .onAppear {
             otpFieldFocused = true

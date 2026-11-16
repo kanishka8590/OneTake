@@ -85,23 +85,7 @@ struct HeadshotPackageGridView: View {
                             .foregroundStyle(Theme.Colors.accent)
                         }
                         .padding(.top, 4)
-
-                        Spacer(minLength: 40)
-
-                        Button {
-                            savePackageToAudition()
-                        } label: {
-                            if isSaving {
-                                ProgressView()
-                                    .tint(.white)
-                            } else {
-                                Text("Save Headshots to Audition")
-                            }
-                        }
-                        .primaryCapsuleButton()
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, 36)
-                        .disabled(isSaving || frontCropped == nil || leftCropped == nil || rightCropped == nil)
+                        .padding(.bottom, 24)
                     }
                 }
             }
@@ -110,6 +94,20 @@ struct HeadshotPackageGridView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    if isSaving {
+                        ProgressView()
+                    } else {
+                        Button("Save") {
+                            savePackageToAudition()
+                        }
+                        .font(Theme.Typography.cardTitle)
+                        .foregroundStyle(Theme.Colors.accent)
+                        .disabled(frontCropped == nil || leftCropped == nil || rightCropped == nil)
+                        .accessibilityLabel("Save Headshots to Audition")
+                    }
                 }
             }
             .alert("Unable to Save Headshots", isPresented: $showingErrorAlert) {

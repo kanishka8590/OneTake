@@ -24,24 +24,33 @@ nonisolated enum SlateScriptTemplate {
         let trimmedRole = roleName.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedProject = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        let stripDot: (String) -> String = { value in
+            var result = value
+            while result.hasSuffix(".") {
+                result.removeLast()
+            }
+            return result
+        }
+
         var parts: [String] = []
-        parts.append("Hi, my name is \(trimmedName.isEmpty ? "your name" : trimmedName).")
+        let displayName = trimmedName.isEmpty ? "your name" : stripDot(trimmedName)
+        parts.append("Hi, my name is \(displayName).")
 
         if !trimmedHeight.isEmpty {
-            parts.append("I am \(trimmedHeight) tall.")
+            parts.append("I am \(stripDot(trimmedHeight)) tall.")
         }
         if !trimmedAge.isEmpty, trimmedAge != "0" {
             parts.append("I am \(trimmedAge) years old.")
         }
         if !trimmedBasedIn.isEmpty {
-            parts.append("I am based in \(trimmedBasedIn).")
+            parts.append("I am based in \(stripDot(trimmedBasedIn)).")
         }
         if !trimmedRep.isEmpty {
-            parts.append("I am represented by \(trimmedRep).")
+            parts.append("I am represented by \(stripDot(trimmedRep)).")
         }
 
-        let role = trimmedRole.isEmpty ? "this role" : trimmedRole
-        let project = trimmedProject.isEmpty ? "this project" : trimmedProject
+        let role = trimmedRole.isEmpty ? "this role" : stripDot(trimmedRole)
+        let project = trimmedProject.isEmpty ? "this project" : stripDot(trimmedProject)
         parts.append("Today I am reading for the role of \(role) in \(project).")
 
         let creds = previousWork
@@ -116,35 +125,22 @@ struct SlateProfileSetupView: View {
             }
             .scrollContentBackground(.hidden)
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
-            .safeAreaInset(edge: .bottom) {
-                Button {
-                    persistProfileEdits()
-                    updateGeneratedScript()
-                    finalSlateScriptToRecord = generatedSlateScript
-                    showingBriefing = true
-                } label: {
-                    Text("Continue")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Theme.Colors.onAction)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(Theme.Colors.primaryPlum)
-                        .clipShape(Capsule())
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
-                .padding(.bottom, 12)
-                .background(
-                    Theme.Colors.canvasBackground
-                        .opacity(0.92)
-                        .ignoresSafeArea(edges: .bottom)
-                )
-            }
             .navigationTitle("Slate Preview")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Continue") {
+                        persistProfileEdits()
+                        updateGeneratedScript()
+                        finalSlateScriptToRecord = generatedSlateScript
+                        showingBriefing = true
+                    }
+                    .font(Theme.Typography.cardTitle)
+                    .foregroundStyle(Theme.Colors.accent)
                 }
 
                 ToolbarItemGroup(placement: .keyboard) {

@@ -66,23 +66,7 @@ struct HeadshotImportPickerView: View {
                             )
                         }
                         .padding(.horizontal, Theme.Layout.screenHPadding)
-
-                        Spacer(minLength: 30)
-
-                        Button {
-                            saveImportedHeadshots()
-                        } label: {
-                            if isAutoCropping {
-                                ProgressView()
-                                    .tint(.white)
-                            } else {
-                                Text("Save Imported Headshots")
-                            }
-                        }
-                        .primaryCapsuleButton()
-                        .disabled(!isReadyToSave || isAutoCropping)
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, 36)
+                        .padding(.bottom, 24)
                     }
                 }
             }
@@ -91,6 +75,20 @@ struct HeadshotImportPickerView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    if isAutoCropping {
+                        ProgressView()
+                    } else {
+                        Button("Save") {
+                            saveImportedHeadshots()
+                        }
+                        .font(Theme.Typography.cardTitle)
+                        .foregroundStyle(Theme.Colors.accent)
+                        .disabled(!isReadyToSave)
+                        .accessibilityLabel("Save Imported Headshots")
+                    }
                 }
             }
             .alert("Unable to Import Headshots", isPresented: $showingErrorAlert) {
