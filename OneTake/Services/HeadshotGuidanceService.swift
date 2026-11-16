@@ -46,6 +46,7 @@ nonisolated enum BackgroundStatus: String, CaseIterable, Sendable {
 }
 
 nonisolated struct GuidanceFeedback: Sendable {
+    var hasFace: Bool = false
     var isFaceCentered: Bool = false
     var isAngleCorrect: Bool = false
     var currentYawDegrees: Double = 0.0
@@ -53,11 +54,22 @@ nonisolated struct GuidanceFeedback: Sendable {
     var background: BackgroundStatus = .clean
     var isEyeLevel: Bool = true
     var pitchDegrees: Double = 90.0
+    var guidanceHeadline: String? = nil
     var spokenAdvice: String? = nil
+    var posePrediction: HeadshotPosePrediction? = nil
 
     var allChecksPassed: Bool {
         isFaceCentered && isAngleCorrect && (lighting == .good) && isEyeLevel && (background == .clean)
     }
+}
+
+nonisolated struct PoseGuideEvaluation: Sendable {
+    let isFaceCentered: Bool
+    let isAngleCorrect: Bool
+    let resolvedYawDegrees: Double
+    let headline: String
+    let spoken: String
+    let isAligned: Bool
 }
 
 nonisolated struct AngleEvaluationResult: Equatable, Sendable {
@@ -105,6 +117,7 @@ nonisolated private final class GuidanceStateBox: @unchecked Sendable {
     private var _isFrontCamera = true
     private var _cameraPosition: AVCaptureDevice.Position = .front
     private var _isDemoMode = false
+    private var _wantsHandGesture = true
     private var _activeRecognitionTaskID: UUID?
     private var _isRestartingRecognition = false
     private var _isAudioTapInstalled = false
@@ -151,6 +164,11 @@ nonisolated private final class GuidanceStateBox: @unchecked Sendable {
     var isDemoMode: Bool {
         get { withLock { $0._isDemoMode } }
         set { withLock { $0._isDemoMode = newValue } }
+    }
+
+    var wantsHandGesture: Bool {
+        get { withLock { $0._wantsHandGesture } }
+        set { withLock { $0._wantsHandGesture = newValue } }
     }
 
     var activeRecognitionTaskID: UUID? {
@@ -206,6 +224,16 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     var isCapturing: Bool = false
     var countdownRemaining: Int = 0
     var voiceGuidanceEnabled: Bool = true
+    var gesturesEnabled: Bool = true {
+        didSet {
+            stateBox.wantsHandGesture = gesturesEnabled
+            if !gesturesEnabled {
+                openPalmDetected = false
+            }
+        }
+    }
+    var autoCaptureEnabled: Bool = false
+    var openPalmDetected: Bool = false
     var isVoiceListening: Bool = false
     var voiceStatus: LiveSpeechStatus = .idle
     var cameraPermissionDenied: Bool = false
@@ -221,9 +249,12 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     @ObservationIgnored private let stateBox = GuidanceStateBox()
     @ObservationIgnored private let sessionQueue = DispatchQueue(label: "com.onetake.headshot.session")
     @ObservationIgnored private let visionQueue = DispatchQueue(label: "com.onetake.headshot.vision")
+    @ObservationIgnored private let voiceAudioSessionQueue = DispatchQueue(label: "com.onetake.headshot.voice.audiosession", qos: .userInitiated)
     @ObservationIgnored private var taskRestartTimer: Timer?
     @ObservationIgnored private var recognitionRestartWorkItem: DispatchWorkItem?
     @ObservationIgnored private var audioSessionObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var engineConfigurationObserver: NSObjectProtocol?
+    @ObservationIgnored private var requireAlignmentForActiveCountdown: Bool = false
 
     // Capture Session (sessionQueue-owned references)
     @ObservationIgnored nonisolated(unsafe) private var sessionCaptureSession: AVCaptureSession?
@@ -243,7 +274,9 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     @ObservationIgnored private var targetAngle: HeadshotAngle = .front
     @ObservationIgnored private var isDemoMode: Bool = false
     @ObservationIgnored private var lastSpokenTime: Date = .distantPast
-    @ObservationIgnored private let speechDebounceInterval: TimeInterval = 4.0
+    @ObservationIgnored private var lastSpokenMessage: String = ""
+    @ObservationIgnored private let speechMinInterval: TimeInterval = 2.0
+    @ObservationIgnored private let speechRepeatInterval: TimeInterval = 4.5
     @ObservationIgnored private var pendingPhotoCompletion: ((UIImage?) -> Void)?
     @ObservationIgnored private var countdownToken: UUID?
     @ObservationIgnored private var isCountdownInProgress = false
@@ -343,6 +376,240 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         )
     }
 
+    /// Combines CoreML `HeadshotPosePredictor` + Vision face framing + lighting/pitch/background
+    /// into exact directional coaching text & TTS phrasing (ported from `OneTake-iOS-main`).
+    nonisolated static func evaluatePoseGuide(
+        hasFace: Bool,
+        centerX: CGFloat,
+        centerYTopDown: CGFloat,
+        faceHeight: CGFloat,
+        visionYawDegrees: Double?,
+        posePrediction: HeadshotPosePrediction?,
+        lighting: LightingStatus,
+        isEyeLevel: Bool,
+        background: BackgroundStatus,
+        targetAngle: HeadshotAngle,
+        autoCaptureEnabled: Bool
+    ) -> PoseGuideEvaluation {
+        let angleEval = evaluateYawAngle(
+            targetAngle: targetAngle,
+            visionYawDegrees: visionYawDegrees,
+            posePrediction: posePrediction
+        )
+
+        guard hasFace else {
+            return PoseGuideEvaluation(
+                isFaceCentered: false,
+                isAngleCorrect: false,
+                resolvedYawDegrees: angleEval.resolvedYawDegrees,
+                headline: "Show your face to the camera",
+                spoken: "Step into the frame so your face is visible.",
+                isAligned: false
+            )
+        }
+
+        if faceHeight < 0.20 {
+            return PoseGuideEvaluation(
+                isFaceCentered: false,
+                isAngleCorrect: angleEval.isCorrect,
+                resolvedYawDegrees: angleEval.resolvedYawDegrees,
+                headline: "Move closer",
+                spoken: "Move closer to the camera.",
+                isAligned: false
+            )
+        }
+        if faceHeight > 0.52 {
+            return PoseGuideEvaluation(
+                isFaceCentered: false,
+                isAngleCorrect: angleEval.isCorrect,
+                resolvedYawDegrees: angleEval.resolvedYawDegrees,
+                headline: "Move back a little",
+                spoken: "Move back a little.",
+                isAligned: false
+            )
+        }
+        if centerX < 0.38 {
+            return PoseGuideEvaluation(
+                isFaceCentered: false,
+                isAngleCorrect: angleEval.isCorrect,
+                resolvedYawDegrees: angleEval.resolvedYawDegrees,
+                headline: "Too far left — move right",
+                spoken: "Move to your right.",
+                isAligned: false
+            )
+        }
+        if centerX > 0.62 {
+            return PoseGuideEvaluation(
+                isFaceCentered: false,
+                isAngleCorrect: angleEval.isCorrect,
+                resolvedYawDegrees: angleEval.resolvedYawDegrees,
+                headline: "Too far right — move left",
+                spoken: "Move to your left.",
+                isAligned: false
+            )
+        }
+        if centerYTopDown < 0.28 {
+            return PoseGuideEvaluation(
+                isFaceCentered: false,
+                isAngleCorrect: angleEval.isCorrect,
+                resolvedYawDegrees: angleEval.resolvedYawDegrees,
+                headline: "Tilt the phone up a little",
+                spoken: "Tilt the phone up a little.",
+                isAligned: false
+            )
+        }
+        if centerYTopDown > 0.58 {
+            return PoseGuideEvaluation(
+                isFaceCentered: false,
+                isAngleCorrect: angleEval.isCorrect,
+                resolvedYawDegrees: angleEval.resolvedYawDegrees,
+                headline: "Tilt the phone down a little",
+                spoken: "Tilt the phone down a little.",
+                isAligned: false
+            )
+        }
+
+        let yawDegrees = angleEval.resolvedYawDegrees
+        switch targetAngle {
+        case .front:
+            if !angleEval.isCorrect {
+                return PoseGuideEvaluation(
+                    isFaceCentered: true,
+                    isAngleCorrect: false,
+                    resolvedYawDegrees: yawDegrees,
+                    headline: "Look straight at the camera",
+                    spoken: "Look straight at the camera.",
+                    isAligned: false
+                )
+            }
+        case .left:
+            if (posePrediction?.pose == .rightProfile && (posePrediction?.confidence ?? 0) >= 0.55) || yawDegrees < -15 {
+                return PoseGuideEvaluation(
+                    isFaceCentered: true,
+                    isAngleCorrect: false,
+                    resolvedYawDegrees: yawDegrees,
+                    headline: "Wrong side — turn your head left",
+                    spoken: "Wrong side, turn your head to your left.",
+                    isAligned: false
+                )
+            }
+            if abs(yawDegrees) > 105 {
+                return PoseGuideEvaluation(
+                    isFaceCentered: true,
+                    isAngleCorrect: false,
+                    resolvedYawDegrees: yawDegrees,
+                    headline: "Turn back a little",
+                    spoken: "Turn back slightly toward the camera.",
+                    isAligned: false
+                )
+            }
+            if !angleEval.isCorrect {
+                return PoseGuideEvaluation(
+                    isFaceCentered: true,
+                    isAngleCorrect: false,
+                    resolvedYawDegrees: yawDegrees,
+                    headline: "Turn your head to your left",
+                    spoken: "Turn your head to your left.",
+                    isAligned: false
+                )
+            }
+        case .right:
+            if (posePrediction?.pose == .leftProfile && (posePrediction?.confidence ?? 0) >= 0.55) || yawDegrees > 15 {
+                return PoseGuideEvaluation(
+                    isFaceCentered: true,
+                    isAngleCorrect: false,
+                    resolvedYawDegrees: yawDegrees,
+                    headline: "Wrong side — turn your head right",
+                    spoken: "Wrong side, turn your head to your right.",
+                    isAligned: false
+                )
+            }
+            if abs(yawDegrees) > 105 {
+                return PoseGuideEvaluation(
+                    isFaceCentered: true,
+                    isAngleCorrect: false,
+                    resolvedYawDegrees: yawDegrees,
+                    headline: "Turn back a little",
+                    spoken: "Turn back slightly toward the camera.",
+                    isAligned: false
+                )
+            }
+            if !angleEval.isCorrect {
+                return PoseGuideEvaluation(
+                    isFaceCentered: true,
+                    isAngleCorrect: false,
+                    resolvedYawDegrees: yawDegrees,
+                    headline: "Turn your head to your right",
+                    spoken: "Turn your head to your right.",
+                    isAligned: false
+                )
+            }
+        }
+
+        switch lighting {
+        case .tooDark:
+            return PoseGuideEvaluation(
+                isFaceCentered: true,
+                isAngleCorrect: true,
+                resolvedYawDegrees: yawDegrees,
+                headline: "Lighting is too dark — add front light",
+                spoken: "Lighting is too dark. Add light in front of you.",
+                isAligned: false
+            )
+        case .uneven:
+            return PoseGuideEvaluation(
+                isFaceCentered: true,
+                isAngleCorrect: true,
+                resolvedYawDegrees: yawDegrees,
+                headline: "Balance light evenly across your face",
+                spoken: "Balance light evenly across your face.",
+                isAligned: false
+            )
+        case .tooBright:
+            return PoseGuideEvaluation(
+                isFaceCentered: true,
+                isAngleCorrect: true,
+                resolvedYawDegrees: yawDegrees,
+                headline: "Lighting is too bright — reduce glare",
+                spoken: "Lighting is too bright. Reduce glare.",
+                isAligned: false
+            )
+        case .good:
+            break
+        }
+
+        if !isEyeLevel {
+            return PoseGuideEvaluation(
+                isFaceCentered: true,
+                isAngleCorrect: true,
+                resolvedYawDegrees: yawDegrees,
+                headline: "Hold phone at eye level",
+                spoken: "Hold your phone at eye level.",
+                isAligned: false
+            )
+        }
+
+        if background == .cluttered {
+            return PoseGuideEvaluation(
+                isFaceCentered: true,
+                isAngleCorrect: true,
+                resolvedYawDegrees: yawDegrees,
+                headline: "Use a plain wall behind you",
+                spoken: "Use a plain wall behind you.",
+                isAligned: false
+            )
+        }
+
+        return PoseGuideEvaluation(
+            isFaceCentered: true,
+            isAngleCorrect: true,
+            resolvedYawDegrees: yawDegrees,
+            headline: autoCaptureEnabled ? "Perfect — holding steady to auto-shoot" : "Hold still — ready to shoot",
+            spoken: autoCaptureEnabled ? "Hold still." : "Framing and lighting look great. Say Now to shoot.",
+            isAligned: true
+        )
+    }
+
     // MARK: - Motion Setup
 
     private func startMotionUpdates() {
@@ -407,6 +674,10 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
         self.isSessionRunning = true
         self.stateBox.isSessionRunning = true
+        self.stateBox.wantsHandGesture = self.gesturesEnabled
+        self.openPalmDetected = false
+        self.lastSpokenTime = .distantPast
+        self.lastSpokenMessage = ""
         self.startMotionUpdates()
 
         #if targetEnvironment(simulator)
@@ -431,6 +702,8 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     func stopSession() {
         isSessionRunning = false
         stateBox.isSessionRunning = false
+        openPalmDetected = false
+        requireAlignmentForActiveCountdown = false
         stopMotionUpdates()
 
         #if !targetEnvironment(simulator)
@@ -460,12 +733,28 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         case .left: simulatedYaw = 50.0
         case .right: simulatedYaw = -50.0
         }
+        feedback.hasFace = simulatedCentered
         feedback.isAngleCorrect = true
         feedback.isFaceCentered = simulatedCentered
         feedback.lighting = simulatedLighting
         feedback.isEyeLevel = simulatedEyeLevel
         feedback.background = simulatedPlainBackground ? .clean : .cluttered
         feedback.currentYawDegrees = simulatedYaw
+        let eval = Self.evaluatePoseGuide(
+            hasFace: feedback.hasFace,
+            centerX: 0.5,
+            centerYTopDown: 0.42,
+            faceHeight: 0.34,
+            visionYawDegrees: simulatedYaw,
+            posePrediction: nil,
+            lighting: feedback.lighting,
+            isEyeLevel: feedback.isEyeLevel,
+            background: feedback.background,
+            targetAngle: angle,
+            autoCaptureEnabled: autoCaptureEnabled
+        )
+        feedback.guidanceHeadline = eval.headline
+        feedback.spokenAdvice = eval.spoken
     }
 
     private func setCapturingState(_ capturing: Bool) {
@@ -525,19 +814,26 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     // MARK: - Countdown & Capture Flow
 
     func startCountdown(seconds: Int = 3, completion: @escaping (UIImage?) -> Void) {
+        startCountdown(seconds: seconds, requireAlignment: false, completion: completion)
+    }
+
+    func startCountdown(seconds: Int = 3, requireAlignment: Bool, completion: @escaping (UIImage?) -> Void) {
         guard !isCapturing else { return }
 
-        guard feedback.allChecksPassed else {
-            let reason = currentBlockingReason()
-            surfaceShutterStatus(reason)
-            speakCurrentPoseGuidanceIfNeeded()
-            return
+        if requireAlignment {
+            guard feedback.allChecksPassed else {
+                let reason = currentBlockingReason()
+                surfaceShutterStatus(reason)
+                speakCurrentPoseGuidanceIfNeeded()
+                return
+            }
         }
 
         shutterStatusClearTask?.cancel()
         shutterStatusClearTask = nil
         shutterStatusMessage = nil
 
+        requireAlignmentForActiveCountdown = requireAlignment
         setCapturingState(true)
         countdownRemaining = 0
         pendingPhotoCompletion = completion
@@ -601,7 +897,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         var waitedSteps = 0
         while speechSynthesizer.isSpeaking && waitedSteps < 15 {
             guard !Task.isCancelled, isCapturing, isCountdownInProgress, countdownToken == token else { return }
-            guard feedback.allChecksPassed else {
+            if requireAlignmentForActiveCountdown && !feedback.allChecksPassed {
                 cancelCountdownAndResumePoseGuidance()
                 return
             }
@@ -612,7 +908,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         if seconds > 0 {
             for tick in stride(from: seconds, through: 1, by: -1) {
                 guard !Task.isCancelled, isCapturing, isCountdownInProgress, countdownToken == token else { return }
-                guard feedback.allChecksPassed else {
+                if requireAlignmentForActiveCountdown && !feedback.allChecksPassed {
                     cancelCountdownAndResumePoseGuidance()
                     return
                 }
@@ -631,7 +927,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
     private func capturePhotoNow(token: UUID) {
         guard isCapturing, countdownToken == token else { return }
-        guard feedback.allChecksPassed else {
+        if requireAlignmentForActiveCountdown && !feedback.allChecksPassed {
             cancelCountdownAndResumePoseGuidance()
             return
         }
@@ -681,6 +977,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
     private func completePhotoCapture(with image: UIImage?) {
         setCapturingState(false)
+        requireAlignmentForActiveCountdown = false
         countdownRemaining = 0
         countdownToken = nil
         countdownTask?.cancel()
@@ -830,14 +1127,31 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         SFSpeechRecognizer.authorizationStatus() == .authorized
     }
 
+    private static func makeSpeechRecognizer() -> SFSpeechRecognizer? {
+        let preferred = Locale.current.identifier.replacingOccurrences(of: "_", with: "-")
+        if preferred.lowercased().hasPrefix("en"),
+           let current = SFSpeechRecognizer(locale: Locale(identifier: preferred)),
+           current.isAvailable {
+            return current
+        }
+        return SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+            ?? SFSpeechRecognizer(locale: Locale.current)
+    }
+
     /// Explicit opt-in entry point when the user chooses to enable voice commands.
     func enableVoiceTriggers() {
         voiceStatus = .starting
         VoiceAuthorizationService.shared.requestAccess { [weak self] authorized in
             guard let self, self.isSessionRunning else { return }
             guard authorized else { self.voiceStatus = .failed; return }
-            guard self.configureGuidanceAudioSession() else { self.voiceStatus = .failed; return }
-            self.startVoiceListening()
+            self.voiceAudioSessionQueue.async { [weak self] in
+                let ok = VoiceAudioSessionCoordinator.shared.activate()
+                Task { @MainActor [weak self] in
+                    guard let self, self.isSessionRunning else { return }
+                    guard ok else { self.voiceStatus = .failed; return }
+                    self.startVoiceListening()
+                }
+            }
         }
     }
 
@@ -851,47 +1165,77 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         VoiceAuthorizationService.shared.requestAccess { [weak self] authorized in
             guard let self, self.isSessionRunning else { return }
             guard authorized else { self.voiceStatus = .failed; return }
-            guard self.configureGuidanceAudioSession() else { self.voiceStatus = .failed; return }
-            self.startVoiceListening()
+            self.voiceAudioSessionQueue.async { [weak self] in
+                let ok = VoiceAudioSessionCoordinator.shared.activate()
+                Task { @MainActor [weak self] in
+                    guard let self, self.isSessionRunning else { return }
+                    guard ok else { self.voiceStatus = .failed; return }
+                    self.startVoiceListening()
+                }
+            }
         }
     }
 
     private func startVoiceListening() {
-        guard isSessionRunning, VoiceAuthorizationService.shared.isAuthorized else { voiceStatus = .failed; return }
+        guard isSessionRunning, isVoiceAuthorizedInSystem else { voiceStatus = .failed; return }
         guard !isVoiceListening else { return }
-        speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+        speechRecognizer = Self.makeSpeechRecognizer()
         speechRecognizer?.delegate = self
         guard let speechRecognizer, speechRecognizer.isAvailable else { voiceStatus = .unavailable; return }
 
         guard configureGuidanceAudioSession() else { voiceStatus = .failed; return }
-        let inputNode = audioEngine.inputNode
-        let inputFormat = inputNode.inputFormat(forBus: 0)
-        let outputFormat = inputNode.outputFormat(forBus: 0)
-        guard let tapFormat = [inputFormat, outputFormat].first(where: { $0.sampleRate > 0 && $0.channelCount > 0 }) else {
+        let installed = installAudioTapAndStartEngine()
+        guard installed else {
             voiceStatus = .failed
             return
         }
 
-        if !stateBox.isAudioTapInstalled {
-            inputNode.removeTap(onBus: 0)
-            let box = stateBox
-            inputNode.installTap(onBus: 0, bufferSize: 1024, format: tapFormat) { readOnlyBuffer, _ in
-                box.recognitionRequest?.append(readOnlyBuffer)
-            }
-            stateBox.isAudioTapInstalled = true
+        if let existing = engineConfigurationObserver {
+            NotificationCenter.default.removeObserver(existing)
         }
-
-        if !audioEngine.isRunning {
-            do {
-                try audioEngine.start()
-            } catch {
-                voiceStatus = .failed
-                return
+        engineConfigurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: audioEngine,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self, self.isSessionRunning, self.isVoiceListening else { return }
+            self.stateBox.isAudioTapInstalled = false
+            if self.installAudioTapAndStartEngine() {
+                self.restartRecognitionTaskSeamlessly()
             }
         }
 
         guard isSessionRunning else { return }
+        voiceCommandController.resetTranscriptCursor()
         startRecognitionTask()
+    }
+
+    private func installAudioTapAndStartEngine() -> Bool {
+        let inputNode = audioEngine.inputNode
+        let outputFormat = inputNode.outputFormat(forBus: 0)
+        let inputFormat = inputNode.inputFormat(forBus: 0)
+        guard let tapFormat = [outputFormat, inputFormat].first(where: { $0.sampleRate > 0 && $0.channelCount > 0 }) else {
+            return false
+        }
+
+        inputNode.removeTap(onBus: 0)
+        let box = stateBox
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: tapFormat) { readOnlyBuffer, _ in
+            box.recognitionRequest?.append(readOnlyBuffer)
+        }
+        stateBox.isAudioTapInstalled = true
+
+        audioEngine.prepare()
+        if !audioEngine.isRunning {
+            do {
+                try audioEngine.start()
+            } catch {
+                inputNode.removeTap(onBus: 0)
+                stateBox.isAudioTapInstalled = false
+                return false
+            }
+        }
+        return true
     }
 
     private func startRecognitionTask() {
@@ -912,7 +1256,10 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        request.taskHint = .dictation
+        request.taskHint = .confirmation
+        request.contextualStrings = [
+            "Now", "Action", "Capture", "Shoot", "Snap", "Click", "Photo", "How do I look", "Check framing"
+        ]
         request.requiresOnDeviceRecognition = false
         stateBox.recognitionRequest = request
         let taskID = UUID()
@@ -996,43 +1343,10 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
     func triggerFramingFeedbackVoice() {
         guard !isCapturing else { return }
+        let advice = feedback.spokenAdvice ?? (feedback.allChecksPassed ? "Framing and lighting look great." : currentBlockingReason())
         lastSpokenTime = Date()
-        var adjustments: [String] = []
-
-        if !feedback.isFaceCentered {
-            adjustments.append("center your face in the guide oval")
-        }
-        if !feedback.isAngleCorrect {
-            switch targetAngle {
-            case .front: adjustments.append("face the camera directly")
-            case .left: adjustments.append("turn slightly to your left")
-            case .right: adjustments.append("turn slightly to your right")
-            }
-        }
-        if feedback.lighting != .good {
-            if feedback.lighting == .tooDark {
-                adjustments.append("brighten your front lighting")
-            } else if feedback.lighting == .uneven {
-                adjustments.append("balance the light across your face")
-            } else if feedback.lighting == .tooBright {
-                adjustments.append("reduce glare or harsh lighting")
-            }
-        }
-        if !feedback.isEyeLevel {
-            adjustments.append("raise your camera to eye level")
-        }
-        if feedback.background != .clean {
-            adjustments.append("use a plain, clean background")
-        }
-
-        let message: String
-        if adjustments.isEmpty {
-            message = "You look great — centered, well lit, eye level, and plain background."
-        } else {
-            message = "Please adjust: " + adjustments.joined(separator: ", ") + "."
-        }
-
-        speak(message, forceSpeak: true)
+        lastSpokenMessage = advice
+        speak(advice, forceSpeak: true)
     }
 
     /// Resets completed capture state, then announces the next pose without
@@ -1081,6 +1395,11 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         recognitionRestartWorkItem?.cancel()
         recognitionRestartWorkItem = nil
         stateBox.isRestartingRecognition = false
+
+        if let existing = engineConfigurationObserver {
+            NotificationCenter.default.removeObserver(existing)
+            engineConfigurationObserver = nil
+        }
 
         stateBox.recognitionRequest?.endAudio()
         stateBox.activeRecognitionTaskID = nil
@@ -1156,28 +1475,39 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     // MARK: - Real-Time Guidance & Spoken Warnings
 
     func speakDebouncedWarning(_ message: String) {
-        guard voiceGuidanceEnabled else { return }
+        guard voiceGuidanceEnabled, !message.isEmpty, !isCapturing else { return }
+        guard !speechSynthesizer.isSpeaking else { return }
         let now = Date()
-        guard now.timeIntervalSince(lastSpokenTime) > speechDebounceInterval, !isCapturing else { return }
+        let elapsed = now.timeIntervalSince(lastSpokenTime)
+        if message == lastSpokenMessage {
+            guard elapsed >= speechRepeatInterval else { return }
+        } else {
+            guard elapsed >= speechMinInterval else { return }
+        }
+        lastSpokenMessage = message
         lastSpokenTime = now
         speak(message, forceSpeak: false)
     }
 
     private func speak(_ text: String, forceSpeak: Bool) {
         guard forceSpeak || voiceGuidanceEnabled else { return }
-        if speechSynthesizer.isSpeaking {
+        if forceSpeak && speechSynthesizer.isSpeaking {
             speechSynthesizer.stopSpeaking(at: .immediate)
+        } else if !forceSpeak && speechSynthesizer.isSpeaking {
+            return
         }
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.pitchMultiplier = 1.0
+        utterance.volume = forceSpeak ? 0.6 : 0.4
         speechSynthesizer.speak(utterance)
     }
 
-    /// Called from live analysis and the view so a countdown cannot produce a
-    /// photo after the subject has moved out of the required framing.
+    /// Called from live analysis and the view so alignment-gated countdowns (like Auto-Capture)
+    /// cannot produce a photo after the subject has moved out of framing.
     func cancelCountdownIfAlignmentLost() {
-        guard isCountdownInProgress, !feedback.allChecksPassed else { return }
+        guard requireAlignmentForActiveCountdown, isCountdownInProgress, !feedback.allChecksPassed else { return }
         cancelCountdownAndResumePoseGuidance()
     }
 
@@ -1188,12 +1518,14 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         countdownTask?.cancel()
         countdownTask = nil
         countdownToken = nil
+        requireAlignmentForActiveCountdown = false
         setCountdownInProgressState(false)
         isCountdownSpeechActive = false
         setCapturingState(false)
         countdownRemaining = 0
         pendingPhotoCompletion = nil
         lastSpokenTime = .distantPast
+        lastSpokenMessage = ""
 
         if wasSpeakingCountdown {
             speechSynthesizer.stopSpeaking(at: .immediate)
@@ -1210,20 +1542,8 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
             return
         }
 
-        if !feedback.isFaceCentered {
-            speak("Center your face in the guide oval.", forceSpeak: false)
-        } else if !feedback.isAngleCorrect {
-            switch targetAngle {
-            case .front: speak("Turn your head to face front.", forceSpeak: false)
-            case .left: speak("Turn slightly to your left.", forceSpeak: false)
-            case .right: speak("Turn slightly to your right.", forceSpeak: false)
-            }
-        } else if feedback.lighting != .good {
-            speak("Adjust your lighting before capturing.", forceSpeak: false)
-        } else if !feedback.isEyeLevel {
-            speak("Hold your phone at eye level.", forceSpeak: false)
-        } else if feedback.background != .clean {
-            speak("Use a plain background behind you.", forceSpeak: false)
+        if let spoken = feedback.spokenAdvice, !spoken.isEmpty {
+            speakDebouncedWarning(spoken)
         }
     }
 
@@ -1691,33 +2011,52 @@ extension HeadshotGuidanceService: AVCaptureVideoDataOutputSampleBufferDelegate 
         }
 
         let faceRequest = VNDetectFaceRectanglesRequest()
+        faceRequest.revision = VNDetectFaceRectanglesRequestRevision3
         let segRequest = VNGeneratePersonSegmentationRequest()
         segRequest.qualityLevel = .fast
+        let wantsHandGesture = stateBox.wantsHandGesture
+        let handRequest: VNDetectHumanHandPoseRequest? = wantsHandGesture ? {
+            let req = VNDetectHumanHandPoseRequest()
+            req.maximumHandCount = 1
+            return req
+        }() : nil
+
+        var requests: [VNRequest] = [faceRequest, segRequest]
+        if let handRequest {
+            requests.append(handRequest)
+        }
 
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
-        try? handler.perform([faceRequest, segRequest])
+        try? handler.perform(requests)
 
         let face = (faceRequest.results ?? []).max(by: {
             ($0.boundingBox.width * $0.boundingBox.height) < ($1.boundingBox.width * $1.boundingBox.height)
         })
         let posePrediction = HeadshotPosePredictor.shared.predict(pixelBuffer: pixelBuffer, orientation: orientation)
 
-        let targetAngle = stateBox.targetAngle
-        let centered: Bool
+        // CoreML can recognize full 90° profiles when Vision's face box drops out (ported from OneTake-iOS-main).
+        let hasFace: Bool
+        let centerX: CGFloat
+        let centerYTopDown: CGFloat
+        let faceHeight: CGFloat
         if let face {
-            let box = face.boundingBox
-            centered = (box.midX >= 0.35 && box.midX <= 0.65) && (box.midY >= 0.30 && box.midY <= 0.70)
+            hasFace = true
+            centerX = face.boundingBox.midX
+            centerYTopDown = 1.0 - face.boundingBox.midY
+            faceHeight = face.boundingBox.height
+        } else if let posePrediction, posePrediction.confidence >= 0.65 {
+            hasFace = true
+            centerX = 0.5
+            centerYTopDown = 0.42
+            faceHeight = 0.34
         } else {
-            centered = false
+            hasFace = false
+            centerX = 0.5
+            centerYTopDown = 0.5
+            faceHeight = 0.0
         }
 
         let visionYawDeg = face?.yaw.map { $0.doubleValue * 180.0 / .pi }
-        let angleEval = Self.evaluateYawAngle(
-            targetAngle: targetAngle,
-            visionYawDegrees: visionYawDeg,
-            posePrediction: posePrediction
-        )
-
         let currentLighting = Self.evaluatePixelBufferLuminance(
             pixelBuffer,
             faceBoundingBox: face?.boundingBox
@@ -1729,40 +2068,63 @@ extension HeadshotGuidanceService: AVCaptureVideoDataOutputSampleBufferDelegate 
         } else {
             isPlain = true
         }
+        let openPalm = handRequest?.results?.contains(where: Self.isOpenPalm) ?? false
+        let targetAngle = stateBox.targetAngle
 
         Task { @MainActor [weak self] in
             guard let self, self.isSessionRunning else { return }
-            self.feedback.isFaceCentered = centered
-            self.feedback.isAngleCorrect = angleEval.isCorrect
-            self.feedback.currentYawDegrees = angleEval.resolvedYawDegrees
+            let backgroundStatus: BackgroundStatus = isPlain ? .clean : .cluttered
+            let evaluation = Self.evaluatePoseGuide(
+                hasFace: hasFace,
+                centerX: centerX,
+                centerYTopDown: centerYTopDown,
+                faceHeight: faceHeight,
+                visionYawDegrees: visionYawDeg,
+                posePrediction: posePrediction,
+                lighting: currentLighting,
+                isEyeLevel: self.feedback.isEyeLevel,
+                background: backgroundStatus,
+                targetAngle: targetAngle,
+                autoCaptureEnabled: self.autoCaptureEnabled
+            )
+
+            self.feedback.hasFace = hasFace
+            self.feedback.isFaceCentered = evaluation.isFaceCentered
+            self.feedback.isAngleCorrect = evaluation.isAngleCorrect
+            self.feedback.currentYawDegrees = evaluation.resolvedYawDegrees
             self.feedback.lighting = currentLighting
-            self.feedback.background = isPlain ? .clean : .cluttered
+            self.feedback.background = backgroundStatus
+            self.feedback.posePrediction = posePrediction
+            self.feedback.guidanceHeadline = evaluation.headline
+            self.feedback.spokenAdvice = evaluation.spoken
+            self.openPalmDetected = self.gesturesEnabled && openPalm
 
             self.cancelCountdownIfAlignmentLost()
             guard !self.isCountdownInProgress else { return }
 
-            if self.feedback.allChecksPassed {
+            if evaluation.isAligned {
                 self.shutterStatusMessage = nil
-                self.speakDebouncedWarning("Framing and lighting look great.")
-            } else if !centered {
-                self.speakDebouncedWarning("Center your face in the guide oval.")
-            } else if !angleEval.isCorrect {
-                switch self.targetAngle {
-                case .front: self.speakDebouncedWarning("Turn your head to face front.")
-                case .left: self.speakDebouncedWarning("Turn slightly to your left.")
-                case .right: self.speakDebouncedWarning("Turn slightly to your right.")
-                }
-            } else if currentLighting == .tooDark {
-                self.speakDebouncedWarning("Lighting is too dark. Add key light in front of you.")
-            } else if currentLighting == .uneven {
-                self.speakDebouncedWarning("Lighting is uneven. Balance the light across your face.")
-            } else if currentLighting == .tooBright {
-                self.speakDebouncedWarning("Lighting is too bright. Reduce glare.")
-            } else if !self.feedback.isEyeLevel {
-                self.speakDebouncedWarning("Hold your phone at eye level.")
-            } else if self.feedback.background == .cluttered {
-                self.speakDebouncedWarning("Background looks busy. Try a plain wall behind you.")
             }
+            self.speakDebouncedWarning(evaluation.spoken)
+        }
+    }
+
+    /// Open-palm hand gesture detector ported from `OneTake-iOS-main`'s `CameraController+FaceDetection.swift`.
+    nonisolated private static func isOpenPalm(_ hand: VNHumanHandPoseObservation) -> Bool {
+        guard let wrist = try? hand.recognizedPoint(.wrist), wrist.confidence >= 0.3 else { return false }
+        let fingers: [(VNHumanHandPoseObservation.JointName, VNHumanHandPoseObservation.JointName)] = [
+            (.indexTip, .indexPIP),
+            (.middleTip, .middlePIP),
+            (.ringTip, .ringPIP),
+            (.littleTip, .littlePIP)
+        ]
+        return fingers.allSatisfy { tipName, pipName in
+            guard let tip = try? hand.recognizedPoint(tipName),
+                  let pip = try? hand.recognizedPoint(pipName),
+                  tip.confidence >= 0.25, pip.confidence >= 0.25 else { return false }
+            let tipDistance = hypot(tip.location.x - wrist.location.x, tip.location.y - wrist.location.y)
+            let pipDistance = hypot(pip.location.x - wrist.location.x, pip.location.y - wrist.location.y)
+            return tipDistance > pipDistance * 1.18
         }
     }
 }

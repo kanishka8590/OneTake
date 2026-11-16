@@ -94,8 +94,12 @@ final class LiveVoiceCommandController {
         let captureState = state()
         switch mode {
         case .headshots:
+            let triggerWords: Set<String> = [
+                "action", "now", "capture", "shoot", "snap",
+                "cheese", "click", "photo", "picture", "take"
+            ]
             if !captureState.isCapturingPhoto,
-               let offset = newWords.firstIndex(where: { $0 == "action" || $0 == "now" }) {
+               let offset = newWords.firstIndex(where: { triggerWords.contains($0) }) {
                 capturePhoto()
                 newConsumed = max(newConsumed, startIndex + offset + 1)
             }

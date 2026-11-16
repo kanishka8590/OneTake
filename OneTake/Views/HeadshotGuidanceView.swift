@@ -27,6 +27,9 @@ struct HeadshotGuidanceView: View {
     // One-time "Talk to OneTake" Voice Guide Intro (shown only before Shot 1)
     @State private var showVoiceGuideIntro = true
     @State private var showingMatchGuide = false
+    @State private var autoCaptureHoldTask: Task<Void, Never>?
+    @State private var gestureHoldTask: Task<Void, Never>?
+    @State private var lastGestureTriggerAt: Date = .distantPast
 
     private let sequence: [HeadshotAngle] = [.front, .left, .right]
 
@@ -38,130 +41,131 @@ struct HeadshotGuidanceView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.black.ignoresSafeArea()
+        ZStack {
+            Color.black.ignoresSafeArea()
 
-                cameraPreviewLayer
-                ovalAlignmentGuide
+            cameraPreviewLayer
+            ovalAlignmentGuide
 
-                VStack(spacing: 0) {
-                    Spacer().frame(height: 8)
-                    Spacer()
-                    bottomCinemaHUD
-                        .padding(.bottom, 28)
-                        .padding(.horizontal, 20)
-                }
+            VStack(spacing: 0) {
+                topCameraBar
+                    .padding(.top, 8)
+                    .padding(.horizontal, 16)
 
-                if guidanceService.isCapturing && guidanceService.countdownRemaining > 0 {
-                    ZStack {
-                        Color.black.opacity(0.45).ignoresSafeArea()
-                        Text("\(guidanceService.countdownRemaining)")
-                            .font(.system(size: 110, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(Color.white)
-                            .transition(.scale.combined(with: .opacity))
-                    }
-                }
+                Spacer()
 
-                if showVoiceGuideIntro {
-                    talkToOneTakeGuideOverlay
+                bottomCinemaHUD
+                    .padding(.bottom, 28)
+                    .padding(.horizontal, 16)
+            }
+
+            if guidanceService.isCapturing && guidanceService.countdownRemaining > 0 {
+                ZStack {
+                    Color.black.opacity(0.45).ignoresSafeArea()
+                    Text("\(guidanceService.countdownRemaining)")
+                        .font(.system(size: 110, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(Color.white)
+                        .transition(.scale.combined(with: .opacity))
                 }
             }
-            .preferredColorScheme(.dark)
-            .navigationBarBackButtonHidden()
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        guidanceService.stopSession()
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 36, height: 36)
-                            .background(Color.black.opacity(0.55))
-                            .clipShape(Circle())
-                            .overlay(Circle().stroke(Color.white.opacity(0.18), lineWidth: 1))
-                    }
-                    .disabled(guidanceService.isCapturing)
-                    .accessibilityLabel("Close camera")
-                }
 
-                ToolbarItem(placement: .principal) {
-                    angleSegmentedPicker
-                }
-
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingMatchGuide = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text("Match this")
-                                .font(.system(size: 11, weight: .semibold))
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 9, weight: .bold))
-                        }
-                        .foregroundStyle(Theme.Colors.cameraGuideGold)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Color.black.opacity(0.55))
-                        .clipShape(Capsule())
-                        .overlay(Capsule().stroke(Theme.Colors.cameraGuideGoldStroke.opacity(0.4), lineWidth: 1))
-                    }
-                    .disabled(guidanceService.isCapturing)
-                }
+            if showVoiceGuideIntro {
+                talkToOneTakeGuideOverlay
             }
-            .onAppear {
-                previousShutterCallback = guidanceService.onShutterTriggered
-                bindShutterCallback()
-                if let target = retakeAngle, let idx = sequence.firstIndex(of: target) {
-                    currentStepIndex = idx
-                }
-                guidanceService.startSession(for: currentAngle, isDemoMode: appState.isDemoMode)
+        }
+        .preferredColorScheme(.dark)
+        .onAppear {
+            previousShutterCallback = guidanceService.onShutterTriggered
+            bindShutterCallback()
+            if let target = retakeAngle, let idx = sequence.firstIndex(of: target) {
+                currentStepIndex = idx
             }
-            .onDisappear {
-                guidanceService.onShutterTriggered = previousShutterCallback
-                previousShutterCallback = nil
+            guidanceService.startSession(for: currentAngle, isDemoMode: appState.isDemoMode)
+        }
+        .onDisappear {
+            autoCaptureHoldTask?.cancel()
+            gestureHoldTask?.cancel()
+            guidanceService.onShutterTriggered = previousShutterCallback
+            previousShutterCallback = nil
+            guidanceService.stopSession()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            switch newPhase {
+            case .background, .inactive:
+                autoCaptureHoldTask?.cancel()
+                gestureHoldTask?.cancel()
                 guidanceService.stopSession()
-            }
-            .onChange(of: scenePhase) { _, newPhase in
-                switch newPhase {
-                case .background, .inactive:
-                    guidanceService.stopSession()
-                case .active:
-                    if !showingReviewSheet && !didCompleteFlow {
-                        bindShutterCallback()
-                        guidanceService.startSession(for: currentAngle, isDemoMode: appState.isDemoMode)
-                    }
-                @unknown default:
-                    break
-                }
-            }
-            .sheet(isPresented: $showingMatchGuide) {
-                referenceMatchGuideSheet
-            }
-            .onChange(of: guidanceService.feedback.allChecksPassed) { _, isAligned in
-                if !isAligned {
-                    guidanceService.cancelCountdownIfAlignmentLost()
-                }
-            }
-            .sheet(isPresented: $showingReviewSheet, onDismiss: {
-                if !didCompleteFlow {
+            case .active:
+                if !showingReviewSheet && !didCompleteFlow {
                     bindShutterCallback()
                     guidanceService.startSession(for: currentAngle, isDemoMode: appState.isDemoMode)
                 }
-            }) {
-                HeadshotReviewView(
-                    audition: audition,
-                    initialFront: frontOriginal,
-                    initialLeft: leftOriginal,
-                    initialRight: rightOriginal
-                ) {
-                    didCompleteFlow = true
-                    onCompleted()
-                    dismiss()
-                }
+            @unknown default:
+                break
+            }
+        }
+        .sheet(isPresented: $showingMatchGuide) {
+            referenceMatchGuideSheet
+        }
+        .onChange(of: guidanceService.feedback.allChecksPassed) { _, isAligned in
+            if !isAligned {
+                guidanceService.cancelCountdownIfAlignmentLost()
+            }
+            updateAutoCaptureSchedule()
+        }
+        .onChange(of: guidanceService.autoCaptureEnabled) { _, _ in
+            updateAutoCaptureSchedule()
+        }
+        .onChange(of: showVoiceGuideIntro) { _, _ in
+            updateAutoCaptureSchedule()
+        }
+        .onChange(of: showingMatchGuide) { _, _ in
+            updateAutoCaptureSchedule()
+        }
+        .onChange(of: guidanceService.isCapturing) { _, _ in
+            updateAutoCaptureSchedule()
+        }
+        .onChange(of: guidanceService.openPalmDetected) { _, detected in
+            gestureHoldTask?.cancel()
+            gestureHoldTask = nil
+            guard detected,
+                  guidanceService.gesturesEnabled,
+                  !guidanceService.isCapturing,
+                  !showVoiceGuideIntro,
+                  !showingMatchGuide,
+                  !showingReviewSheet else { return }
+
+            gestureHoldTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                guard !Task.isCancelled,
+                      guidanceService.gesturesEnabled,
+                      guidanceService.openPalmDetected,
+                      !guidanceService.isCapturing,
+                      !showVoiceGuideIntro,
+                      !showingMatchGuide,
+                      !showingReviewSheet,
+                      Date().timeIntervalSince(lastGestureTriggerAt) > 2.0 else { return }
+                lastGestureTriggerAt = Date()
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                triggerBatchCapture(requireAlignment: false)
+            }
+        }
+        .sheet(isPresented: $showingReviewSheet, onDismiss: {
+            if !didCompleteFlow {
+                bindShutterCallback()
+                guidanceService.startSession(for: currentAngle, isDemoMode: appState.isDemoMode)
+            }
+        }) {
+            HeadshotReviewView(
+                audition: audition,
+                initialFront: frontOriginal,
+                initialLeft: leftOriginal,
+                initialRight: rightOriginal
+            ) {
+                didCompleteFlow = true
+                onCompleted()
+                dismiss()
             }
         }
     }
@@ -171,49 +175,108 @@ struct HeadshotGuidanceView: View {
             if showVoiceGuideIntro {
                 showVoiceGuideIntro = false
             }
-            triggerBatchCapture()
+            triggerBatchCapture(requireAlignment: false)
         }
     }
 
-    // MARK: - Extracted Angle Segmented Picker
+    private func updateAutoCaptureSchedule() {
+        autoCaptureHoldTask?.cancel()
+        autoCaptureHoldTask = nil
+        guard guidanceService.autoCaptureEnabled,
+              guidanceService.feedback.allChecksPassed,
+              !guidanceService.isCapturing,
+              !showVoiceGuideIntro,
+              !showingMatchGuide,
+              !showingReviewSheet else { return }
+
+        autoCaptureHoldTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            guard !Task.isCancelled,
+                  guidanceService.autoCaptureEnabled,
+                  guidanceService.feedback.allChecksPassed,
+                  !guidanceService.isCapturing,
+                  !showVoiceGuideIntro,
+                  !showingMatchGuide,
+                  !showingReviewSheet else { return }
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            triggerBatchCapture(requireAlignment: true)
+        }
+    }
+
+    // MARK: - Top Camera Bar (Single-layer, no double Liquid Glass rings)
+
+    private var topCameraBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                guidanceService.stopSession()
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(.black.opacity(0.45), in: Circle())
+                    .overlay(Circle().stroke(.white.opacity(0.18), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .disabled(guidanceService.isCapturing)
+            .accessibilityLabel("Close camera")
+
+            Spacer(minLength: 4)
+
+            angleSegmentedPicker
+
+            Spacer(minLength: 4)
+
+            Button {
+                showingMatchGuide = true
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Match this")
+                        .font(.system(size: 11, weight: .semibold))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .foregroundStyle(Theme.Colors.cameraGuideGold)
+                .padding(.horizontal, 12)
+                .frame(height: 36)
+                .background(.black.opacity(0.45), in: Capsule())
+                .overlay(Capsule().stroke(Theme.Colors.cameraGuideGoldStroke.opacity(0.45), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .disabled(guidanceService.isCapturing)
+        }
+    }
 
     @ViewBuilder
     private var angleSegmentedPicker: some View {
         if let retakeAngle {
             Text("Retake \(retakeAngle.rawValue)")
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(.white)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 8)
-                .background(Color.black.opacity(0.55))
-                .clipShape(Capsule())
-                .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 1))
+                .padding(.horizontal, 14)
+                .frame(height: 36)
+                .background(.black.opacity(0.45), in: Capsule())
+                .overlay(Capsule().stroke(.white.opacity(0.18), lineWidth: 1))
         } else {
-            HStack(spacing: 2) {
+            Picker("Angle", selection: Binding(
+                get: { currentAngle },
+                set: { newAngle in
+                    guard !guidanceService.isCapturing,
+                          let idx = sequence.firstIndex(of: newAngle),
+                          idx != currentStepIndex else { return }
+                    currentStepIndex = idx
+                    guidanceService.startSession(for: newAngle, isDemoMode: appState.isDemoMode)
+                    guidanceService.announceAngle(newAngle)
+                }
+            )) {
                 ForEach(sequence, id: \.self) { angle in
-                    let isSelected = (currentAngle == angle)
-                    Button {
-                        if let idx = sequence.firstIndex(of: angle) {
-                            currentStepIndex = idx
-                            guidanceService.startSession(for: angle, isDemoMode: appState.isDemoMode)
-                            guidanceService.announceAngle(angle)
-                        }
-                    } label: {
-                        Text(angle.rawValue.capitalized)
-                            .font(.system(size: 11, weight: isSelected ? .bold : .medium))
-                            .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.5))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(isSelected ? Color.white.opacity(0.25) : Color.clear)
-                            .clipShape(Capsule())
-                    }
-                    .disabled(guidanceService.isCapturing)
+                    Text(angle.rawValue).tag(angle)
                 }
             }
-            .padding(3)
-            .background(Color.black.opacity(0.55))
-            .clipShape(Capsule())
-            .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 1))
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 190)
+            .disabled(guidanceService.isCapturing)
         }
     }
 
@@ -370,7 +433,8 @@ struct HeadshotGuidanceView: View {
     // MARK: - Bottom Dark-Cinema HUD
 
     private var bottomCinemaHUD: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 12) {
+            // Row 1: Telemetry status pills
             HStack(spacing: 8) {
                 HStack(spacing: 5) {
                     Circle()
@@ -382,8 +446,7 @@ struct HeadshotGuidanceView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Color.black.opacity(0.6))
-                .clipShape(Capsule())
+                .background(Color.black.opacity(0.6), in: Capsule())
                 .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
 
                 HStack(spacing: 5) {
@@ -396,10 +459,27 @@ struct HeadshotGuidanceView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Color.black.opacity(0.6))
-                .clipShape(Capsule())
+                .background(Color.black.opacity(0.6), in: Capsule())
                 .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
 
+                if guidanceService.openPalmDetected && guidanceService.gesturesEnabled {
+                    HStack(spacing: 5) {
+                        Image(systemName: "hand.raised.fill")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.green)
+                        Text("Hold palm")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.black.opacity(0.75), in: Capsule())
+                    .overlay(Capsule().stroke(Color.green.opacity(0.7), lineWidth: 1))
+                }
+            }
+
+            // Row 2: Hands-free controls (Voice, Palm Gesture, Auto-Click)
+            HStack(spacing: 8) {
                 Button {
                     if !guidanceService.isVoiceListening {
                         guidanceService.enableVoiceTriggers()
@@ -415,25 +495,67 @@ struct HeadshotGuidanceView: View {
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .background(Color.black.opacity(0.6))
-                    .clipShape(Capsule())
-                    .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+                    .background(Color.black.opacity(0.6), in: Capsule())
+                    .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Voice command status")
+
+                Button {
+                    guidanceService.gesturesEnabled.toggle()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: guidanceService.gesturesEnabled ? "hand.raised.fill" : "hand.raised.slash")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(guidanceService.gesturesEnabled ? Theme.Colors.cameraGuideGold : Color.white.opacity(0.55))
+                        Text("Gesture")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(guidanceService.gesturesEnabled ? .white : Color.white.opacity(0.6))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.black.opacity(0.6), in: Capsule())
+                    .overlay(Capsule().stroke(guidanceService.gesturesEnabled ? Theme.Colors.cameraGuideGoldStroke.opacity(0.45) : Color.white.opacity(0.12), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Toggle open palm gesture capture")
+
+                Button {
+                    guidanceService.autoCaptureEnabled.toggle()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: guidanceService.autoCaptureEnabled ? "sparkles" : "camera.metering.spot")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(guidanceService.autoCaptureEnabled ? Color.green : Color.white.opacity(0.65))
+                        Text(guidanceService.autoCaptureEnabled ? "Auto On" : "Auto Off")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(guidanceService.autoCaptureEnabled ? .white : Color.white.opacity(0.65))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.black.opacity(0.6), in: Capsule())
+                    .overlay(Capsule().stroke(guidanceService.autoCaptureEnabled ? Color.green.opacity(0.6) : Color.white.opacity(0.12), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Toggle automatic capture when aligned")
             }
 
             VStack(spacing: 4) {
                 Text(liveCoachingHeadline)
                     .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(guidanceService.shutterStatusMessage != nil ? Theme.Colors.cameraGuideGold : .white)
+                    .foregroundStyle(
+                        guidanceService.shutterStatusMessage != nil
+                        ? Theme.Colors.cameraGuideGold
+                        : (guidanceService.feedback.allChecksPassed ? Color.green : .white)
+                    )
                     .multilineTextAlignment(.center)
 
-                Text(guidanceService.isVoiceListening ? "Tap shutter, or say \"Action\" or \"Now\"" : "Tap shutter to capture")
+                Text(captureTriggerSubtitle)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.65))
+                    .foregroundStyle(Color.white.opacity(0.7))
+                    .multilineTextAlignment(.center)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 12)
 
             HStack(spacing: 0) {
                 Button {
@@ -450,16 +572,17 @@ struct HeadshotGuidanceView: View {
                             .foregroundStyle(guidanceService.voiceGuidanceEnabled ? Color.white : Color.white.opacity(0.45))
                     }
                 }
+                .buttonStyle(.plain)
                 .accessibilityLabel(guidanceService.voiceGuidanceEnabled ? "Disable voice guidance" : "Enable voice guidance")
 
                 Spacer()
 
                 Button {
-                    triggerBatchCapture()
+                    triggerBatchCapture(requireAlignment: false)
                 } label: {
                     ZStack {
                         Circle()
-                            .stroke(Color.white, lineWidth: 4)
+                            .stroke(guidanceService.feedback.allChecksPassed ? Color.green : Color.white, lineWidth: 4)
                             .frame(width: 78, height: 78)
 
                         Circle()
@@ -467,6 +590,7 @@ struct HeadshotGuidanceView: View {
                             .frame(width: 64, height: 64)
                     }
                 }
+                .buttonStyle(.plain)
                 .disabled(guidanceService.isCapturing)
                 .accessibilityLabel("Capture headshot")
 
@@ -486,11 +610,23 @@ struct HeadshotGuidanceView: View {
                             .foregroundStyle(Color.white)
                     }
                 }
+                .buttonStyle(.plain)
                 .disabled(guidanceService.isCapturing)
                 .accessibilityLabel("Flip camera")
             }
             .padding(.horizontal, 24)
         }
+    }
+
+    private var captureTriggerSubtitle: String {
+        var triggers = ["Tap shutter"]
+        if guidanceService.gesturesEnabled {
+            triggers.append("hold open palm")
+        }
+        if guidanceService.isVoiceListening {
+            triggers.append("say \"Now\" or \"Action\"")
+        }
+        return triggers.joined(separator: ", ")
     }
 
     private var anglePillTitle: String {
@@ -508,19 +644,22 @@ struct HeadshotGuidanceView: View {
         if guidanceService.cameraPermissionDenied || (!appState.isDemoMode && guidanceService.cameraErrorMessage != nil) {
             return "Camera unavailable"
         }
+        if let headline = guidanceService.feedback.guidanceHeadline, !headline.isEmpty {
+            return headline
+        }
         if guidanceService.feedback.allChecksPassed {
-            return "Framing & lighting look great — hold steady"
+            return "Hold still — ready to shoot"
         } else if !guidanceService.feedback.isFaceCentered {
             return "Center your face in the guide oval"
         } else if !guidanceService.feedback.isAngleCorrect {
             switch currentAngle {
-            case .front: return "Face the camera directly"
+            case .front: return "Look straight at the camera"
             case .left: return "Turn head slightly to your left"
             case .right: return "Turn head slightly to your right"
             }
         } else if guidanceService.feedback.lighting != .good {
             if guidanceService.feedback.lighting == .tooDark {
-                return "Lighting is too dark — add key light"
+                return "Lighting is too dark — add front light"
             } else if guidanceService.feedback.lighting == .uneven {
                 return "Balance light evenly across face"
             } else {
@@ -698,6 +837,30 @@ struct HeadshotGuidanceView: View {
                             )
                         }
 
+                        VStack(spacing: 12) {
+                            Toggle("Auto-Capture When Aligned", isOn: Bindable(guidanceService).autoCaptureEnabled)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .tint(Theme.Colors.cameraGuideGold)
+
+                            Divider().background(Color.white.opacity(0.12))
+
+                            Toggle("Open-Palm Gesture Shutter", isOn: Bindable(guidanceService).gesturesEnabled)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .tint(Theme.Colors.cameraGuideGold)
+
+                            Divider().background(Color.white.opacity(0.12))
+
+                            Toggle("Spoken Voice Guidance", isOn: Bindable(guidanceService).voiceGuidanceEnabled)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .tint(Theme.Colors.cameraGuideGold)
+                        }
+                        .padding(14)
+                        .background(Color.white.opacity(0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+
                         Button {
                             showingMatchGuide = false
                         } label: {
@@ -743,8 +906,8 @@ struct HeadshotGuidanceView: View {
 
     // MARK: - Batch Continuous Capture Trigger
 
-    private func triggerBatchCapture() {
-        guidanceService.startCountdown(seconds: 3) { capturedImage in
+    private func triggerBatchCapture(requireAlignment: Bool = false) {
+        guidanceService.startCountdown(seconds: 3, requireAlignment: requireAlignment) { capturedImage in
             guard let image = capturedImage else { return }
 
             switch currentAngle {
