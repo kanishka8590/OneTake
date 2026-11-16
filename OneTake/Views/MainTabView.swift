@@ -15,7 +15,7 @@ struct MainTabView: View {
 
     var body: some View {
         TabView(selection: Bindable(appState).selectedTab) {
-            AuditionsListView()
+            AuditionsListView(appState: appState)
                 .tabItem {
                     Label("Auditions", systemImage: "movieclapper.fill")
                 }
@@ -39,10 +39,11 @@ struct MainTabView: View {
             prompt: "Search auditions & script sides"
         )
         .overlay {
-            if !appState.globalSearchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+            if !appState.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 NavigationStack {
                     GlobalSearchView(appState: appState)
                 }
+                .environment(appState)
             }
         }
     }

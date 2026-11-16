@@ -23,6 +23,7 @@ struct SplashView: View {
                         .font(.system(size: 56, weight: .semibold))
                         .foregroundStyle(Color.white)
                 }
+                .accessibilityHidden(true)
 
                 VStack(spacing: 8) {
                     Text("OneTake")
@@ -42,11 +43,12 @@ struct SplashView: View {
             withAnimation(.easeOut(duration: 0.8)) {
                 isAnimating = true
             }
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
-                withAnimation(.easeInOut(duration: 0.45)) {
-                    onFinished?()
-                }
+        }
+        .task {
+            try? await Task.sleep(for: .seconds(1.1))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.35)) {
+                onFinished?()
             }
         }
     }

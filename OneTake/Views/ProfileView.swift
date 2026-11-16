@@ -20,7 +20,7 @@ struct ProfileView: View {
     var user: UserProfile {
         appState.currentUser ?? UserProfile(
             name: "Actor Profile",
-            email: "actor@onetake.app"
+            email: ""
         )
     }
 
@@ -61,7 +61,7 @@ struct ProfileView: View {
                         HStack {
                             Label("Storage Used", systemImage: "internaldrive")
                             Spacer()
-                            Text(String(format: "%.1f MB", appState.totalStorageUsedMB))
+                            Text(String(format: "%.1f MB", max(appState.totalStorageUsedMB, appState.localAppDataUsedMB)))
                                 .font(Theme.Typography.bodyRegular)
                                 .foregroundStyle(Theme.Colors.textSecondary)
                         }
@@ -71,11 +71,12 @@ struct ProfileView: View {
                     // Previous Work Section
                     if !user.previousWork.isEmpty {
                         Section("Credits & Previous Work") {
-                            ForEach(user.previousWork, id: \.self) { work in
+                            ForEach(Array(user.previousWork.enumerated()), id: \.offset) { _, work in
                                 HStack(spacing: 8) {
                                     Image(systemName: "star.fill")
                                         .font(.system(size: 12))
                                         .foregroundStyle(Theme.Colors.warningAmber)
+                                        .accessibilityHidden(true)
                                     Text(work)
                                         .font(Theme.Typography.bodyRegular)
                                         .foregroundStyle(Theme.Colors.textPrimary)
@@ -85,70 +86,52 @@ struct ProfileView: View {
                         }
                     }
 
-                    // App Settings
+                    // Profile & App Settings
                     Section("Profile & settings") {
-                        Button("Edit slate") { showingEditProfile = true }
+                        Button("Edit profile") { showingEditProfile = true }
+                            .frame(minHeight: Theme.Layout.minTapTarget)
                         NavigationLink("Recording settings") { RecordingSettingsView(appState: appState) }
+                            .frame(minHeight: Theme.Layout.minTapTarget)
                         NavigationLink("Notification Preferences") { NotificationPreferencesView(appState: appState) }
+                            .frame(minHeight: Theme.Layout.minTapTarget)
                         NavigationLink("Privacy & data") { PrivacyAndDataView(appState: appState) }
+                            .frame(minHeight: Theme.Layout.minTapTarget)
                     }
 
-                    // Existing quick controls remain here for actors who prefer
-                    // adjusting a take without leaving their profile.
-                    Section("Recording & Self-Tape Settings") {
-                        Picker("Countdown Timer", selection: Bindable(appState.settings).countdownSeconds) {
-                            Text("3 seconds").tag(3)
-                            Text("5 seconds").tag(5)
-                            Text("10 seconds").tag(10)
+                    // Demo Mode
+                    Section {
+                        HStack {
+                            Label("Demo Mode", systemImage: "sparkles")
+                            Spacer()
+                            Text(appState.isDemoMode ? "Active" : "Off")
+                                .statusBadge(color: appState.isDemoMode ? Theme.Colors.accent : Theme.Colors.textSecondary)
                         }
                         .frame(minHeight: Theme.Layout.minTapTarget)
 
-                        Toggle("Auto-Trim Silence", isOn: Bindable(appState.settings).autoTrimSilence)
-                            .tint(Theme.Colors.accent)
-                            .frame(minHeight: Theme.Layout.minTapTarget)
-
-                        Toggle("Noise Reduction by Default", isOn: Bindable(appState.settings).noiseReductionDefault)
-                            .tint(Theme.Colors.accent)
-                            .frame(minHeight: Theme.Layout.minTapTarget)
-
-                        Toggle("Mirror Front Camera", isOn: Bindable(appState.settings).mirrorFrontCamera)
-                            .tint(Theme.Colors.accent)
-                            .frame(minHeight: Theme.Layout.minTapTarget)
-
-                        Picker("Video Quality", selection: Bindable(appState.settings).videoQuality) {
-                            ForEach(VideoQuality.allCases, id: \.self) { q in
-                                Text(q.rawValue).tag(q)
+                        if appState.isDemoMode {
+                            Button("Reset Demo Data") {
+                                appState.resetDemoData()
                             }
-                        }
-                        .frame(minHeight: Theme.Layout.minTapTarget)
-                    }
-
-                    // Teleprompter & Rehearsal Settings
-                    Section("Rehearsal & Teleprompter") {
-                        Picker("Prompt Text Size", selection: Bindable(appState.settings).teleprompterTextSize) {
-                            ForEach(TeleprompterTextSize.allCases, id: \.self) { size in
-                                Text(size.rawValue).tag(size)
-                            }
-                        }
-                        .frame(minHeight: Theme.Layout.minTapTarget)
-
-                        Picker("Cue Trigger Mode", selection: Bindable(appState.settings).cueTriggerMode) {
-                            ForEach(CueTriggerMode.allCases, id: \.self) { mode in
-                                Text(mode.rawValue).tag(mode)
-                            }
-                        }
-                        .frame(minHeight: Theme.Layout.minTapTarget)
-                    }
-
-                    // Notifications
-                    Section("Notifications") {
-                        Toggle("Audition Deadlines", isOn: Bindable(appState.settings).notifyAuditions)
-                            .tint(Theme.Colors.accent)
                             .frame(minHeight: Theme.Layout.minTapTarget)
 
-                        Toggle("Practice Reminders", isOn: Bindable(appState.settings).notifyPractice)
-                            .tint(Theme.Colors.accent)
+                            Button("Exit Demo Mode", role: .destructive) {
+                                appState.exitDemoMode()
+                            }
                             .frame(minHeight: Theme.Layout.minTapTarget)
+                        } else {
+                            Button("Enable Demo Mode") {
+                                appState.enterDemoMode()
+                            }
+                            .frame(minHeight: Theme.Layout.minTapTarget)
+                        }
+                    } header: {
+                        Text("Demo Mode")
+                    } footer: {
+                        Text(
+                            appState.isDemoMode
+                                ? "Demo Mode is active with sample auditions and scripts. Exiting removes sample data while keeping your own work."
+                                : "Load sample auditions, scripts, and takes to explore OneTake."
+                        )
                     }
 
                     // Account Actions
@@ -170,6 +153,9 @@ struct ProfileView: View {
                 .scrollContentBackground(.hidden)
             }
             .navigationTitle("Profile")
+            .task {
+                await appState.refreshLocalStorageUsage()
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button("Edit") {
@@ -183,15 +169,15 @@ struct ProfileView: View {
             .sheet(isPresented: $showingEditProfile) {
                 EditProfileSheet(appState: appState, isPresented: $showingEditProfile)
             }
-            .confirmationDialog("Log Out?", isPresented: $showingLogoutConfirmation) {
-                Button("Log Out", role: .destructive) {
+            .confirmationDialog("Sign Out?", isPresented: $showingLogoutConfirmation) {
+                Button("Sign Out", role: .destructive) {
                     withAnimation {
                         appState.logout()
                     }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Are you sure you want to log out of OneTake?")
+                Text("Are you sure you want to sign out of OneTake?")
             }
         }
     }
@@ -200,24 +186,43 @@ struct ProfileView: View {
 
     private var actorHeaderCard: some View {
         VStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(Theme.Colors.lavenderSurface)
-                    .frame(width: 84, height: 84)
+            Group {
+                if let data = user.avatarImageData, let uiImage = UIImage(data: data) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 84, height: 84)
+                        .clipShape(Circle())
+                } else {
+                    ZStack {
+                        Circle()
+                            .fill(Theme.Colors.lavenderSurface)
+                            .frame(width: 84, height: 84)
 
-                Text(userInitials)
-                    .font(.system(size: 32, weight: .bold, design: .rounded))
-                    .foregroundStyle(Theme.Colors.accent)
+                        Text(userInitials)
+                            .font(.system(size: 32, weight: .bold, design: .rounded))
+                            .foregroundStyle(Theme.Colors.accent)
+                    }
+                }
             }
+            .accessibilityLabel("Profile photo")
 
             VStack(spacing: 4) {
                 Text(user.name.isEmpty ? "Actor Profile" : user.name)
                     .font(Theme.Typography.screenTitle)
                     .foregroundStyle(Theme.Colors.textPrimary)
 
-                Text(user.email)
-                    .font(Theme.Typography.bodyRegular)
-                    .foregroundStyle(Theme.Colors.textSecondary)
+                if !user.email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(user.email)
+                        .font(Theme.Typography.bodyRegular)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                }
+
+                if appState.isDemoMode {
+                    Text("Demo Mode")
+                        .statusBadge(color: Theme.Colors.accent)
+                        .padding(.top, 4)
+                }
             }
 
             HStack(spacing: 16) {
@@ -232,7 +237,8 @@ struct ProfileView: View {
                 }
             }
 
-            Text("Representation: \(user.representation)")
+            let rep = user.representation.trimmingCharacters(in: .whitespacesAndNewlines)
+            Text("Representation: \(rep.isEmpty ? "Self-represented" : rep)")
                 .font(Theme.Typography.captionBadge)
                 .foregroundStyle(Theme.Colors.textSecondary)
                 .padding(.horizontal, 12)
@@ -264,19 +270,26 @@ struct ProfileView: View {
     }
 
     private var userInitials: String {
-        let components = user.name.components(separatedBy: " ")
+        let trimmed = user.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "A" }
+        let components = trimmed.split(separator: " ")
         if components.count >= 2,
            let first = components[0].first,
            let second = components[1].first {
             return "\(first)\(second)".uppercased()
         }
-        return user.name.prefix(2).uppercased()
+        return String(trimmed.prefix(2)).uppercased()
     }
 }
 
 // MARK: - Edit Profile Sheet
 
 struct EditProfileSheet: View {
+    private struct CreditItem: Identifiable {
+        let id = UUID()
+        var title: String
+    }
+
     let appState: AppState
     @Binding var isPresented: Bool
 
@@ -287,17 +300,49 @@ struct EditProfileSheet: View {
     @State private var basedIn: String = ""
     @State private var representation: String = ""
     @State private var newCredit: String = ""
-    @State private var credits: [String] = []
+    @State private var creditItems: [CreditItem] = []
+    @State private var stagedAvatarData: Data? = nil
     @State private var photoItem: PhotosPickerItem?
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Profile photo") {
-                    PhotosPicker(selection: $photoItem, matching: .images) {
-                        Label("Choose photo", systemImage: "person.crop.circle.badge.plus")
+                    HStack(spacing: 16) {
+                        if let data = stagedAvatarData, let uiImage = UIImage(data: data) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 56, height: 56)
+                                .clipShape(Circle())
+                        } else {
+                            ZStack {
+                                Circle()
+                                    .fill(Theme.Colors.lavenderSurface)
+                                    .frame(width: 56, height: 56)
+                                Image(systemName: "person.fill")
+                                    .font(.system(size: 24))
+                                    .foregroundStyle(Theme.Colors.accent)
+                            }
+                            .accessibilityHidden(true)
+                        }
+
+                        PhotosPicker(selection: $photoItem, matching: .images) {
+                            Label(
+                                stagedAvatarData == nil ? "Choose photo" : "Change photo",
+                                systemImage: "person.crop.circle.badge.plus"
+                            )
+                        }
+                    }
+
+                    if stagedAvatarData != nil {
+                        Button("Remove photo", role: .destructive) {
+                            stagedAvatarData = nil
+                            photoItem = nil
+                        }
                     }
                 }
+
                 Section("Personal Details") {
                     TextField("Full Name", text: $name)
                     TextField("Email", text: $email)
@@ -311,11 +356,11 @@ struct EditProfileSheet: View {
                 }
 
                 Section("Credits & Past Projects") {
-                    ForEach(credits, id: \.self) { credit in
-                        Text(credit)
+                    ForEach(creditItems) { item in
+                        Text(item.title)
                     }
                     .onDelete { indices in
-                        credits.remove(atOffsets: indices)
+                        creditItems.remove(atOffsets: indices)
                     }
 
                     HStack {
@@ -323,7 +368,7 @@ struct EditProfileSheet: View {
                         Button("Add") {
                             let trimmed = newCredit.trimmingCharacters(in: .whitespaces)
                             if !trimmed.isEmpty {
-                                credits.append(trimmed)
+                                creditItems.append(CreditItem(title: trimmed))
                                 newCredit = ""
                             }
                         }
@@ -359,14 +404,17 @@ struct EditProfileSheet: View {
                     ageText = u.age > 0 ? "\(u.age)" : ""
                     basedIn = u.basedIn
                     representation = u.representation
-                    credits = u.previousWork
+                    creditItems = u.previousWork.map { CreditItem(title: $0) }
+                    stagedAvatarData = u.avatarImageData
                 }
             }
             .onChange(of: photoItem) { _, item in
                 guard let item else { return }
                 Task {
                     if let data = try? await item.loadTransferable(type: Data.self) {
-                        await MainActor.run { appState.currentUser?.avatarImageData = data }
+                        await MainActor.run {
+                            stagedAvatarData = data
+                        }
                     }
                 }
             }
@@ -374,19 +422,40 @@ struct EditProfileSheet: View {
     }
 
     private func saveProfile() {
+        let trimmedName = name.trimmingCharacters(in: .whitespaces)
+        let trimmedEmail = email.trimmingCharacters(in: .whitespaces)
+        let trimmedHeight = height.trimmingCharacters(in: .whitespaces)
         let age = Int(ageText) ?? 0
-        appState.createOrUpdateProfile(
-            name: name.trimmingCharacters(in: .whitespaces),
-            email: email.trimmingCharacters(in: .whitespaces),
-            height: height.trimmingCharacters(in: .whitespaces),
-            age: age,
-            basedIn: basedIn.trimmingCharacters(in: .whitespaces),
-            representation: representation.trimmingCharacters(in: .whitespaces)
-        )
+        let trimmedBasedIn = basedIn.trimmingCharacters(in: .whitespaces)
+        let trimmedRep = representation.trimmingCharacters(in: .whitespaces)
+        let resolvedRep = trimmedRep.isEmpty ? "Self-represented" : trimmedRep
+        let updatedCredits = creditItems.map(\.title)
+
         if let current = appState.currentUser {
-            current.previousWork = credits
+            current.name = trimmedName
+            current.email = trimmedEmail
+            current.height = trimmedHeight
+            current.age = age
+            current.basedIn = trimmedBasedIn
+            current.representation = resolvedRep
+            current.previousWork = updatedCredits
+            current.avatarImageData = stagedAvatarData
+            appState.saveChanges()
+        } else {
+            appState.createOrUpdateProfile(
+                name: trimmedName,
+                email: trimmedEmail,
+                height: trimmedHeight,
+                age: age,
+                basedIn: trimmedBasedIn,
+                representation: resolvedRep
+            )
+            if let current = appState.currentUser {
+                current.previousWork = updatedCredits
+                current.avatarImageData = stagedAvatarData
+                appState.saveChanges()
+            }
         }
-        appState.saveChanges()
         isPresented = false
     }
 }

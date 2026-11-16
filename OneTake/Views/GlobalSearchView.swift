@@ -25,6 +25,7 @@ struct GlobalSearchView: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 48))
                         .foregroundStyle(Theme.Colors.textSecondary.opacity(0.6))
+                        .accessibilityHidden(true)
 
                     Text("No results for \"\(appState.globalSearchQuery)\"")
                         .font(Theme.Typography.cardTitle)
@@ -44,7 +45,8 @@ struct GlobalSearchView: View {
                         Section {
                             ForEach(results.auditions) { audition in
                                 NavigationLink {
-                                    AuditionDetailPlaceholderView(audition: audition)
+                                    AuditionPackageHubView(audition: audition)
+                                        .environment(appState)
                                 } label: {
                                     VStack(alignment: .leading, spacing: 6) {
                                         HStack {
@@ -65,6 +67,7 @@ struct GlobalSearchView: View {
 
                                             Text("•")
                                                 .foregroundStyle(Theme.Colors.textSecondary)
+                                                .accessibilityHidden(true)
 
                                             Text(audition.production.rawValue)
                                                 .font(Theme.Typography.captionBadge)
@@ -87,7 +90,7 @@ struct GlobalSearchView: View {
                         Section {
                             ForEach(results.scripts) { script in
                                 NavigationLink {
-                                    ScriptDetailPlaceholderView(script: script)
+                                    MemoriseView(script: script, appState: appState)
                                 } label: {
                                     VStack(alignment: .leading, spacing: 6) {
                                         HStack {
@@ -124,6 +127,15 @@ struct GlobalSearchView: View {
                 .scrollContentBackground(.hidden)
             }
         }
+        .navigationTitle("Search")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Close") {
+                    appState.globalSearchQuery = ""
+                }
+            }
+        }
     }
 
     private func matchingSnippet(in text: String, for query: String) -> String? {
@@ -134,108 +146,6 @@ struct GlobalSearchView: View {
         let end = text.index(range.upperBound, offsetBy: 50, limitedBy: text.endIndex) ?? text.endIndex
         let snippet = String(text[start..<end]).replacingOccurrences(of: "\n", with: " ")
         return "..." + snippet.trimmingCharacters(in: .whitespaces) + "..."
-    }
-}
-
-// MARK: - Detail Placeholder Views for Navigation
-
-struct AuditionDetailPlaceholderView: View {
-    let audition: Audition
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text(audition.projectName)
-                            .font(Theme.Typography.screenTitle)
-                            .foregroundStyle(Theme.Colors.textPrimary)
-
-                        Spacer()
-
-                        Text(audition.status.rawValue)
-                            .statusBadge(color: audition.status == .sent ? Theme.Colors.successGreen : Theme.Colors.accent)
-                    }
-
-                    Text("Role: \(audition.roleName) (\(audition.production.rawValue))")
-                        .font(Theme.Typography.cardTitle)
-                        .foregroundStyle(Theme.Colors.textSecondary)
-                }
-
-                if !audition.roleDescription.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Role Description")
-                            .font(Theme.Typography.sectionHeader)
-                            .foregroundStyle(Theme.Colors.textPrimary)
-
-                        Text(audition.roleDescription)
-                            .font(Theme.Typography.bodyRegular)
-                            .foregroundStyle(Theme.Colors.textSecondary)
-                    }
-                    .padding()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .cardStyle()
-                }
-
-                if let script = audition.scriptText, !script.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Audition Sides")
-                            .font(Theme.Typography.sectionHeader)
-                            .foregroundStyle(Theme.Colors.textPrimary)
-
-                        Text(script)
-                            .font(.system(size: 14, design: .monospaced))
-                            .foregroundStyle(Theme.Colors.textPrimary)
-                            .padding(.top, 4)
-                    }
-                    .padding()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .cardStyle()
-                }
-            }
-            .padding(Theme.Layout.screenHPadding)
-        }
-        .background(Theme.Colors.canvasBackground)
-        .navigationTitle(audition.projectName)
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-struct ScriptDetailPlaceholderView: View {
-    let script: PracticeScript
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text(script.title)
-                        .font(Theme.Typography.screenTitle)
-                        .foregroundStyle(Theme.Colors.textPrimary)
-
-                    Spacer()
-
-                    Text(script.language.rawValue)
-                        .statusBadge(color: Theme.Colors.accent)
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Dialogue")
-                        .font(Theme.Typography.sectionHeader)
-                        .foregroundStyle(Theme.Colors.textPrimary)
-
-                    Text(script.rawText)
-                        .font(.system(size: 14, design: .monospaced))
-                        .foregroundStyle(Theme.Colors.textPrimary)
-                }
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .cardStyle()
-            }
-            .padding(Theme.Layout.screenHPadding)
-        }
-        .background(Theme.Colors.canvasBackground)
-        .navigationTitle(script.title)
-        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

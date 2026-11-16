@@ -81,7 +81,7 @@ struct OnboardingView: View {
                                 .foregroundStyle(primaryInk)
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 8)
-                                .frame(minWidth: Theme.Layout.minTapTarget, minHeight: 36)
+                                .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
                                 .background(.ultraThinMaterial, in: Capsule())
                         }
                     }
@@ -123,6 +123,7 @@ struct OnboardingView: View {
                 )
                 .frame(height: 110)
             }
+            .accessibilityHidden(true)
 
             // Bottom 44%: Left-aligned editorial copy & bottom controls
             VStack(alignment: .leading, spacing: 14) {
@@ -142,38 +143,38 @@ struct OnboardingView: View {
                 Spacer()
 
                 // Fixed 54pt control slot so text never shifts between slides
-                // Fixed 54pt control slot so text never shifts between slides
-                                ZStack {
-                                    if slide.id == slides.count - 1 {
-                                        Button {
-                                            completeOnboarding()
-                                        } label: {
-                                            HStack(spacing: 6) {
-                                                Text("Get started")
-                                                Image(systemName: "arrow.right")
-                                                    .font(.system(size: 15, weight: .semibold))
-                                            }
-                                            .font(.system(size: 16, weight: .semibold))
-                                            .foregroundStyle(Theme.Colors.onAction)
-                                            .frame(maxWidth: .infinity, minHeight: 54)
-                                            .background(Theme.Colors.primaryPlum)
-                                            .clipShape(Capsule())
-                                        }
-                                        .frame(minHeight: Theme.Layout.minTapTarget)
-                                    } else {
-                                        HStack(spacing: 8) {
-                                            ForEach(slides) { dotSlide in
-                                                Circle()
-                                                    .fill(dotSlide.id == currentPage ? primaryInk : inactiveDot)
-                                                    .frame(width: 7, height: 7)
-                                                    .animation(.easeInOut(duration: 0.2), value: currentPage)
-                                            }
-                                        }
-                                    }
-                                }
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 54)
-                                .padding(.bottom, max(bottomInset, 16) + 12)                .frame(height: 54)
+                ZStack {
+                    if slide.id == slides.count - 1 {
+                        Button {
+                            completeOnboarding()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text("Get started")
+                                Image(systemName: "arrow.right")
+                                    .font(.system(size: 15, weight: .semibold))
+                            }
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Theme.Colors.onAction)
+                            .frame(maxWidth: .infinity, minHeight: 54)
+                            .background(Theme.Colors.primaryPlum)
+                            .clipShape(Capsule())
+                        }
+                        .frame(minHeight: Theme.Layout.minTapTarget)
+                    } else {
+                        HStack(spacing: 8) {
+                            ForEach(slides) { dotSlide in
+                                Circle()
+                                    .fill(dotSlide.id == currentPage ? primaryInk : inactiveDot)
+                                    .frame(width: 7, height: 7)
+                                    .animation(.easeInOut(duration: 0.2), value: currentPage)
+                            }
+                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Page \(currentPage + 1) of \(slides.count)")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 54)
                 .padding(.bottom, max(bottomInset, 16) + 12)
             }
             .padding(.horizontal, 24)
