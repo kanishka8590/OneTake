@@ -41,7 +41,10 @@ struct PracticeHubView: View {
                 Theme.Colors.canvasBackground
                     .ignoresSafeArea()
 
-                if appState.practiceScripts.isEmpty {
+                if !appState.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    GlobalSearchView(appState: appState)
+                        .environment(appState)
+                } else if appState.practiceScripts.isEmpty {
                     emptyStateView
                 } else {
                     List {
@@ -58,6 +61,36 @@ struct PracticeHubView: View {
                                     reviewTarget = ScriptReviewTarget(script: script, session: session)
                                 } onRunAgain: {
                                     scriptToRunAgain = script
+                                }
+                                .contextMenu {
+                                    Button {
+                                        scriptToOpen = script
+                                    } label: {
+                                        Label("Memorise & Practice", systemImage: "text.book.closed")
+                                    }
+
+                                    Button {
+                                        scriptToRunAgain = script
+                                    } label: {
+                                        Label("Run Scene Aloud", systemImage: "mic")
+                                    }
+
+                                    if let latest = script.sessions.sorted(by: { $0.date > $1.date }).first {
+                                        Button {
+                                            reviewTarget = ScriptReviewTarget(script: script, session: latest)
+                                        } label: {
+                                            Label("Review Latest Run", systemImage: "waveform")
+                                        }
+                                    }
+
+                                    Divider()
+
+                                    Button(role: .destructive) {
+                                        scriptToDelete = script
+                                        showingDeleteAlert = true
+                                    } label: {
+                                        Label("Delete Script", systemImage: "trash")
+                                    }
                                 }
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                     Button(role: .destructive) {
@@ -79,6 +112,11 @@ struct PracticeHubView: View {
                 }
             }
             .navigationTitle("Practice")
+            .searchable(
+                text: Bindable(appState).globalSearchQuery,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "Search auditions & script sides"
+            )
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     HStack(spacing: 4) {

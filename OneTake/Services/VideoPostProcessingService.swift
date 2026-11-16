@@ -366,13 +366,17 @@ final class VideoPostProcessingService: NSObject, VideoPostProcessingServiceProt
     }
 
     private func trackProgress(for exportSession: AVAssetExportSession) -> Task<Void, Never> {
-        Task { @MainActor [weak self] in
-            for await state in exportSession.states(updateInterval: 0.1) {
+        let box = UncheckedSessionBox(session: exportSession)
+        return Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(100))
                 guard !Task.isCancelled else { break }
-                if case .exporting(let progress) = state {
-                    self?.exportProgress = progress.fractionCompleted
-                }
+                self?.exportProgress = Double(box.session.progress)
             }
         }
+    }
+
+    private nonisolated struct UncheckedSessionBox: @unchecked Sendable {
+        let session: AVAssetExportSession
     }
 }

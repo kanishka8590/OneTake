@@ -127,15 +127,6 @@ struct GlobalSearchView: View {
                 .scrollContentBackground(.hidden)
             }
         }
-        .navigationTitle("Search")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Close") {
-                    appState.globalSearchQuery = ""
-                }
-            }
-        }
     }
 
     private func matchingSnippet(in text: String, for query: String) -> String? {

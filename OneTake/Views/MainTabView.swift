@@ -34,18 +34,6 @@ struct MainTabView: View {
                 .tag(AppTab.profile)
         }
         .tint(Theme.Colors.accent)
-        .searchable(
-            text: Bindable(appState).globalSearchQuery,
-            prompt: "Search auditions & script sides"
-        )
-        .overlay {
-            if !appState.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                NavigationStack {
-                    GlobalSearchView(appState: appState)
-                }
-                .environment(appState)
-            }
-        }
     }
 }
 

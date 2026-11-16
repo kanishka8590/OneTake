@@ -43,6 +43,7 @@ struct AuditionsListView: View {
     @State private var pendingAddSource: PendingAddSource?
     @State private var auditionToDelete: Audition?
     @State private var showingDeleteConfirmation = false
+    @State private var auditionToEdit: Audition?
 
     // Import & parsing states
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
@@ -78,7 +79,10 @@ struct AuditionsListView: View {
                 Theme.Colors.canvasBackground
                     .ignoresSafeArea()
 
-                if filteredAuditions.isEmpty {
+                if !appState.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    GlobalSearchView(appState: appState)
+                        .environment(appState)
+                } else if filteredAuditions.isEmpty {
                     emptyStateView
                 } else {
                     List {
@@ -87,6 +91,40 @@ struct AuditionsListView: View {
                                 AuditionPackageHubView(audition: audition)
                             } label: {
                                 AuditionCardRow(audition: audition)
+                            }
+                            .contextMenu {
+                                Button {
+                                    auditionToEdit = audition
+                                } label: {
+                                    Label("Edit Details", systemImage: "pencil")
+                                }
+
+                                if audition.status == .active {
+                                    Button {
+                                        withAnimation {
+                                            appState.updateAuditionStatus(audition, to: .sent)
+                                        }
+                                    } label: {
+                                        Label("Mark as Sent", systemImage: "paperplane")
+                                    }
+                                } else {
+                                    Button {
+                                        withAnimation {
+                                            appState.updateAuditionStatus(audition, to: .active)
+                                        }
+                                    } label: {
+                                        Label("Reactivate", systemImage: "arrow.uturn.backward")
+                                    }
+                                }
+
+                                Divider()
+
+                                Button(role: .destructive) {
+                                    auditionToDelete = audition
+                                    showingDeleteConfirmation = true
+                                } label: {
+                                    Label("Delete Audition", systemImage: "trash")
+                                }
                             }
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 Button(role: .destructive) {
@@ -127,6 +165,11 @@ struct AuditionsListView: View {
                 }
             }
             .navigationTitle("Auditions")
+            .searchable(
+                text: Bindable(appState).globalSearchQuery,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "Search auditions & script sides"
+            )
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Menu {
@@ -211,6 +254,12 @@ struct AuditionsListView: View {
             .sheet(item: $editorPresentation) { presentation in
                 AuditionDetailsEditorView(parsedCall: presentation.parsedCall) { _ in
                     editorPresentation = nil
+                }
+                .environment(appState)
+            }
+            .sheet(item: $auditionToEdit) { existing in
+                AuditionDetailsEditorView(existingAudition: existing) { _ in
+                    auditionToEdit = nil
                 }
                 .environment(appState)
             }
