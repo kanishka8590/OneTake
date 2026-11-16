@@ -29,36 +29,95 @@ struct MainTabView: View {
     }
 
     var body: some View {
-        TabView(selection: Bindable(appState).selectedTab) {
-            AuditionsListView(appState: appState)
-                .tabItem {
-                    Label {
-                        Text("Auditions")
-                    } icon: {
-                        Image(uiImage: Self.outlineTabIcon(systemName: "movieclapper"))
+        Group {
+            if #available(iOS 26.0, *) {
+                TabView(selection: Bindable(appState).selectedTab) {
+                    Tab(value: AppTab.auditions) {
+                        AuditionsListView(appState: appState)
+                    } label: {
+                        Label {
+                            Text("Auditions")
+                        } icon: {
+                            Image(uiImage: Self.outlineTabIcon(systemName: "movieclapper"))
+                        }
                     }
-                }
-                .tag(AppTab.auditions)
 
-            PracticeHubView(appState: appState)
-                .tabItem {
-                    Label {
-                        Text("Practice")
-                    } icon: {
-                        Image(uiImage: Self.outlineTabIcon(systemName: "theatermasks"))
+                    Tab(value: AppTab.practice) {
+                        PracticeHubView(appState: appState)
+                    } label: {
+                        Label {
+                            Text("Practice")
+                        } icon: {
+                            Image(uiImage: Self.outlineTabIcon(systemName: "theatermasks"))
+                        }
                     }
-                }
-                .tag(AppTab.practice)
 
-            ProfileView(appState: appState)
-                .tabItem {
-                    Label {
-                        Text("Profile")
-                    } icon: {
-                        Image(uiImage: Self.outlineTabIcon(systemName: "person.crop.circle"))
+                    Tab(value: AppTab.profile) {
+                        ProfileView(appState: appState)
+                    } label: {
+                        Label {
+                            Text("Profile")
+                        } icon: {
+                            Image(uiImage: Self.outlineTabIcon(systemName: "person.crop.circle"))
+                        }
+                    }
+
+                    Tab(value: AppTab.search, role: .search) {
+                        NavigationStack {
+                            GlobalSearchView(appState: appState)
+                                .navigationTitle("Search")
+                                .navigationBarTitleDisplayMode(.large)
+                        }
+                        .searchable(
+                            text: Bindable(appState).globalSearchQuery,
+                            prompt: "Search auditions & script sides"
+                        )
                     }
                 }
-                .tag(AppTab.profile)
+                .tabViewSearchActivation(.searchTabSelection)
+            } else {
+                TabView(selection: Bindable(appState).selectedTab) {
+                    AuditionsListView(appState: appState)
+                        .tabItem {
+                            Label {
+                                Text("Auditions")
+                            } icon: {
+                                Image(uiImage: Self.outlineTabIcon(systemName: "movieclapper"))
+                            }
+                        }
+                        .tag(AppTab.auditions)
+
+                    PracticeHubView(appState: appState)
+                        .tabItem {
+                            Label {
+                                Text("Practice")
+                            } icon: {
+                                Image(uiImage: Self.outlineTabIcon(systemName: "theatermasks"))
+                            }
+                        }
+                        .tag(AppTab.practice)
+
+                    ProfileView(appState: appState)
+                        .tabItem {
+                            Label {
+                                Text("Profile")
+                            } icon: {
+                                Image(uiImage: Self.outlineTabIcon(systemName: "person.crop.circle"))
+                            }
+                        }
+                        .tag(AppTab.profile)
+
+                    NavigationStack {
+                        GlobalSearchView(appState: appState)
+                            .navigationTitle("Search")
+                            .navigationBarTitleDisplayMode(.large)
+                    }
+                    .tabItem {
+                        Label("Search", systemImage: "magnifyingglass")
+                    }
+                    .tag(AppTab.search)
+                }
+            }
         }
         .environment(\.symbolVariants, .none)
         .tint(Theme.Colors.accent)

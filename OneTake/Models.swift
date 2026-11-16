@@ -7,6 +7,7 @@ enum AppTab: String, Codable, Hashable {
     case auditions = "Auditions"
     case practice = "Practice"
     case profile = "Profile"
+    case search = "Search"
 }
 
 enum AuditionStatus: String, Codable, Hashable, CaseIterable {

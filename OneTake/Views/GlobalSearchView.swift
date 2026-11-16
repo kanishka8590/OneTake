@@ -3,33 +3,29 @@ import SwiftUI
 struct GlobalSearchSections: View {
     let appState: AppState
 
+    private var trimmedQuery: String {
+        appState.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var body: some View {
         let results = appState.searchResults
         let hasResults = !results.auditions.isEmpty || !results.scripts.isEmpty
 
-        if !hasResults {
+        if trimmedQuery.isEmpty {
             Section {
-                VStack(spacing: 16) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 48))
-                        .foregroundStyle(Theme.Colors.textSecondary.opacity(0.6))
-                        .accessibilityHidden(true)
-
-                    Text("No results for \"\(appState.globalSearchQuery)\"")
-                        .font(Theme.Typography.cardTitle)
-                        .foregroundStyle(Theme.Colors.textPrimary)
-
-                    Text("Try searching for a project, role, character, or dialogue line.")
-                        .font(Theme.Typography.bodyRegular)
-                        .foregroundStyle(Theme.Colors.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 16)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 60)
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
+                Color.clear
+                    .frame(height: 1)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
+        } else if !hasResults {
+            Section {
+                Color.clear
+                    .frame(height: 1)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
             }
         } else {
             // Auditions Section
@@ -140,13 +136,35 @@ struct GlobalSearchView: View {
         explicitAppState ?? envAppState
     }
 
+    private var trimmedQuery: String {
+        appState.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var body: some View {
+        let results = appState.searchResults
+        let hasResults = !results.auditions.isEmpty || !results.scripts.isEmpty
+
         List {
             GlobalSearchSections(appState: appState)
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(Theme.Colors.canvasBackground.ignoresSafeArea())
+        .overlay {
+            if trimmedQuery.isEmpty {
+                ContentUnavailableView(
+                    "Search OneTake",
+                    systemImage: "magnifyingglass",
+                    description: Text("Find casting calls, roles, characters, or dialogue lines.")
+                )
+            } else if !hasResults {
+                ContentUnavailableView(
+                    "No results for \"\(trimmedQuery)\"",
+                    systemImage: "magnifyingglass",
+                    description: Text("Try searching for a project, role, character, or dialogue line.")
+                )
+            }
+        }
     }
 }
 
