@@ -1,7 +1,6 @@
 import SwiftUI
 import SwiftData
 import PhotosUI
-import AVFoundation
 
 enum PackageDeliverable: String, CaseIterable, Identifiable {
     case headshots
@@ -83,6 +82,8 @@ struct AuditionPackageHubView: View {
     // Transient confirmation banners
     @State private var bannerMessage: String?
     @State private var bannerColor: Color = Theme.Colors.successGreen
+    @State private var bannerTask: Task<Void, Never>?
+    @State private var pendingImportedVideoPath: String?
 
     // MARK: - Deliverables State
 
@@ -178,8 +179,9 @@ struct AuditionPackageHubView: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Theme.Colors.textSecondary)
-                        .frame(width: 32, height: 32)
+                        .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
                 }
+                .accessibilityLabel("Close")
             }
 
             ToolbarItem(placement: .topBarTrailing) {
@@ -199,9 +201,14 @@ struct AuditionPackageHubView: View {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(Theme.Colors.textSecondary)
-                        .frame(width: 32, height: 32)
+                        .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
                 }
+                .accessibilityLabel("Audition options")
             }
+        }
+        .onDisappear {
+            bannerTask?.cancel()
+            cleanupPendingImportedVideoIfUnused()
         }
         .confirmationDialog(
             "Delete Audition?",
@@ -240,7 +247,7 @@ struct AuditionPackageHubView: View {
             PackageValidationAndExportView(audition: audition)
         }
         // Issue 8: Direct Review FullScreenCover
-        .fullScreenCover(item: $activeReviewTarget) { target in
+        .fullScreenCover(item: $activeReviewTarget, onDismiss: { cleanupPendingImportedVideoIfUnused() }) { target in
             switch target {
             case .headshots(let assets):
                 HeadshotReviewView(
@@ -254,47 +261,32 @@ struct AuditionPackageHubView: View {
                     showBanner("Headshots updated successfully!")
                 }
             case .slate(let take):
+                let resolvedURL = MediaStorage.resolveURL(for: take.filePath) ?? URL(fileURLWithPath: take.filePath)
                 TakeReviewView(
                     audition: audition,
-                    rawVideoURL: URL(fileURLWithPath: take.filePath),
+                    rawVideoURL: resolvedURL,
                     totalDurationSeconds: take.durationSeconds,
                     isSlate: true,
                     qualityMetrics: PreTakeQualityMetrics()
                 ) { approvedTake in
+                    applyApprovedTake(approvedTake, replacing: take, isSlate: true)
                     activeReviewTarget = nil
-                    audition.slateTakes.append(approvedTake)
-                    audition.selectedSlateTakeID = approvedTake.id
-                    for idx in audition.requirements.indices {
-                        if audition.requirements[idx].title.lowercased().contains("slate") {
-                            audition.requirements[idx].isCompleted = true
-                        }
-                    }
-                    try? appState.modelContext?.save()
-                    appState.loadData()
                     showBanner("Slate video saved!")
                 } onRetake: {
                     activeReviewTarget = nil
                     showingSlateSetup = true
                 }
             case .audition(let take):
+                let resolvedURL = MediaStorage.resolveURL(for: take.filePath) ?? URL(fileURLWithPath: take.filePath)
                 TakeReviewView(
                     audition: audition,
-                    rawVideoURL: URL(fileURLWithPath: take.filePath),
+                    rawVideoURL: resolvedURL,
                     totalDurationSeconds: take.durationSeconds,
                     isSlate: false,
                     qualityMetrics: PreTakeQualityMetrics()
                 ) { approvedTake in
+                    applyApprovedTake(approvedTake, replacing: take, isSlate: false)
                     activeReviewTarget = nil
-                    audition.auditionTakes.append(approvedTake)
-                    audition.selectedAuditionTakeID = approvedTake.id
-                    for idx in audition.requirements.indices {
-                        let lower = audition.requirements[idx].title.lowercased()
-                        if lower.contains("audition") || lower.contains("self-tape") {
-                            audition.requirements[idx].isCompleted = true
-                        }
-                    }
-                    try? appState.modelContext?.save()
-                    appState.loadData()
                     showBanner("Audition take saved!")
                 } onRetake: {
                     activeReviewTarget = nil
@@ -338,8 +330,8 @@ struct AuditionPackageHubView: View {
                 HeadshotReviewView(
                     audition: audition,
                     initialFront: importedHeadshotImages.indices.contains(0) ? importedHeadshotImages[0] : nil,
-                    initialLeft: importedHeadshotImages.indices.contains(1) ? importedHeadshotImages[1] : (importedHeadshotImages.indices.contains(0) ? importedHeadshotImages[0] : nil),
-                    initialRight: importedHeadshotImages.indices.contains(2) ? importedHeadshotImages[2] : (importedHeadshotImages.indices.contains(1) ? importedHeadshotImages[1] : nil)
+                    initialLeft: importedHeadshotImages.indices.contains(1) ? importedHeadshotImages[1] : nil,
+                    initialRight: importedHeadshotImages.indices.contains(2) ? importedHeadshotImages[2] : nil
                 ) {
                     showingHeadshotImportReview = false
                     importedHeadshotImages = []
@@ -730,6 +722,61 @@ struct AuditionPackageHubView: View {
         }
     }
 
+    // MARK: - Review Approval & Import Cleanup
+
+    private func applyApprovedTake(_ approvedTake: VideoTake, replacing originalTake: VideoTake, isSlate: Bool) {
+        var updatedTake = approvedTake
+        updatedTake.filePath = MediaStorage.storedRelativePath(for: approvedTake.filePath)
+        let oldRelPath = MediaStorage.storedRelativePath(for: originalTake.filePath)
+
+        if isSlate {
+            if let index = audition.slateTakes.firstIndex(where: { $0.id == originalTake.id }) {
+                audition.slateTakes[index] = updatedTake
+            } else {
+                audition.slateTakes.append(updatedTake)
+            }
+            audition.selectedSlateTakeID = updatedTake.id
+            for idx in audition.requirements.indices {
+                if audition.requirements[idx].title.lowercased().contains("slate") {
+                    audition.requirements[idx].isCompleted = true
+                }
+            }
+        } else {
+            if let index = audition.auditionTakes.firstIndex(where: { $0.id == originalTake.id }) {
+                audition.auditionTakes[index] = updatedTake
+            } else {
+                audition.auditionTakes.append(updatedTake)
+            }
+            audition.selectedAuditionTakeID = updatedTake.id
+            for idx in audition.requirements.indices {
+                let lower = audition.requirements[idx].title.lowercased()
+                if lower.contains("audition") || lower.contains("self-tape") {
+                    audition.requirements[idx].isCompleted = true
+                }
+            }
+        }
+
+        if oldRelPath != updatedTake.filePath {
+            MediaStorage.removeFile(at: originalTake.filePath)
+        }
+        if pendingImportedVideoPath == oldRelPath {
+            pendingImportedVideoPath = nil
+        }
+
+        appState.saveChanges()
+    }
+
+    private func cleanupPendingImportedVideoIfUnused() {
+        guard let pendingPath = pendingImportedVideoPath else { return }
+        pendingImportedVideoPath = nil
+        let normalized = MediaStorage.storedRelativePath(for: pendingPath)
+        let isUsedInTakes = (audition.slateTakes + audition.auditionTakes)
+            .contains { MediaStorage.storedRelativePath(for: $0.filePath) == normalized }
+        if !isUsedInTakes {
+            MediaStorage.removeFile(at: normalized)
+        }
+    }
+
     // MARK: - Upfront Import Loaders
 
     private func loadUpfrontHeadshotPhotos(_ items: [PhotosPickerItem]) {
@@ -742,153 +789,99 @@ struct AuditionPackageHubView: View {
                 }
             }
 
-            guard !images.isEmpty else { return }
+            guard !images.isEmpty else {
+                await MainActor.run {
+                    self.selectedHeadshotPhotoItems = []
+                    self.showBanner("Could not load selected photos.", isSuccess: false)
+                }
+                return
+            }
 
             await MainActor.run {
                 self.importedHeadshotImages = images
                 self.selectedHeadshotPhotoItems = []
                 self.showingHeadshotImportReview = true
+                if images.count < 3 {
+                    self.showBanner("Selected \(images.count) of 3 photos — pick remaining angles in Review.", isSuccess: false)
+                }
             }
         }
     }
 
     private func loadUpfrontSlateVideo(_ item: PhotosPickerItem) {
-        Task {
-            if let movie = try? await item.loadTransferable(type: MovieTransferable.self) {
-                let asset = AVURLAsset(url: movie.url)
-                let dur = (try? await asset.load(.duration).seconds) ?? 15.0
-                let take = VideoTake(
-                    title: "Imported Slate Take",
-                    filePath: movie.url.path,
-                    durationSeconds: dur,
-                    fileSizeMB: 10.0,
-                    trimEndSeconds: dur
-                )
-                await MainActor.run {
-                    self.activeReviewTarget = .slate(take)
-                }
-            }
-        }
+        loadUpfrontVideo(item, isSlate: true)
     }
 
     private func loadUpfrontAuditionVideo(_ item: PhotosPickerItem) {
+        loadUpfrontVideo(item, isSlate: false)
+    }
+
+    private func loadUpfrontVideo(_ item: PhotosPickerItem, isSlate: Bool) {
         Task {
-            if let movie = try? await item.loadTransferable(type: MovieTransferable.self) {
-                let asset = AVURLAsset(url: movie.url)
-                let dur = (try? await asset.load(.duration).seconds) ?? 30.0
-                let take = VideoTake(
-                    title: "Imported Audition Take",
-                    filePath: movie.url.path,
-                    durationSeconds: dur,
-                    fileSizeMB: 25.0,
-                    trimEndSeconds: dur
-                )
+            guard let movie = try? await item.loadTransferable(type: MovieTransferable.self) else {
                 await MainActor.run {
-                    self.activeReviewTarget = .audition(take)
+                    showBanner("Could not import video.", isSuccess: false)
                 }
+                return
             }
-        }
-    }
+            defer { try? FileManager.default.removeItem(at: movie.url) }
 
-    // MARK: - Export Summary Sheet
+            let ext = movie.url.pathExtension.isEmpty ? "mp4" : movie.url.pathExtension
+            let kind = isSlate ? "Slate" : "Audition"
+            let relPath = "Takes_\(audition.id)/Imported_\(kind)_\(UUID().uuidString.prefix(6)).\(ext)"
 
-    private var exportSummarySheet: some View {
-        NavigationStack {
-            VStack(spacing: 24) {
-                Image(systemName: "shippingbox.fill")
-                    .font(.system(size: 54))
-                    .foregroundStyle(Theme.Colors.accent)
-                    .padding(.top, 24)
-
-                VStack(spacing: 6) {
-                    Text("Audition Submission Package")
-                        .font(Theme.Typography.screenTitle)
-                        .foregroundStyle(Theme.Colors.textPrimary)
-
-                    Text("\(audition.projectName) • \(audition.roleName)")
-                        .font(Theme.Typography.bodyRegular)
-                        .foregroundStyle(Theme.Colors.textSecondary)
-                }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    exportItemRow(
-                        title: "3 Headshots",
-                        subtitle: audition.isHeadshotsReady ? "All angles ready (\(audition.validationRules.requiredHeadshotRatio.rawValue))" : "Incomplete",
-                        isReady: audition.isHeadshotsReady
-                    )
-                    exportItemRow(
-                        title: "Slate Video",
-                        subtitle: audition.isSlateReady ? "Trimmed & sound cleaned" : "Not recorded",
-                        isReady: audition.isSlateReady
-                    )
-                    exportItemRow(
-                        title: "Audition Self-Tape",
-                        subtitle: audition.isAuditionReady ? "Final selected take" : "Not recorded",
-                        isReady: audition.isAuditionReady
-                    )
-                }
-                .padding()
-                .cardStyle()
-                .padding(.horizontal, 16)
-
-                Spacer()
-
-                VStack(spacing: 12) {
-                    Button {
-                        showingPackageValidation = false
-                        withAnimation {
-                            appState.updateAuditionStatus(audition, to: .sent)
-                            showBanner("Audition marked as Sent!")
-                        }
-                    } label: {
-                        Text("Mark Audition as Sent")
-                            .primaryCapsuleButton()
+            do {
+                let storedRelPath = try MediaStorage.copyItem(from: movie.url, toRelativePath: relPath)
+                guard let persistedURL = MediaStorage.resolveURL(for: storedRelPath) else {
+                    await MainActor.run {
+                        showBanner("Could not save imported video.", isSuccess: false)
                     }
-
-                    ShareLink(item: "Audition Package for \(audition.projectName) - \(audition.roleName)") {
-                        Text("Share via AirDrop or Mail")
-                            .secondaryLavenderButton()
-                    }
+                    return
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 24)
-            }
-            .navigationTitle("Package Summary")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { showingPackageValidation = false }
+
+                let metadata = await PackageExportHelper.inspectVideoMetadata(at: persistedURL)
+                let duration = metadata?.durationSeconds ?? 0
+                let sizeMB = metadata?.fileSizeMB ?? MediaStorage.fileSizeMB(at: storedRelPath)
+                let aspectRatio = metadata?.aspectRatioString ?? "16:9"
+                let isPortrait = metadata?.isPortrait ?? false
+
+                let take = VideoTake(
+                    title: "Imported \(kind) Take",
+                    filePath: storedRelPath,
+                    durationSeconds: duration,
+                    fileSizeMB: sizeMB,
+                    aspectRatioString: aspectRatio,
+                    isPortrait: isPortrait,
+                    trimEndSeconds: duration
+                )
+
+                await MainActor.run {
+                    self.pendingImportedVideoPath = storedRelPath
+                    self.activeReviewTarget = isSlate ? .slate(take) : .audition(take)
+                }
+            } catch {
+                await MainActor.run {
+                    showBanner("Video import failed: \(error.localizedDescription)", isSuccess: false)
                 }
             }
-        }
-        .presentationDetents([.medium, .large])
-    }
-
-    private func exportItemRow(title: String, subtitle: String, isReady: Bool) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: isReady ? "checkmark.circle.fill" : "circle.dashed")
-                .foregroundStyle(isReady ? Theme.Colors.successGreen : Theme.Colors.textSecondary)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(Theme.Typography.cardTitle)
-                    .foregroundStyle(Theme.Colors.textPrimary)
-                Text(subtitle)
-                    .font(Theme.Typography.captionBadge)
-                    .foregroundStyle(Theme.Colors.textSecondary)
-            }
-            Spacer()
         }
     }
 
     // MARK: - Banner Trigger
 
     private func showBanner(_ message: String, isSuccess: Bool = true) {
-        bannerMessage = message
-        bannerColor = isSuccess ? Theme.Colors.successGreen : Theme.Colors.warningAmber
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-            withAnimation {
-                bannerMessage = nil
+        bannerTask?.cancel()
+        withAnimation {
+            bannerMessage = message
+            bannerColor = isSuccess ? Theme.Colors.successGreen : Theme.Colors.warningAmber
+        }
+        bannerTask = Task {
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation {
+                    bannerMessage = nil
+                }
             }
         }
     }
