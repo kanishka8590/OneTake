@@ -1,0 +1,328 @@
+import AVFoundation
+import Observation
+import SwiftData
+import XCTest
+@testable import OneTake
+
+@MainActor
+final class AppStateAndSettingsTests: XCTestCase {
+
+    private var createdSuiteNames: [String] = []
+    private var createdDirectories: [URL] = []
+
+    override func tearDown() {
+        for suiteName in createdSuiteNames {
+            UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        }
+        createdSuiteNames.removeAll()
+
+        for dir in createdDirectories {
+            try? FileManager.default.removeItem(at: dir)
+        }
+        createdDirectories.removeAll()
+
+        super.tearDown()
+    }
+
+    private func makeIsolatedDefaults() -> UserDefaults {
+        let suiteName = "com.onetake.tests.\(UUID().uuidString)"
+        createdSuiteNames.append(suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return defaults
+    }
+
+    private func makeInMemoryContainer() throws -> ModelContainer {
+        let schema = Schema([
+            UserProfile.self,
+            Audition.self,
+            PracticeScript.self
+        ])
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        return try ModelContainer(for: schema, configurations: [config])
+    }
+
+    private func makeIsolatedAppState() throws -> (AppState, ModelContainer, UserDefaults) {
+        let defaults = makeIsolatedDefaults()
+        let settings = AppSettings(defaults: defaults)
+        let state = AppState(settings: settings, defaults: defaults)
+        let container = try makeInMemoryContainer()
+        state.configure(with: container.mainContext)
+        return (state, container, defaults)
+    }
+
+    // MARK: - AppSettings Tests
+
+    private nonisolated final class ObservationFlag: @unchecked Sendable {
+        var fired = false
+    }
+
+    func testAppSettingsObservableTrackingPersistenceAndReset() {
+        let defaults = makeIsolatedDefaults()
+        let settings = AppSettings(defaults: defaults)
+
+        let countdownFlag = ObservationFlag()
+        withObservationTracking {
+            _ = settings.countdownSeconds
+        } onChange: {
+            countdownFlag.fired = true
+        }
+
+        settings.countdownSeconds = 5
+        XCTAssertTrue(countdownFlag.fired, "Expected @Observable tracking to fire on countdownSeconds change")
+
+        let mirrorFlag = ObservationFlag()
+        withObservationTracking {
+            _ = settings.mirrorFrontCamera
+        } onChange: {
+            mirrorFlag.fired = true
+        }
+
+        settings.mirrorFrontCamera = false
+        XCTAssertTrue(mirrorFlag.fired, "Expected @Observable tracking to fire on mirrorFrontCamera change")
+
+        settings.cueTriggerMode = .fixedDelay
+        settings.videoQuality = .p720
+        settings.notifyAuditions = false
+        settings.notifyProductUpdates = true
+
+        // Verify persistence across a fresh AppSettings instance reading the same defaults.
+        let reloaded = AppSettings(defaults: defaults)
+        XCTAssertEqual(reloaded.countdownSeconds, 5)
+        XCTAssertFalse(reloaded.mirrorFrontCamera)
+        XCTAssertEqual(reloaded.cueTriggerMode, .fixedDelay)
+        XCTAssertEqual(reloaded.videoQuality, .p720)
+        XCTAssertFalse(reloaded.notifyAuditions)
+        XCTAssertTrue(reloaded.notifyProductUpdates)
+        XCTAssertEqual(defaults.integer(forKey: "onetake.countdownSeconds"), 5)
+
+        // Reset restores defaults and clears "onetake.*" setting keys.
+        reloaded.resetToDefaults()
+        XCTAssertEqual(reloaded.countdownSeconds, 3)
+        XCTAssertTrue(reloaded.mirrorFrontCamera)
+        XCTAssertEqual(reloaded.cueTriggerMode, .afterMyLine)
+        XCTAssertEqual(reloaded.videoQuality, .p1080)
+        XCTAssertTrue(reloaded.notifyAuditions)
+        XCTAssertFalse(reloaded.notifyProductUpdates)
+        XCTAssertNil(defaults.object(forKey: "onetake.countdownSeconds"))
+        XCTAssertNil(defaults.object(forKey: "onetake.mirrorFrontCamera"))
+        XCTAssertNil(defaults.object(forKey: "onetake.cueTriggerModeRaw"))
+        XCTAssertNil(defaults.object(forKey: "onetake.videoQualityRaw"))
+    }
+
+    // MARK: - UserProfile Deduplication Tests
+
+    func testCreateOrUpdateProfileAfterLogoutDoesNotCreateDuplicateRows() throws {
+        let (state, container, _) = try makeIsolatedAppState()
+
+        state.createOrUpdateProfile(
+            name: "Actor One",
+            email: "actor1@example.com",
+            height: "5'9\"",
+            age: 28,
+            basedIn: "Los Angeles"
+        )
+        XCTAssertEqual(state.currentUser?.name, "Actor One")
+
+        state.logout()
+        XCTAssertNil(state.currentUser)
+
+        state.createOrUpdateProfile(
+            name: "Actor Updated",
+            email: "updated@example.com",
+            height: "5'10\"",
+            age: 29,
+            basedIn: "New York",
+            representation: "Acme Talent"
+        )
+
+        let fetchedProfiles = try container.mainContext.fetch(FetchDescriptor<UserProfile>())
+        XCTAssertEqual(fetchedProfiles.count, 1)
+        XCTAssertEqual(fetchedProfiles.first?.name, "Actor Updated")
+        XCTAssertEqual(fetchedProfiles.first?.email, "updated@example.com")
+        XCTAssertEqual(state.currentUser?.representation, "Acme Talent")
+    }
+
+    func testLoadDataDeduplicatesExistingProfiles() throws {
+        let defaults = makeIsolatedDefaults()
+        let settings = AppSettings(defaults: defaults)
+        let state = AppState(settings: settings, defaults: defaults)
+        let container = try makeInMemoryContainer()
+
+        let first = UserProfile(name: "Primary", email: "primary@example.com")
+        let duplicate = UserProfile(name: "Duplicate", email: "dup@example.com")
+        container.mainContext.insert(first)
+        container.mainContext.insert(duplicate)
+        try container.mainContext.save()
+
+        state.configure(with: container.mainContext)
+
+        let remaining = try container.mainContext.fetch(FetchDescriptor<UserProfile>())
+        XCTAssertEqual(remaining.count, 1)
+        XCTAssertNotNil(state.currentUser)
+        XCTAssertNil(state.lastPersistenceError)
+    }
+
+    // MARK: - Demo Mode Tests
+
+    func testEnterAndExitDemoModePreservesUserCreatedRecords() throws {
+        let (state, container, defaults) = try makeIsolatedAppState()
+
+        let userAudition = Audition(
+            projectName: "User Feature",
+            roleName: "Lead",
+            recipientEmail: "casting@userfilm.com"
+        )
+        let userScript = PracticeScript(
+            title: "User Monologue",
+            rawText: "ALEX\nThis is my own scene."
+        )
+        state.addAudition(userAudition)
+        state.addPracticeScript(userScript)
+
+        state.enterDemoMode(generateMedia: false)
+
+        XCTAssertTrue(state.isDemoMode)
+        XCTAssertTrue(defaults.bool(forKey: "onetake.isDemoMode"))
+        XCTAssertTrue(state.hasCompletedOnboarding)
+        XCTAssertTrue(state.isAuthenticated)
+        XCTAssertEqual(state.currentUser?.email, MockData.sampleUser.email)
+        XCTAssertTrue(state.auditions.contains(where: { $0.id == MockData.heerRanjhaID }))
+        XCTAssertTrue(state.auditions.contains(where: { $0.id == MockData.theLastSummerID }))
+        XCTAssertTrue(state.auditions.contains(where: { $0.id == userAudition.id }))
+        XCTAssertTrue(state.practiceScripts.contains(where: { $0.id == MockData.noahAndAllieID }))
+        XCTAssertTrue(state.practiceScripts.contains(where: { $0.id == MockData.nainaID }))
+        XCTAssertTrue(state.practiceScripts.contains(where: { $0.id == userScript.id }))
+
+        // Re-entering demo mode should not duplicate deterministic demo rows.
+        state.enterDemoMode(generateMedia: false)
+        let allAuditions = try container.mainContext.fetch(FetchDescriptor<Audition>())
+        let allScripts = try container.mainContext.fetch(FetchDescriptor<PracticeScript>())
+        XCTAssertEqual(allAuditions.count, 3)
+        XCTAssertEqual(allScripts.count, 3)
+
+        // Exiting demo mode removes ONLY demo records and preserves user records.
+        state.exitDemoMode()
+
+        XCTAssertFalse(state.isDemoMode)
+        XCTAssertFalse(defaults.bool(forKey: "onetake.isDemoMode"))
+        XCTAssertNil(state.currentUser)
+        XCTAssertEqual(state.auditions.map(\.id), [userAudition.id])
+        XCTAssertEqual(state.practiceScripts.map(\.id), [userScript.id])
+    }
+
+    // MARK: - File Cleanup & Delete All Local Data Tests
+
+    func testDeletePracticeScriptRemovesAudioFilesFromDisk() throws {
+        let (state, container, _) = try makeIsolatedAppState()
+        defer { withExtendedLifetime(container) {} }
+
+        let folderName = "TestPracticeAudio_\(UUID().uuidString)"
+        let folderURL = MediaStorage.documentsDirectory.appendingPathComponent(folderName, isDirectory: true)
+        createdDirectories.append(folderURL)
+
+        let cueRelPath = try MediaStorage.saveData(
+            Data([0x01, 0x02, 0x03]),
+            relativePath: "\(folderName)/cue.m4a"
+        )
+        let sessionRelPath = try MediaStorage.saveData(
+            Data([0x04, 0x05, 0x06]),
+            relativePath: "\(folderName)/session.m4a"
+        )
+
+        XCTAssertTrue(MediaStorage.fileExists(at: cueRelPath))
+        XCTAssertTrue(MediaStorage.fileExists(at: sessionRelPath))
+
+        let script = PracticeScript(
+            title: "Cleanup Test Script",
+            rawText: "A\nHello",
+            cueLines: [
+                CueLine(orderIndex: 0, speaker: "B", cueText: "Hi", audioFilePath: cueRelPath)
+            ],
+            sessions: [
+                PracticeSession(sessionNumber: 1, audioFilePath: sessionRelPath)
+            ]
+        )
+        state.addPracticeScript(script)
+        state.deletePracticeScript(script)
+
+        XCTAssertFalse(MediaStorage.fileExists(at: cueRelPath))
+        XCTAssertFalse(MediaStorage.fileExists(at: sessionRelPath))
+        XCTAssertTrue(state.practiceScripts.isEmpty)
+    }
+
+    func testDeleteAllLocalDataRemovesAllModelsFilesAndResetsSettings() throws {
+        let (state, container, defaults) = try makeIsolatedAppState()
+
+        let folderName = "TestDeleteAll_\(UUID().uuidString)"
+        let folderURL = MediaStorage.documentsDirectory.appendingPathComponent(folderName, isDirectory: true)
+        createdDirectories.append(folderURL)
+
+        let takeRelPath = try MediaStorage.saveData(
+            Data(repeating: 0xAA, count: 1024),
+            relativePath: "\(folderName)/take.mp4"
+        )
+        let sessionRelPath = try MediaStorage.saveData(
+            Data(repeating: 0xBB, count: 512),
+            relativePath: "\(folderName)/practice.m4a"
+        )
+
+        state.createOrUpdateProfile(name: "Test Actor", email: "test@example.com")
+        state.settings.countdownSeconds = 10
+        state.settings.mirrorFrontCamera = false
+        state.enterDemoMode(generateMedia: false)
+
+        let customAudition = Audition(
+            projectName: "Custom Project",
+            roleName: "Hero",
+            slateTakes: [VideoTake(title: "Slate", filePath: takeRelPath, durationSeconds: 2, fileSizeMB: 0.001)]
+        )
+        let customScript = PracticeScript(
+            title: "Custom Script",
+            sessions: [PracticeSession(sessionNumber: 1, audioFilePath: sessionRelPath)]
+        )
+        state.addAudition(customAudition)
+        state.addPracticeScript(customScript)
+
+        state.deleteAllLocalData()
+
+        XCTAssertFalse(MediaStorage.fileExists(at: takeRelPath))
+        XCTAssertFalse(MediaStorage.fileExists(at: sessionRelPath))
+        XCTAssertFalse(state.isDemoMode)
+        XCTAssertEqual(state.cachedLocalStorageMB, 0)
+        XCTAssertNil(state.currentUser)
+        XCTAssertTrue(state.auditions.isEmpty)
+        XCTAssertTrue(state.practiceScripts.isEmpty)
+        XCTAssertEqual(state.settings.countdownSeconds, 3)
+        XCTAssertTrue(state.settings.mirrorFrontCamera)
+        XCTAssertNil(defaults.object(forKey: "onetake.countdownSeconds"))
+
+        XCTAssertTrue(try container.mainContext.fetch(FetchDescriptor<UserProfile>()).isEmpty)
+        XCTAssertTrue(try container.mainContext.fetch(FetchDescriptor<Audition>()).isEmpty)
+        XCTAssertTrue(try container.mainContext.fetch(FetchDescriptor<PracticeScript>()).isEmpty)
+    }
+
+    // MARK: - DemoMediaGenerator Tests
+
+    func testWriteQuickSimulatedClipCreatesPlayableMP4() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DemoMediaGeneratorTests_\(UUID().uuidString)", isDirectory: true)
+        createdDirectories.append(tempDir)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        let clipURL = tempDir.appendingPathComponent("simulated.mp4")
+        let created = await DemoMediaGenerator.writeQuickSimulatedClip(
+            to: clipURL,
+            title: "Test Slate",
+            subtitle: "Avery Vance",
+            durationSeconds: 1.2
+        )
+
+        XCTAssertTrue(created)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: clipURL.path))
+
+        let asset = AVURLAsset(url: clipURL)
+        let tracks = try await asset.load(.tracks)
+        XCTAssertFalse(tracks.isEmpty)
+    }
+}

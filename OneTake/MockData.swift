@@ -3,20 +3,38 @@ import SwiftData
 
 enum MockData {
 
+    // MARK: - Deterministic Demo IDs
+
+    static let heerRanjhaID = UUID(uuidString: "D0000001-0001-4000-8000-000000000001")!
+    static let theLastSummerID = UUID(uuidString: "D0000001-0001-4000-8000-000000000002")!
+    static let noahAndAllieID = UUID(uuidString: "D0000002-0001-4000-8000-000000000001")!
+    static let nainaID = UUID(uuidString: "D0000002-0001-4000-8000-000000000002")!
+
+    static let demoAuditionIDs: Set<UUID> = [heerRanjhaID, theLastSummerID]
+    static let demoScriptIDs: Set<UUID> = [noahAndAllieID, nainaID]
+
+    static func isDemoAudition(_ audition: Audition) -> Bool {
+        demoAuditionIDs.contains(audition.id)
+    }
+
+    static func isDemoScript(_ script: PracticeScript) -> Bool {
+        demoScriptIDs.contains(script.id)
+    }
+
     // MARK: - User Profile
 
     static var sampleUser: UserProfile {
         let user = UserProfile()
-        user.name = "Kusha Sharma"
-        user.email = "kusha.sharma@gmail.com"
-        user.height = "5'6\""
+        user.name = "Avery Vance"
+        user.email = "demo@onetake.app"
+        user.height = "5'8\""
         user.age = 27
-        user.basedIn = "Mumbai, India"
-        user.representation = "Self-represented"
+        user.basedIn = "Mumbai / New York"
+        user.representation = "Bramwell Talent"
         user.previousWork = [
-            "Campus Diaries (MX Player)",
-            "Half CA (YouTube)",
-            "Theatre: The Glass Menagerie"
+            "The Glass Menagerie (Stage)",
+            "Midnight Dispatch (Pilot)",
+            "Commercial Spot — Atlas Running"
         ]
         return user
     }
@@ -28,7 +46,7 @@ enum MockData {
     }
 
     static var heerRanjha: Audition {
-        let a = Audition()
+        let a = Audition(id: heerRanjhaID)
         a.projectName = "Heer Ranjha"
         a.productionType = ProductionType.featureFilm.rawValue
         a.roleName = "Heer"
@@ -61,7 +79,7 @@ enum MockData {
             maxSlateSeconds: 30.0,
             maxClipSeconds: 180.0,
             requiredPortrait: false,
-            fileNamePattern: "KushaSharma_Heer",
+            fileNamePattern: "AveryVance_Heer",
             maxPerClipSizeMB: 100.0
         )
         a.cueLines = [
@@ -77,7 +95,7 @@ enum MockData {
     }
 
     static var theLastSummer: Audition {
-        let a = Audition()
+        let a = Audition(id: theLastSummerID)
         a.projectName = "The Last Summer"
         a.productionType = ProductionType.series.rawValue
         a.roleName = "Meera"
@@ -123,7 +141,7 @@ enum MockData {
     }
 
     static var noahAndAllie: PracticeScript {
-        let s = PracticeScript()
+        let s = PracticeScript(id: noahAndAllieID)
         s.title = "Noah & Allie"
         s.languageRaw = ScriptLanguage.english.rawValue
         s.rawText = """
@@ -164,7 +182,7 @@ enum MockData {
     }
 
     static var naina: PracticeScript {
-        let s = PracticeScript()
+        let s = PracticeScript(id: nainaID)
         s.title = "Naina"
         s.languageRaw = ScriptLanguage.hindi.rawValue
         s.rawText = """
@@ -193,7 +211,12 @@ enum MockData {
 
     @MainActor
     static var sampleAppState: AppState {
-        let state = AppState()
+        let previewDefaults = UserDefaults(suiteName: "com.onetake.preview") ?? .standard
+        let state = AppState(
+            settings: AppSettings(defaults: previewDefaults),
+            defaults: previewDefaults
+        )
+        state.isDemoMode = true
         state.currentUser = sampleUser
         state.auditions = sampleAuditions
         state.practiceScripts = sampleScripts

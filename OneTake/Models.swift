@@ -691,20 +691,38 @@ final class PracticeScript {
 
 // MARK: - AppSettings (UserDefaults-backed)
 
+@MainActor
 @Observable
 final class AppSettings {
 
-    private let defaults = UserDefaults.standard
-    private let prefix = "onetake."
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private let prefix = "onetake."
+
+    @ObservationIgnored private static let settingKeys: [String] = [
+        "countdownSeconds",
+        "autoTrimSilence",
+        "noiseReductionDefault",
+        "cueTriggerModeRaw",
+        "cueDelaySeconds",
+        "cueVolume",
+        "teleprompterTextSizeRaw",
+        "teleprompterScrollSpeed",
+        "mirrorFrontCamera",
+        "videoQualityRaw",
+        "frameRate",
+        "notifyAuditions",
+        "notifySubmissions",
+        "notifyPractice",
+        "notifyProductUpdates"
+    ]
 
     // MARK: Private Helpers
 
     private func key(_ name: String) -> String { prefix + name }
 
-    private func getValue<T>(_ name: String, fallback: T) -> T {
-        let k = key(name)
-        guard defaults.object(forKey: k) != nil else { return fallback }
-        let obj = defaults.object(forKey: k)
+    private static func readValue<T>(_ name: String, from defaults: UserDefaults, prefix: String, fallback: T) -> T {
+        let k = prefix + name
+        guard let obj = defaults.object(forKey: k) else { return fallback }
         return (obj as? T) ?? fallback
     }
 
@@ -712,28 +730,68 @@ final class AppSettings {
         defaults.set(value, forKey: key(name))
     }
 
+    // MARK: Init
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        let p = "onetake."
+        self.countdownSeconds = Self.readValue("countdownSeconds", from: defaults, prefix: p, fallback: 3)
+        self.autoTrimSilence = Self.readValue("autoTrimSilence", from: defaults, prefix: p, fallback: false)
+        self.noiseReductionDefault = Self.readValue("noiseReductionDefault", from: defaults, prefix: p, fallback: false)
+        self.cueTriggerModeRaw = Self.readValue("cueTriggerModeRaw", from: defaults, prefix: p, fallback: CueTriggerMode.afterMyLine.rawValue)
+        self.cueDelaySeconds = Self.readValue("cueDelaySeconds", from: defaults, prefix: p, fallback: 2.0)
+        self.cueVolume = Self.readValue("cueVolume", from: defaults, prefix: p, fallback: 0.8)
+        self.teleprompterTextSizeRaw = Self.readValue("teleprompterTextSizeRaw", from: defaults, prefix: p, fallback: TeleprompterTextSize.regular.rawValue)
+        self.teleprompterScrollSpeed = Self.readValue("teleprompterScrollSpeed", from: defaults, prefix: p, fallback: 1.0)
+        self.mirrorFrontCamera = Self.readValue("mirrorFrontCamera", from: defaults, prefix: p, fallback: true)
+        self.videoQualityRaw = Self.readValue("videoQualityRaw", from: defaults, prefix: p, fallback: VideoQuality.p1080.rawValue)
+        self.frameRate = Self.readValue("frameRate", from: defaults, prefix: p, fallback: 30)
+        self.notifyAuditions = Self.readValue("notifyAuditions", from: defaults, prefix: p, fallback: true)
+        self.notifySubmissions = Self.readValue("notifySubmissions", from: defaults, prefix: p, fallback: true)
+        self.notifyPractice = Self.readValue("notifyPractice", from: defaults, prefix: p, fallback: true)
+        self.notifyProductUpdates = Self.readValue("notifyProductUpdates", from: defaults, prefix: p, fallback: false)
+    }
+
+    func resetToDefaults() {
+        countdownSeconds = 3
+        autoTrimSilence = false
+        noiseReductionDefault = false
+        cueTriggerModeRaw = CueTriggerMode.afterMyLine.rawValue
+        cueDelaySeconds = 2.0
+        cueVolume = 0.8
+        teleprompterTextSizeRaw = TeleprompterTextSize.regular.rawValue
+        teleprompterScrollSpeed = 1.0
+        mirrorFrontCamera = true
+        videoQualityRaw = VideoQuality.p1080.rawValue
+        frameRate = 30
+        notifyAuditions = true
+        notifySubmissions = true
+        notifyPractice = true
+        notifyProductUpdates = false
+
+        for name in Self.settingKeys {
+            defaults.removeObject(forKey: key(name))
+        }
+    }
+
     // MARK: Recording
 
     var countdownSeconds: Int {
-        get { getValue("countdownSeconds", fallback: 3) }
-        set { setValue("countdownSeconds", value: newValue) }
+        didSet { setValue("countdownSeconds", value: countdownSeconds) }
     }
 
     var autoTrimSilence: Bool {
-        get { getValue("autoTrimSilence", fallback: false) }
-        set { setValue("autoTrimSilence", value: newValue) }
+        didSet { setValue("autoTrimSilence", value: autoTrimSilence) }
     }
 
     var noiseReductionDefault: Bool {
-        get { getValue("noiseReductionDefault", fallback: false) }
-        set { setValue("noiseReductionDefault", value: newValue) }
+        didSet { setValue("noiseReductionDefault", value: noiseReductionDefault) }
     }
 
     // MARK: Cue
 
     var cueTriggerModeRaw: String {
-        get { getValue("cueTriggerModeRaw", fallback: CueTriggerMode.afterMyLine.rawValue) }
-        set { setValue("cueTriggerModeRaw", value: newValue) }
+        didSet { setValue("cueTriggerModeRaw", value: cueTriggerModeRaw) }
     }
 
     var cueTriggerMode: CueTriggerMode {
@@ -742,20 +800,17 @@ final class AppSettings {
     }
 
     var cueDelaySeconds: Double {
-        get { getValue("cueDelaySeconds", fallback: 2.0) }
-        set { setValue("cueDelaySeconds", value: newValue) }
+        didSet { setValue("cueDelaySeconds", value: cueDelaySeconds) }
     }
 
     var cueVolume: Double {
-        get { getValue("cueVolume", fallback: 0.8) }
-        set { setValue("cueVolume", value: newValue) }
+        didSet { setValue("cueVolume", value: cueVolume) }
     }
 
     // MARK: Teleprompter
 
     var teleprompterTextSizeRaw: String {
-        get { getValue("teleprompterTextSizeRaw", fallback: TeleprompterTextSize.regular.rawValue) }
-        set { setValue("teleprompterTextSizeRaw", value: newValue) }
+        didSet { setValue("teleprompterTextSizeRaw", value: teleprompterTextSizeRaw) }
     }
 
     var teleprompterTextSize: TeleprompterTextSize {
@@ -764,20 +819,17 @@ final class AppSettings {
     }
 
     var teleprompterScrollSpeed: Double {
-        get { getValue("teleprompterScrollSpeed", fallback: 1.0) }
-        set { setValue("teleprompterScrollSpeed", value: newValue) }
+        didSet { setValue("teleprompterScrollSpeed", value: teleprompterScrollSpeed) }
     }
 
     // MARK: Camera
 
     var mirrorFrontCamera: Bool {
-        get { getValue("mirrorFrontCamera", fallback: true) }
-        set { setValue("mirrorFrontCamera", value: newValue) }
+        didSet { setValue("mirrorFrontCamera", value: mirrorFrontCamera) }
     }
 
     var videoQualityRaw: String {
-        get { getValue("videoQualityRaw", fallback: VideoQuality.p1080.rawValue) }
-        set { setValue("videoQualityRaw", value: newValue) }
+        didSet { setValue("videoQualityRaw", value: videoQualityRaw) }
     }
 
     var videoQuality: VideoQuality {
@@ -786,29 +838,24 @@ final class AppSettings {
     }
 
     var frameRate: Int {
-        get { getValue("frameRate", fallback: 30) }
-        set { setValue("frameRate", value: newValue) }
+        didSet { setValue("frameRate", value: frameRate) }
     }
 
     // MARK: Notifications
 
     var notifyAuditions: Bool {
-        get { getValue("notifyAuditions", fallback: true) }
-        set { setValue("notifyAuditions", value: newValue) }
+        didSet { setValue("notifyAuditions", value: notifyAuditions) }
     }
 
     var notifySubmissions: Bool {
-        get { getValue("notifySubmissions", fallback: true) }
-        set { setValue("notifySubmissions", value: newValue) }
+        didSet { setValue("notifySubmissions", value: notifySubmissions) }
     }
 
     var notifyPractice: Bool {
-        get { getValue("notifyPractice", fallback: true) }
-        set { setValue("notifyPractice", value: newValue) }
+        didSet { setValue("notifyPractice", value: notifyPractice) }
     }
 
     var notifyProductUpdates: Bool {
-        get { getValue("notifyProductUpdates", fallback: false) }
-        set { setValue("notifyProductUpdates", value: newValue) }
+        didSet { setValue("notifyProductUpdates", value: notifyProductUpdates) }
     }
 }
