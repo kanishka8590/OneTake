@@ -575,6 +575,84 @@ final class PhysicalDeviceAuditTests: XCTestCase {
         )
     }
 
+    // MARK: - 5. Practice & Casting New Test Suites (test/practice + test/casting)
+
+    func test05_AuditPracticeAndCastingFixturesOnPhysicalDevice() async throws {
+        let parser = CastingCallParserService.shared
+
+        // --- Practice & Audition Sides: 1p.txt, 2p.png, 3p.pdf ---
+        let p1Text = try String(contentsOf: try fixtureURL(named: "1p.txt"), encoding: .utf8)
+        let p1Script = PracticeScript(title: "Gilmore 1p", rawText: p1Text)
+        p1Script.cueLines = autoDetectCueLines(from: p1Text)
+        let p1Model = PracticeScriptModel(script: p1Script)
+        let p1Sides = parser.parseSidesText(p1Text, defaultRole: "LUKE")
+        print("===AUDIT_PRACTICE[1p.txt]=== speakers=\(Set(p1Model.lines.map(\.speaker)).sorted()) practiceCues=\(p1Script.cueLines.count) auditionCues=\(p1Sides.cueLines.count) tele=\(p1Sides.teleprompterLines.count)")
+        XCTAssertTrue(Set(p1Model.lines.map(\.speaker)).contains("LUKE"))
+        XCTAssertTrue(Set(p1Model.lines.map(\.speaker)).contains("LORELAI"))
+        XCTAssertGreaterThanOrEqual(p1Script.cueLines.count, 1)
+        XCTAssertGreaterThanOrEqual(p1Sides.cueLines.count, 1)
+        XCTAssertFalse(p1Sides.teleprompterLines.isEmpty)
+
+        let p2Img = try XCTUnwrap(UIImage(contentsOfFile: try fixtureURL(named: "2p.png").path))
+        let p2OCR = try await parser.extractRawText(from: p2Img)
+        let p2Script = PracticeScript(title: "Gilmore 2p", rawText: p2OCR)
+        p2Script.cueLines = autoDetectCueLines(from: p2OCR)
+        let p2Model = PracticeScriptModel(script: p2Script)
+        let p2Sides = parser.parseSidesText(p2OCR, defaultRole: "RORY")
+        print("===AUDIT_PRACTICE[2p.png]=== speakers=\(Set(p2Model.lines.map(\.speaker)).sorted()) practiceCues=\(p2Script.cueLines.count) auditionCues=\(p2Sides.cueLines.count) tele=\(p2Sides.teleprompterLines.count)")
+        XCTAssertTrue(Set(p2Model.lines.map(\.speaker)).contains("RORY"))
+        XCTAssertTrue(Set(p2Model.lines.map(\.speaker)).contains("PARIS"))
+        XCTAssertFalse(Set(p2Model.lines.map(\.speaker)).contains("SCENE END"))
+        XCTAssertGreaterThanOrEqual(p2Script.cueLines.count, 1)
+        XCTAssertGreaterThanOrEqual(p2Sides.cueLines.count, 1)
+
+        let p3Data = try Data(contentsOf: try fixtureURL(named: "3p.pdf"))
+        let p3Text = try await parser.extractRawText(fromPDF: p3Data)
+        let p3Script = PracticeScript(title: "Notebook 3p", rawText: p3Text)
+        p3Script.cueLines = autoDetectCueLines(from: p3Text)
+        let p3Model = PracticeScriptModel(script: p3Script)
+        let p3Sides = parser.parseSidesText(p3Text, defaultRole: "NOAH")
+        print("===AUDIT_PRACTICE[3p.pdf]=== speakers=\(Set(p3Model.lines.map(\.speaker)).sorted()) practiceCues=\(p3Script.cueLines.count) auditionCues=\(p3Sides.cueLines.count) tele=\(p3Sides.teleprompterLines.count)")
+        XCTAssertTrue(Set(p3Model.lines.map(\.speaker)).contains("NOAH"))
+        XCTAssertTrue(Set(p3Model.lines.map(\.speaker)).contains("ALLIE"))
+        XCTAssertGreaterThanOrEqual(p3Script.cueLines.count, 2)
+        XCTAssertGreaterThanOrEqual(p3Sides.cueLines.count, 2)
+
+        // --- Audition Casting Calls: 1c.txt, 2c.png, 3c.pdf ---
+        let c1Text = try String(contentsOf: try fixtureURL(named: "1c.txt"), encoding: .utf8)
+        let c1 = await parser.parseText(c1Text)
+        logParsed("1c.txt", parsed: c1)
+        XCTAssertEqual(c1.projectName, "Photon")
+        XCTAssertEqual(c1.productionType, .featureFilm)
+        XCTAssertEqual(c1.roleName, "Male Talent")
+        XCTAssertEqual(c1.recipientEmail.lowercased(), "casting@schoolofdrama.com")
+        XCTAssertFalse(c1.hasDetectedScript)
+        XCTAssertTrue(c1.requirements.contains(where: { $0.title == "Audition Self-Tape Take" }))
+        XCTAssertEqual(Calendar.current.component(.day, from: c1.deadline), 30)
+        XCTAssertEqual(Calendar.current.component(.month, from: c1.deadline), 11)
+
+        let c2Img = try XCTUnwrap(UIImage(contentsOfFile: try fixtureURL(named: "2c.png").path))
+        let c2 = try await parser.parseImage(c2Img)
+        logParsed("2c.png", parsed: c2)
+        XCTAssertEqual(c2.projectName, "Casting Bay - Casting Studio")
+        XCTAssertEqual(c2.roleName, "Male Lead")
+        XCTAssertEqual(c2.recipientEmail.lowercased(), "profilesforlead@gmail.com")
+        XCTAssertFalse(c2.hasDetectedScript)
+        XCTAssertTrue(c2.requirements.contains(where: { $0.title == "Audition Self-Tape Take" }))
+        XCTAssertEqual(Calendar.current.component(.year, from: c2.deadline), 2026)
+
+        let c3Data = try Data(contentsOf: try fixtureURL(named: "3c.pdf"))
+        let c3 = try await parser.parsePDF(data: c3Data)
+        logParsed("3c.pdf", parsed: c3)
+        XCTAssertEqual(c3.projectName, "MCCC - KOSHISHE")
+        XCTAssertEqual(c3.roleName, "Male Lead")
+        XCTAssertEqual(c3.recipientEmail.lowercased(), "abhinav@mcc.in")
+        XCTAssertFalse(c3.hasDetectedScript)
+        XCTAssertTrue(c3.requirements.contains(where: { $0.title == "Audition Self-Tape Take" }))
+        XCTAssertEqual(Calendar.current.component(.day, from: c3.deadline), 15)
+        XCTAssertEqual(Calendar.current.component(.month, from: c3.deadline), 12)
+    }
+
     private func logParsed(_ label: String, parsed: ParsedCastingCall) {
         print("""
         ===AUDIT_PARSE[\(label)]===
