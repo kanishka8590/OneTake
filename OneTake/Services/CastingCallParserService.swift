@@ -427,9 +427,9 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
         ]
 
         let asksForScriptOrTape = dialogueResult.scriptText != nil
-            || matchesRegex(#"\b(?:self-?tape|audition\s+(?:video|script|clip|scene|take)|sides|monologue|audition\s+script|\bclip\b|\btape\b)\b"#, in: lowerText)
+            || matchesRegex(#"\b(?:self-?tape|audition\s+(?:video|for|script|clip|scene|take)|attached\s+(?:audition\s+)?script|sides|monologue|\bclip\b|\btape\b)\b"#, in: lowerText)
         let asksOnlyForPhotosAndIntro = matchesRegex(#"\b(?:photos?|photographs?|pictures?|headshots?)\b"#, in: lowerText)
-            && matchesRegex(#"\b(?:intro(?:duction)?\s+video|slate)\b"#, in: lowerText)
+            && matchesRegex(#"\b(?:intro(?:duction|ducing)?\s+video|slate)\b"#, in: lowerText)
             && !asksForScriptOrTape
         if asksForScriptOrTape || !asksOnlyForPhotosAndIntro {
             reqs.append(SubmissionRequirement(title: "Audition Self-Tape Take", isCompleted: false))
@@ -469,9 +469,9 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
                 let lowerEmail = email.lowercased()
 
                 var score = 0
-                if lowerLine.contains("submit to") || lowerLine.contains("send to") || lowerLine.contains("send tape") || lowerLine.contains("send self-tape") || lowerLine.contains("submissions") {
+                if lowerLine.contains("submit to") || lowerLine.contains("send to") || lowerLine.contains("send tape") || lowerLine.contains("send self-tape") || lowerLine.contains("submissions") || lowerLine.contains("email to apply") {
                     score += 100
-                } else if lowerLine.contains("submit") || lowerLine.contains("apply") || lowerLine.contains("deliver to") {
+                } else if lowerLine.contains("submit") || lowerLine.contains("apply") || lowerLine.contains("deliver to") || lowerLine.contains("mail ") {
                     score += 60
                 }
 
@@ -617,6 +617,16 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
             }
         }
 
+        // Handle explicit feature/short film title banners such as "PHOTON - A FEATURE FILM" before prose fallbacks
+        for line in lines.prefix(10) {
+            if let range = line.range(of: #"\s*[-–]\s*A\s+(?:FEATURE|SHORT)\s+FILM\b"#, options: [.regularExpression, .caseInsensitive]) {
+                let candidate = String(line[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !candidate.isEmpty {
+                    return smartTitleCase(candidate)
+                }
+            }
+        }
+
         // Look for named casting studio / production house ("Yash Raj Films is looking for...", "MUKESH CHHABRA CASTING COMPANY")
         if let companyRegex = try? NSRegularExpression(pattern: #"([A-Z][A-Za-z0-9.&'’ -]{2,45}?)\s+(?:is|are)\s+looking\s+for\b"#, options: []),
            let match = companyRegex.firstMatch(in: cleanText, range: NSRange(cleanText.startIndex..., in: cleanText)),
@@ -624,7 +634,7 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
            let range = Range(match.range(at: 1), in: cleanText) {
             let entity = String(cleanText[range]).trimmingCharacters(in: .whitespacesAndNewlines)
             let lowerEntity = entity.lowercased()
-            if !lowerEntity.contains("we ") && lowerEntity != "we" && !lowerEntity.contains("casting call") {
+            if !lowerEntity.contains("we ") && lowerEntity != "we" && !lowerEntity.hasPrefix("our ") && !lowerEntity.contains("production house") && !lowerEntity.contains("casting call") {
                 return entity
             }
         }
@@ -661,7 +671,7 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
             "feature film", "short film", "web series", "ad film", "commercial",
             "series", "television", "theater", "theatre", "casting call",
             "casting notice", "now casting", "apply for free", "songs & scenes",
-            "audition sides"
+            "audition sides", "project details", "key criteria", "requirements to be submitted", "how to apply"
         ]
         let sentenceStarts = [
             "we are ", "looking for ", "interested ", "kindly ", "please ",
@@ -702,19 +712,28 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
             return nil
         }
 
-        for line in lines {
+        for (idx, line) in lines.enumerated() {
             let lower = line.lowercased()
-            if lower.contains("deadline") || lower.contains("submit by") || lower.contains("due") || lower.contains("last date") || lower.contains("apply by") {
-                let matches = detector.matches(in: line, options: [], range: NSRange(line.startIndex..., in: line))
+            if lower.contains("issued") { continue }
+            let isDeadlineCue = lower.contains("deadline")
+                || lower.contains("submit by")
+                || lower.contains("due")
+                || lower.contains("last date")
+                || lower.contains("apply by")
+                || ((lower.contains("submission") || lower.contains("send ")) && lower.contains(" by"))
+            if isDeadlineCue {
+                let candidateLine = idx + 1 < lines.count ? "\(line) \(lines[idx + 1])" : line
+                let matches = detector.matches(in: candidateLine, options: [], range: NSRange(candidateLine.startIndex..., in: candidateLine))
                 if let dateMatch = matches.first?.date {
                     return dateMatch
                 }
             }
         }
 
-        // Only run broad date fallback on notice headers, never deep inside screenplay dialogue (which says things like "Next Friday").
-        let fallbackLines = hasDialogue ? Array(lines.prefix(25)) : lines
-        let fallbackText = fallbackLines.joined(separator: "\n")
+        // Handle date phrases split across two wrapped lines (e.g., "...by 15\nDecember, 2026.")
+        let nonIssuedLines = lines.filter { !$0.lowercased().contains("issued") }
+        let fallbackLines = hasDialogue ? Array(nonIssuedLines.prefix(25)) : nonIssuedLines
+        let fallbackText = fallbackLines.joined(separator: " ")
         let explicitMonthOrNumericDate = #"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b"#
 
         let matches = detector.matches(in: fallbackText, options: [], range: NSRange(fallbackText.startIndex..., in: fallbackText))
@@ -736,13 +755,18 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
 
         let stopHeaders: Set<String> = ["AGE", "AGE GROUP", "GENDER", "CATEGORY", "LOCATION", "LANGUAGE", "LANGUAGES", "SKILLS", "CHARACTER LOOK", "REGION", "ISSUED"]
 
-        for (index, line) in lines.enumerated() {
+        for (index, rawLine) in lines.enumerated() {
+            let line = rawLine.replacingOccurrences(of: #"^[•\-\*]\s*"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             let lower = line.lowercased()
             if lower.hasPrefix("role:") || lower.hasPrefix("character:") {
                 let parts = line.split(separator: ":", maxSplits: 1).map(String.init)
                 if parts.count > 1 {
                     let value = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
                     if !value.isEmpty {
+                        if let leadRange = value.range(of: #"^(male\s+lead|female\s+lead)\b"#, options: [.regularExpression, .caseInsensitive]) {
+                            return smartTitleCase(String(value[leadRange]))
+                        }
                         return smartTitleCase(value)
                     }
                 }
@@ -936,12 +960,14 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
             "FEATURE FILM", "SHORT FILM", "WEB SERIES", "AD FILM", "COMMERCIAL",
             "NOW CASTING", "APPLY FOR FREE", "EMAIL TO APPLY", "FREE", "PRIMARY",
             "MALE", "FEMALE", "MC", "ACTORS", "NON ACTORS", "PAGE",
-            "SONGS & SCENES", "TABLE OF CONTENTS", "CAST"
+            "SONGS & SCENES", "TABLE OF CONTENTS", "CAST",
+            "ISSUED DATE", "KEY CRITERIA", "REQUIREMENTS TO BE SUBMITTED", "HOW TO APPLY",
+            "SCENE END", "END SCENE", "END OF SCENE", "WAIT", "LOOK", "LISTEN"
         ]
 
         let ignoredPrefixes = ignoredKeywords.map { $0 + " " }
 
-        let colonCharPattern = #"^([A-Z0-9][A-Z0-9\s.'#-]{1,29}?)(?:\s*\([^)]*\))?\s*:(.*)$"#
+        let colonCharPattern = #"^([A-Z0-9][A-Za-z0-9\s.'#-]{1,29}?)(?:\s*\([^)]*\))?\s*:(.*)$"#
         guard let colonRegex = try? NSRegularExpression(pattern: colonCharPattern, options: []) else {
             return ("", "", [], [], nil)
         }
@@ -992,16 +1018,31 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
             let mlPrediction = classifierBox.classify(trimmed)
 
             // 1. Check explicit COLON dialogue header: "SPEAKER: ..." or "SPEAKER:\ndialogue"
-            let nsRange = NSRange(trimmed.startIndex..., in: trimmed)
-            if let match = colonRegex.firstMatch(in: trimmed, range: nsRange),
-               let speakerRange = Range(match.range(at: 1), in: trimmed),
-               let dialogueRange = Range(match.range(at: 2), in: trimmed) {
-                let rawSpeaker = Self.normalizeSpeakerName(String(trimmed[speakerRange]))
+            let colonTarget = trimmed.replacingOccurrences(of: #"^[•\-\*]\s*"#, with: "", options: .regularExpression)
+            let isBulletPrefixed = colonTarget != trimmed
+            let nsRange = NSRange(colonTarget.startIndex..., in: colonTarget)
+            if let match = colonRegex.firstMatch(in: colonTarget, range: nsRange),
+               let speakerRange = Range(match.range(at: 1), in: colonTarget),
+               let dialogueRange = Range(match.range(at: 2), in: colonTarget) {
+                let rawSpeaker = Self.normalizeSpeakerName(String(colonTarget[speakerRange]))
                 let speaker = rawSpeaker.uppercased()
-                let initialDialogue = String(trimmed[dialogueRange]).trimmingCharacters(in: .whitespaces)
-                let wordCount = speaker.split(whereSeparator: \.isWhitespace).count
+                let initialDialogue = String(colonTarget[dialogueRange]).trimmingCharacters(in: .whitespaces)
+                let speakerWords = rawSpeaker.split(whereSeparator: \.isWhitespace).map(String.init)
+                let wordCount = speakerWords.count
 
-                let isIgnored = ignoredKeywords.contains(speaker)
+                let isAllCapsSpeaker = rawSpeaker == speaker
+                let isMultiWordTitleCase = wordCount >= 2 && speakerWords.allSatisfy { $0.first?.isUppercase == true || $0.first?.isNumber == true }
+                let startsWithDialogueStarter = initialDialogue.first.map {
+                    $0.isUppercase || $0 == "\"" || $0 == "“" || $0 == "'" || $0 == "‘" || $0 == "("
+                } ?? false
+                let isSingleWordTitleCase = wordCount == 1
+                    && (rawSpeaker.first?.isUppercase == true)
+                    && rawSpeaker.dropFirst().allSatisfy { $0.isLowercase || $0 == "-" || $0 == "'" }
+                    && startsWithDialogueStarter
+
+                let isIgnored = isBulletPrefixed
+                    || !(isAllCapsSpeaker || isMultiWordTitleCase || isSingleWordTitleCase)
+                    || ignoredKeywords.contains(speaker)
                     || ignoredPrefixes.contains(where: { speaker.hasPrefix($0) })
                     || speaker.contains("@")
                     || speaker.contains("HTTP")
@@ -1230,7 +1271,7 @@ nonisolated final class CastingCallParserService: CastingCallParserServiceProtoc
         if upper == "FADE IN:" || upper == "FADE OUT." || upper == "FADE OUT:" || upper.hasPrefix("CUT TO:") || upper.hasPrefix("DISSOLVE TO:") {
             return true
         }
-        if upper == "SONGS & SCENES" || upper == "(CONTINUED)" || upper == "CONTINUED" {
+        if upper == "SONGS & SCENES" || upper == "(CONTINUED)" || upper == "CONTINUED" || upper == "SCENE END" || upper == "END SCENE" || upper == "END OF SCENE" || upper.contains("AUDITION SCRIPT") || upper.contains("EXCERPT FROM") {
             return true
         }
         if upper.range(of: #"^(?:ACT|SCENE)\s+(?:ONE|TWO|THREE|FOUR|FIVE|SIX|SEVEN|EIGHT|I|II|III|IV|V|\d+)\b"#, options: .regularExpression) != nil {

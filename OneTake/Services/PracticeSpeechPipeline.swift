@@ -236,6 +236,9 @@ struct PracticeScriptModel {
         if upper == "FADE IN" || upper == "FADE OUT" || upper.hasPrefix("CUT TO") || upper.hasPrefix("DISSOLVE TO") || upper == "(CONTINUED)" || upper == "CONTINUED" || upper == "SONGS & SCENES" {
             return true
         }
+        if upper == "SCENE END" || upper == "END SCENE" || upper == "END OF SCENE" || upper.contains("AUDITION SCRIPT") || upper.contains("EXCERPT FROM") {
+            return true
+        }
         if upper.contains(",") || upper.contains("&") || upper.contains("THE MUSICAL") {
             return true
         }
@@ -249,7 +252,9 @@ struct PracticeScriptModel {
     private static let nonSpeakerColonPrefixes: Set<String> = [
         "NOTE", "NOTES", "HINT", "TIP", "TIPS", "WARNING", "IMPORTANT",
         "SCENE", "PROJECT", "TITLE", "ROLE", "DEADLINE", "FORMAT", "DURATION",
-        "EMAIL", "CONTACT", "SUBMIT", "SUBJECT", "TIME", "DATE", "WAIT", "REMEMBER"
+        "EMAIL", "CONTACT", "SUBMIT", "SUBJECT", "TIME", "DATE", "WAIT", "REMEMBER",
+        "ISSUED", "REGION", "AGE", "GENDER", "LANGUAGES", "LANGUAGE", "LOCATION",
+        "QUESTION", "ANSWER", "STEP", "RULE", "YES", "NO", "LOOK", "LISTEN"
     ]
 
     /// The casting parser stores cue text without its speaker label, while a
@@ -306,7 +311,14 @@ struct PracticeScriptModel {
             guard let first = word.first else { return false }
             return first.isUppercase || first.isNumber
         }
-        guard isAllCaps || isMultiWordTitleCase else { return nil }
+        let startsWithDialogueStarter = dialogue.first.map {
+            $0.isUppercase || $0 == "\"" || $0 == "“" || $0 == "'" || $0 == "‘" || $0 == "("
+        } ?? false
+        let isSingleWordTitleCase = words.count == 1
+            && (candidate.first?.isUppercase == true)
+            && candidate.dropFirst().allSatisfy { $0.isLowercase || $0 == "-" || $0 == "'" }
+            && startsWithDialogueStarter
+        guard isAllCaps || isMultiWordTitleCase || isSingleWordTitleCase else { return nil }
         return (upper, dialogue)
     }
 
