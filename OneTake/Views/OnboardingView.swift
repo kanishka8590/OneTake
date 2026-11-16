@@ -51,7 +51,7 @@ struct OnboardingView: View {
         GeometryReader { geo in
             let fullHeight = geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
 
-            ZStack(alignment: .top) {
+            ZStack(alignment: .topTrailing) {
                 surfaceColor.ignoresSafeArea()
 
                 // Full-bleed Paged Carousel
@@ -69,24 +69,19 @@ struct OnboardingView: View {
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .ignoresSafeArea()
 
-                // Top-Right Frosted Skip Pill (stays inside Dynamic Island safe area)
+                // Native iOS Top-Trailing Skip Button
                 if currentPage < slides.count - 1 {
-                    HStack {
-                        Spacer()
-                        Button {
-                            completeOnboarding()
-                        } label: {
-                            Text("Skip")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(primaryInk)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 8)
-                                .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
-                                .background(.ultraThinMaterial, in: Capsule())
-                        }
+                    Button {
+                        completeOnboarding()
+                    } label: {
+                        Text("Skip")
+                            .font(.system(size: 17, weight: .regular))
+                            .foregroundStyle(primaryInk)
+                            .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget, alignment: .trailing)
+                            .contentShape(Rectangle())
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
+                    .padding(.trailing, 20)
+                    .padding(.top, geo.safeAreaInsets.top)
                     .transition(.opacity)
                 }
             }
