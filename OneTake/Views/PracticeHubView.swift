@@ -118,15 +118,32 @@ struct PracticeHubView: View {
                 prompt: "Search auditions & script sides"
             )
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    HStack(spacing: 4) {
-                        Button { showingHistory = true } label: { Image(systemName: "clock.arrow.circlepath").frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget) }
-                        Button { showingAddSheet = true } label: {
-                            Image(systemName: "plus.circle").font(.system(size: 20, weight: .semibold))
-                                .foregroundStyle(Theme.Colors.accent)
-                                .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
-                        }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showingHistory = true
+                    } label: {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(Theme.Colors.accent)
+                            .frame(width: 32, height: 32)
+                            .background(Theme.Colors.surface, in: Circle())
+                            .overlay(Circle().stroke(Theme.Colors.controlBorder, lineWidth: 1))
                     }
+                    .accessibilityLabel("Practice History")
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingAddSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Theme.Colors.accent)
+                            .frame(width: 32, height: 32)
+                            .background(Theme.Colors.surface, in: Circle())
+                            .overlay(Circle().stroke(Theme.Colors.controlBorder, lineWidth: 1))
+                    }
+                    .accessibilityLabel("Practice a new scene")
                 }
             }
             .sheet(isPresented: $showingAddSheet) {

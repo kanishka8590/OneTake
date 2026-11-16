@@ -364,7 +364,7 @@ struct AuditionDetailsEditorView: View {
             }
             .navigationTitle(isEditingExisting ? "Edit Audition Details" : "Audition Details")
             .navigationBarTitleDisplayMode(.inline)
-            .interactiveDismissDisabled(hasUnsavedChanges)
+            .interactiveDismissDisabled(true)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -464,6 +464,9 @@ struct AuditionDetailsEditorView: View {
             } message: {
                 Text("Your edits to this audition haven't been saved yet.")
             }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(Theme.Colors.canvasBackground)
         }
     }
 
@@ -1156,7 +1159,7 @@ struct AuditionDetailsEditorView: View {
                             draftRequirements.append(SubmissionRequirement(title: trimmed))
                             newRequirementTitle = ""
                         } label: {
-                            Image(systemName: "plus.circle")
+                            Image(systemName: "plus")
                                 .foregroundStyle(Theme.Colors.accent)
                         }
                         .accessibilityLabel("Add requirement")

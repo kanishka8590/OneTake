@@ -171,7 +171,7 @@ struct AuditionsListView: View {
                 prompt: "Search auditions & script sides"
             )
             .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarLeading) {
                     Menu {
                         Picker("Filter", selection: $selectedFilter) {
                             ForEach(AuditionListFilter.allCases) { filter in
@@ -181,23 +181,30 @@ struct AuditionsListView: View {
                     } label: {
                         HStack(spacing: 4) {
                             Text(selectedFilter.rawValue)
-                                .font(Theme.Typography.cardTitle)
+                                .font(Theme.Typography.captionBadge.bold())
                                 .foregroundStyle(Theme.Colors.textPrimary)
                             Image(systemName: "chevron.down")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(Theme.Colors.accent)
                         }
-                        .padding(.vertical, 4)
-                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 10)
+                        .background(Theme.Colors.surface, in: Capsule())
+                        .overlay(Capsule().stroke(Theme.Colors.controlBorder, lineWidth: 1))
                     }
+                    .accessibilityLabel("Filter auditions")
+                }
 
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingAddSourceSheet = true
                     } label: {
-                        Image(systemName: "plus.circle")
-                            .font(.system(size: 22, weight: .semibold))
+                        Image(systemName: "plus")
+                            .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(Theme.Colors.accent)
-                            .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget)
+                            .frame(width: 32, height: 32)
+                            .background(Theme.Colors.surface, in: Circle())
+                            .overlay(Circle().stroke(Theme.Colors.controlBorder, lineWidth: 1))
                     }
                     .accessibilityLabel("Add audition")
                 }
@@ -255,12 +262,18 @@ struct AuditionsListView: View {
                 AuditionDetailsEditorView(parsedCall: presentation.parsedCall) { _ in
                     editorPresentation = nil
                 }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(Theme.Colors.canvasBackground)
                 .environment(appState)
             }
             .sheet(item: $auditionToEdit) { existing in
                 AuditionDetailsEditorView(existingAudition: existing) { _ in
                     auditionToEdit = nil
                 }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(Theme.Colors.canvasBackground)
                 .environment(appState)
             }
             // Import / parse error alert

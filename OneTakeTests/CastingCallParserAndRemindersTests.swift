@@ -564,6 +564,24 @@ final class CastingCallParserAndRemindersTests: XCTestCase {
         return archive
     }
 
+    func testAuditionListFilterBehavior() {
+        let activeAudition = Audition(projectName: "Active Project", roleName: "Hero")
+        activeAudition.status = .active
+        let sentAudition = Audition(projectName: "Sent Project", roleName: "Detective")
+        sentAudition.status = .sent
+        let allAuditions = [activeAudition, sentAudition]
+
+        let filteredActive = allAuditions.filter { $0.status == .active }
+        XCTAssertEqual(filteredActive.count, 1)
+        XCTAssertEqual(filteredActive.first?.projectName, "Active Project")
+
+        let filteredSent = allAuditions.filter { $0.status == .sent }
+        XCTAssertEqual(filteredSent.count, 1)
+        XCTAssertEqual(filteredSent.first?.projectName, "Sent Project")
+
+        XCTAssertEqual(AuditionListFilter.allCases.map(\.rawValue), ["Active", "Sent", "All"])
+    }
+
     private func appendUInt16(_ value: UInt16, to data: inout Data) {
         data.append(UInt8(value & 0xff))
         data.append(UInt8(value >> 8))
