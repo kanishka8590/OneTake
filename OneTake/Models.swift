@@ -757,7 +757,6 @@ final class AppSettings {
         "notifyAuditions",
         "notifySubmissions",
         "notifyPractice",
-        "notifyProductUpdates",
         "framingTipsOutLoud",
         "countdownOutLoud"
     ]
@@ -795,7 +794,6 @@ final class AppSettings {
         self.notifyAuditions = Self.readValue("notifyAuditions", from: defaults, prefix: p, fallback: true)
         self.notifySubmissions = Self.readValue("notifySubmissions", from: defaults, prefix: p, fallback: true)
         self.notifyPractice = Self.readValue("notifyPractice", from: defaults, prefix: p, fallback: true)
-        self.notifyProductUpdates = Self.readValue("notifyProductUpdates", from: defaults, prefix: p, fallback: false)
         self.framingTipsOutLoud = Self.readValue("framingTipsOutLoud", from: defaults, prefix: p, fallback: true)
         self.countdownOutLoud = Self.readValue("countdownOutLoud", from: defaults, prefix: p, fallback: true)
     }
@@ -815,7 +813,6 @@ final class AppSettings {
         notifyAuditions = true
         notifySubmissions = true
         notifyPractice = true
-        notifyProductUpdates = false
         framingTipsOutLoud = true
         countdownOutLoud = true
 
@@ -903,10 +900,6 @@ final class AppSettings {
 
     var notifyPractice: Bool {
         didSet { setValue("notifyPractice", value: notifyPractice) }
-    }
-
-    var notifyProductUpdates: Bool {
-        didSet { setValue("notifyProductUpdates", value: notifyProductUpdates) }
     }
 
     // MARK: Briefing / Voice Feedback

@@ -102,13 +102,6 @@ struct NotificationPreferencesView: View {
             } footer: {
                 Text(authorizationNote ?? "We only send the local reminders you choose.")
             }
-
-            Section {
-                Toggle("Product Updates", isOn: Bindable(appState.settings).notifyProductUpdates)
-                    .tint(Theme.Colors.accent)
-            } footer: {
-                Text("OneTake runs locally on your device. Push product updates require opt-in server delivery, so this preference applies to local-only release announcements.")
-            }
         }
         .navigationTitle("Notifications")
         .task {

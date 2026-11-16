@@ -84,7 +84,6 @@ final class AppStateAndSettingsTests: XCTestCase {
         settings.cueTriggerMode = .fixedDelay
         settings.videoQuality = .p720
         settings.notifyAuditions = false
-        settings.notifyProductUpdates = true
 
         // Verify persistence across a fresh AppSettings instance reading the same defaults.
         let reloaded = AppSettings(defaults: defaults)
@@ -93,7 +92,6 @@ final class AppStateAndSettingsTests: XCTestCase {
         XCTAssertEqual(reloaded.cueTriggerMode, .fixedDelay)
         XCTAssertEqual(reloaded.videoQuality, .p720)
         XCTAssertFalse(reloaded.notifyAuditions)
-        XCTAssertTrue(reloaded.notifyProductUpdates)
         XCTAssertEqual(defaults.integer(forKey: "onetake.countdownSeconds"), 5)
 
         // Reset restores defaults and clears "onetake.*" setting keys.
@@ -103,7 +101,6 @@ final class AppStateAndSettingsTests: XCTestCase {
         XCTAssertEqual(reloaded.cueTriggerMode, .afterMyLine)
         XCTAssertEqual(reloaded.videoQuality, .p1080)
         XCTAssertTrue(reloaded.notifyAuditions)
-        XCTAssertFalse(reloaded.notifyProductUpdates)
         XCTAssertNil(defaults.object(forKey: "onetake.countdownSeconds"))
         XCTAssertNil(defaults.object(forKey: "onetake.mirrorFrontCamera"))
         XCTAssertNil(defaults.object(forKey: "onetake.cueTriggerModeRaw"))
