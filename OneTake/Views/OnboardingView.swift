@@ -75,13 +75,14 @@ struct OnboardingView: View {
                         completeOnboarding()
                     } label: {
                         Text("Skip")
-                            .font(.system(size: 17, weight: .regular))
+                            .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(primaryInk)
-                            .frame(minWidth: Theme.Layout.minTapTarget, minHeight: Theme.Layout.minTapTarget, alignment: .trailing)
-                            .contentShape(Rectangle())
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
                     }
+                    .nativeGlassCapsuleButton()
                     .padding(.trailing, 20)
-                    .padding(.top, geo.safeAreaInsets.top)
+                    .padding(.top, 8)
                     .transition(.opacity)
                 }
             }

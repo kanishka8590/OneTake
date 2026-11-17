@@ -13,14 +13,13 @@ struct PackageValidationAndExportView: View {
     @State private var stage: Stage = .checking
     @State private var showingCompressor = false
     @State private var showingShareChoices = false
-    @State private var showingActivitySheet = false
-    @State private var showingMailComposer = false
     @State private var showingCelebration = false
     @State private var editingFileID: String?
     @State private var names: [String: String] = [:]
-    @State private var packageURLs: [URL] = []
+    @State private var zipFileName: String = ""
     @State private var tempPackageDirectory: URL?
-    @State private var pendingShareAction: PendingShareAction?
+    @State private var preparingShareStatus: String?
+    @State private var shareSheetErrorMessage: String?
     @State private var exportErrorMessage: String?
     @State private var reviewRoute: ReviewRoute?
     @State private var cropRoute: CropRoute?
@@ -45,11 +44,6 @@ struct PackageValidationAndExportView: View {
     private struct CropRoute: Identifiable {
         let id = UUID()
         let angle: HeadshotAngle
-    }
-    private enum PendingShareAction {
-        case activitySheet([URL])
-        case mailComposer([URL])
-        case error(String)
     }
 
     private var rules: ValidationRules { audition.validationRules }
@@ -138,25 +132,12 @@ struct PackageValidationAndExportView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showingShareChoices, onDismiss: { executePendingShareAction() }) {
+            .sheet(isPresented: $showingShareChoices, onDismiss: {
+                if preparingShareStatus == nil {
+                    cleanupTempPackageDirectory()
+                }
+            }) {
                 shareChoices
-            }
-            .sheet(isPresented: $showingActivitySheet, onDismiss: { cleanupTempPackageDirectory() }) {
-                NativeActivitySheet(
-                    items: packageURLs,
-                    subject: "\(packageName) audition package"
-                ) { completed in
-                    if completed { markSentAfterNativeShare() }
-                }
-            }
-            .sheet(isPresented: $showingMailComposer, onDismiss: { cleanupTempPackageDirectory() }) {
-                MailPackageComposer(
-                    recipient: appState.resolvedRecipientEmail(for: audition),
-                    subject: "\(packageName) audition package",
-                    files: packageURLs
-                ) { completed in
-                    if completed { markSentAfterNativeShare() }
-                }
             }
             .fullScreenCover(isPresented: $showingCelebration) {
                 DeliveryCelebrationView(audition: audition) { dismiss() }
@@ -417,6 +398,10 @@ struct PackageValidationAndExportView: View {
         .padding(12).cardStyle()
     }
 
+    private var effectiveZipArchiveName: String {
+        PackageExportHelper.sanitizeFileStem(zipFileName, fallback: packageName)
+    }
+
     private var shareChoices: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 18) {
@@ -450,24 +435,71 @@ struct PackageValidationAndExportView: View {
                     Label("More ways to share", systemImage: "square.and.arrow.up")
                         .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
                 }
+                .disabled(preparingShareStatus != nil)
                 Text("AirDrop, Messages, or Save to Files").font(Theme.Typography.captionBadge).foregroundStyle(Theme.Colors.textSecondary).padding(.top, -12)
 
                 Button { sharePackageAsZip() } label: {
                     Label("Share as ZIP archive", systemImage: "doc.zipper")
                         .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
                 }
-                Text("Bundles all ready files into one .zip archive").font(Theme.Typography.captionBadge).foregroundStyle(Theme.Colors.textSecondary).padding(.top, -12)
+                .disabled(preparingShareStatus != nil)
+
+                HStack(spacing: 8) {
+                    Image(systemName: "pencil")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                    TextField("ZIP archive name", text: $zipFileName)
+                        .textInputAutocapitalization(.words)
+                        .autocorrectionDisabled()
+                        .font(Theme.Typography.bodyRegular)
+                        .disabled(preparingShareStatus != nil)
+                    Text(".zip")
+                        .font(Theme.Typography.captionBadge)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .cardStyle()
+
+                Text("Bundles all ready files into \(effectiveZipArchiveName).zip").font(Theme.Typography.captionBadge).foregroundStyle(Theme.Colors.textSecondary).padding(.top, -10)
 
                 if let email = appState.resolvedRecipientEmail(for: audition), MFMailComposeViewController.canSendMail() {
                     Button { emailPackageFiles() } label: {
                         Label("Email \(email)", systemImage: "envelope")
                             .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
                     }
+                    .disabled(preparingShareStatus != nil)
+                }
+
+                if let status = preparingShareStatus {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text(status)
+                            .font(Theme.Typography.captionBadge)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                    }
+                    .padding(.top, 4)
                 }
                 Spacer()
             }
             .padding(20)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { showingShareChoices = false } } }
+            .alert(
+                "Export Unavailable",
+                isPresented: Binding(
+                    get: { shareSheetErrorMessage != nil },
+                    set: { if !$0 { shareSheetErrorMessage = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(shareSheetErrorMessage ?? "")
+            }
+            .onAppear {
+                if zipFileName.isEmpty {
+                    zipFileName = packageName
+                }
+            }
         }
         .presentationDetents([.medium, .large])
     }
@@ -600,12 +632,14 @@ struct PackageValidationAndExportView: View {
         if names.isEmpty {
             bundleItems.forEach { names[$0.id] = $0.title }
         }
+        if zipFileName.isEmpty {
+            zipFileName = packageName
+        }
     }
 
     private func createPrivateLink() {
         guard PackageExportHelper.canCreateSimulatedPrivateLink(isDemoMode: appState.isDemoMode) else {
-            pendingShareAction = .error("Private cloud links aren't available in offline mode. Use Share Package or Email below to send your real files.")
-            showingShareChoices = false
+            shareSheetErrorMessage = "Private cloud links aren't available in offline mode. Use Share Package or Email below to send your real files."
             return
         }
         let token = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(6)).lowercased()
@@ -618,81 +652,131 @@ struct PackageValidationAndExportView: View {
 
     private func sharePackageFiles() {
         cleanupTempPackageDirectory()
-        do {
-            let result = try materializePackage()
-            guard !result.files.isEmpty else {
-                try? FileManager.default.removeItem(at: result.directory)
-                pendingShareAction = .error("No valid media files were found on disk to share.")
-                showingShareChoices = false
-                return
+        preparingShareStatus = "Preparing files for sharing…"
+        let items = exportItemTuples()
+        let customNames = names
+        let subject = "\(packageName) audition package"
+
+        Task {
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try PackageExportHelper.materializePackageDirectory(
+                        items: items,
+                        customNames: customNames
+                    )
+                }.value
+
+                guard !result.files.isEmpty else {
+                    try? FileManager.default.removeItem(at: result.directory)
+                    preparingShareStatus = nil
+                    shareSheetErrorMessage = "No valid media files were found on disk to share."
+                    return
+                }
+
+                tempPackageDirectory = result.directory
+                preparingShareStatus = nil
+                presentNativeShareSheet(items: result.files, subject: subject)
+            } catch {
+                preparingShareStatus = nil
+                shareSheetErrorMessage = "Could not prepare package files: \(error.localizedDescription)"
             }
-            tempPackageDirectory = result.directory
-            packageURLs = result.files
-            pendingShareAction = .activitySheet(result.files)
-            showingShareChoices = false
-        } catch {
-            pendingShareAction = .error("Could not prepare package files: \(error.localizedDescription)")
-            showingShareChoices = false
         }
     }
 
     private func sharePackageAsZip() {
         cleanupTempPackageDirectory()
-        do {
-            let result = try PackageExportHelper.createPackageZipArchive(
-                items: exportItemTuples(),
-                customNames: names,
-                archiveName: packageName
-            )
-            tempPackageDirectory = result.directory
-            packageURLs = [result.archiveURL]
-            pendingShareAction = .activitySheet([result.archiveURL])
-            showingShareChoices = false
-        } catch {
-            pendingShareAction = .error("Could not create ZIP archive: \(error.localizedDescription)")
-            showingShareChoices = false
+        preparingShareStatus = "Creating ZIP archive…"
+        let items = exportItemTuples()
+        let customNames = names
+        let archiveName = effectiveZipArchiveName
+        let subject = "\(archiveName) audition package"
+
+        Task {
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try PackageExportHelper.createPackageZipArchive(
+                        items: items,
+                        customNames: customNames,
+                        archiveName: archiveName
+                    )
+                }.value
+
+                tempPackageDirectory = result.directory
+                preparingShareStatus = nil
+                presentNativeShareSheet(items: [result.archiveURL], subject: subject)
+            } catch {
+                preparingShareStatus = nil
+                shareSheetErrorMessage = "Could not create ZIP archive: \(error.localizedDescription)"
+            }
         }
     }
 
     private func emailPackageFiles() {
         cleanupTempPackageDirectory()
-        do {
-            let result = try materializePackage()
-            guard !result.files.isEmpty else {
-                try? FileManager.default.removeItem(at: result.directory)
-                pendingShareAction = .error("No valid media files were found on disk to email.")
-                showingShareChoices = false
-                return
+        preparingShareStatus = "Preparing email attachments…"
+        let items = exportItemTuples()
+        let customNames = names
+        let recipient = appState.resolvedRecipientEmail(for: audition)
+        let subject = "\(packageName) audition package"
+
+        Task {
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try PackageExportHelper.materializePackageDirectory(
+                        items: items,
+                        customNames: customNames
+                    )
+                }.value
+
+                guard !result.files.isEmpty else {
+                    try? FileManager.default.removeItem(at: result.directory)
+                    preparingShareStatus = nil
+                    shareSheetErrorMessage = "No valid media files were found on disk to email."
+                    return
+                }
+                guard PackageExportHelper.isTotalAttachmentSizeAllowedForMail(result.files, maxTotalMB: 25.0) else {
+                    let totalMB = PackageExportHelper.totalFileSizeMB(for: result.files)
+                    try? FileManager.default.removeItem(at: result.directory)
+                    preparingShareStatus = nil
+                    shareSheetErrorMessage = "Package size (\(formattedSizeString(totalMB))) exceeds Mail's 25 MB attachment limit. Use \"More ways to share\" or \"Share as ZIP archive\" to send via AirDrop, Messages, or Files."
+                    return
+                }
+
+                tempPackageDirectory = result.directory
+                preparingShareStatus = nil
+                presentNativeMailComposer(recipient: recipient, subject: subject, files: result.files)
+            } catch {
+                preparingShareStatus = nil
+                shareSheetErrorMessage = "Could not prepare package for email: \(error.localizedDescription)"
             }
-            guard PackageExportHelper.isTotalAttachmentSizeAllowedForMail(result.files, maxTotalMB: 25.0) else {
-                let totalMB = PackageExportHelper.totalFileSizeMB(for: result.files)
-                try? FileManager.default.removeItem(at: result.directory)
-                pendingShareAction = .error("Package size (\(formattedSizeString(totalMB))) exceeds Mail's 25 MB attachment limit. Use \"More ways to share\" or \"Share as ZIP archive\" to send via AirDrop, Messages, or Files.")
-                showingShareChoices = false
-                return
-            }
-            tempPackageDirectory = result.directory
-            packageURLs = result.files
-            pendingShareAction = .mailComposer(result.files)
-            showingShareChoices = false
-        } catch {
-            pendingShareAction = .error("Could not prepare package for email: \(error.localizedDescription)")
-            showingShareChoices = false
         }
     }
 
-    private func executePendingShareAction() {
-        guard let action = pendingShareAction else { return }
-        pendingShareAction = nil
-        switch action {
-        case .activitySheet(let urls):
-            packageURLs = urls
-            showingActivitySheet = !urls.isEmpty
-        case .mailComposer(let urls):
-            packageURLs = urls
-            showingMailComposer = !urls.isEmpty
-        case .error(let message):
-            exportErrorMessage = message
+    private func presentNativeShareSheet(items: [URL], subject: String) {
+        let presentedController = PackageSharePresenter.presentActivity(items: items, subject: subject) { completed in
+            cleanupTempPackageDirectory()
+            if completed {
+                showingShareChoices = false
+                markSentAfterNativeShare()
+            }
+        }
+        if presentedController == nil {
+            cleanupTempPackageDirectory()
+            shareSheetErrorMessage = "Unable to open system share sheet right now. Please try again."
+        }
+    }
+
+    private func presentNativeMailComposer(recipient: String?, subject: String, files: [URL]) {
+        let didPresent = PackageSharePresenter.presentMail(recipient: recipient, subject: subject, files: files) { sent in
+            cleanupTempPackageDirectory()
+            if sent {
+                showingShareChoices = false
+                markSentAfterNativeShare()
+            }
+        }
+        if !didPresent {
+            cleanupTempPackageDirectory()
+            shareSheetErrorMessage = "Unable to open Mail composer right now. Please try \"More ways to share\" instead."
         }
     }
 
@@ -700,23 +784,14 @@ struct PackageValidationAndExportView: View {
         bundleItems.map { (id: $0.id, title: $0.title, storedPath: $0.path, ext: $0.fallbackExtension) }
     }
 
-    private func materializePackage() throws -> (directory: URL, files: [URL]) {
-        try PackageExportHelper.materializePackageDirectory(
-            items: exportItemTuples(),
-            customNames: names
-        )
-    }
-
     private func cleanupTempPackageDirectory() {
         if let dir = tempPackageDirectory {
             try? FileManager.default.removeItem(at: dir)
             tempPackageDirectory = nil
         }
-        packageURLs = []
     }
 
     private func markSentAfterNativeShare() {
-        guard !packageURLs.isEmpty else { return }
         appState.markAuditionSent(audition)
         showingCelebration = true
     }
@@ -980,53 +1055,66 @@ private struct VideoCompressorView: View {
     }
 }
 
-private final class PackageFileActivityItemSource: NSObject, UIActivityItemSource {
-    let fileURL: URL
-    let subject: String
+@MainActor
+enum PackageSharePresenter {
+    private static var activeMailCoordinator: MailCoordinator?
 
-    init(fileURL: URL, subject: String) {
-        self.fileURL = fileURL
-        self.subject = subject
+    static func topMostViewController() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let keyWindow = scenes
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow) ?? scenes.first?.windows.first
+        var top = keyWindow?.rootViewController
+        while let presented = top?.presentedViewController, !presented.isBeingDismissed {
+            top = presented
+        }
+        return top
     }
 
-    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any {
-        fileURL
-    }
-
-    func activityViewController(_ activityViewController: UIActivityViewController, itemForActivityType activityType: UIActivity.ActivityType?) -> Any? {
-        fileURL
-    }
-
-    func activityViewController(_ activityViewController: UIActivityViewController, subjectForActivityType activityType: UIActivity.ActivityType?) -> String {
-        subject
-    }
-}
-
-private struct NativeActivitySheet: UIViewControllerRepresentable {
-    let items: [URL]
-    let subject: String
-    let onCompletion: (Bool) -> Void
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        let sources = items.map { PackageFileActivityItemSource(fileURL: $0, subject: subject) }
-        let controller = UIActivityViewController(activityItems: sources, applicationActivities: nil)
-        controller.completionWithItemsHandler = { _, completed, _, _ in onCompletion(completed) }
+    @discardableResult
+    static func presentActivity(
+        items: [URL],
+        subject: String,
+        from presenterOverride: UIViewController? = nil,
+        onCompletion: @escaping (Bool) -> Void
+    ) -> UIActivityViewController? {
+        guard !items.isEmpty, let presenter = presenterOverride ?? topMostViewController() else { return nil }
+        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        if !subject.isEmpty {
+            controller.setValue(subject, forKey: "subject")
+        }
+        controller.popoverPresentationController?.sourceView = presenter.view
+        controller.popoverPresentationController?.sourceRect = CGRect(
+            x: presenter.view.bounds.midX,
+            y: presenter.view.bounds.midY,
+            width: 1,
+            height: 1
+        )
+        controller.popoverPresentationController?.permittedArrowDirections = []
+        controller.completionWithItemsHandler = { _, completed, _, _ in
+            Task { @MainActor in
+                onCompletion(completed)
+            }
+        }
+        presenter.present(controller, animated: true)
         return controller
     }
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
 
-private struct MailPackageComposer: UIViewControllerRepresentable {
-    let recipient: String?
-    let subject: String
-    let files: [URL]
-    let onCompletion: (Bool) -> Void
-    @Environment(\.dismiss) private var dismiss
-
-    func makeCoordinator() -> Coordinator { Coordinator(dismiss: dismiss, onCompletion: onCompletion) }
-    func makeUIViewController(context: Context) -> MFMailComposeViewController {
+    static func presentMail(
+        recipient: String?,
+        subject: String,
+        files: [URL],
+        onCompletion: @escaping (Bool) -> Void
+    ) -> Bool {
+        guard MFMailComposeViewController.canSendMail(),
+              let presenter = topMostViewController() else { return false }
         let controller = MFMailComposeViewController()
-        controller.mailComposeDelegate = context.coordinator
+        let coordinator = MailCoordinator { sent in
+            activeMailCoordinator = nil
+            onCompletion(sent)
+        }
+        activeMailCoordinator = coordinator
+        controller.mailComposeDelegate = coordinator
         controller.setSubject(subject)
         if let recipient { controller.setToRecipients([recipient]) }
         controller.setMessageBody("Sent from OneTake.", isHTML: false)
@@ -1038,14 +1126,17 @@ private struct MailPackageComposer: UIViewControllerRepresentable {
                 }
             }
         }
-        return controller
+        presenter.present(controller, animated: true)
+        return true
     }
-    func updateUIViewController(_ uiViewController: MFMailComposeViewController, context: Context) {}
-    final class Coordinator: NSObject, MFMailComposeViewControllerDelegate {
-        let dismiss: DismissAction; let onCompletion: (Bool) -> Void
-        init(dismiss: DismissAction, onCompletion: @escaping (Bool) -> Void) { self.dismiss = dismiss; self.onCompletion = onCompletion }
+
+    private final class MailCoordinator: NSObject, MFMailComposeViewControllerDelegate {
+        let onFinish: (Bool) -> Void
+        init(onFinish: @escaping (Bool) -> Void) { self.onFinish = onFinish }
         func mailComposeController(_ controller: MFMailComposeViewController, didFinishWith result: MFMailComposeResult, error: Error?) {
-            onCompletion(result == .sent); dismiss()
+            controller.dismiss(animated: true) {
+                self.onFinish(result == .sent)
+            }
         }
     }
 }

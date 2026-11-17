@@ -108,14 +108,17 @@ final class PhysicalDeviceAuditTests: XCTestCase {
             print("===UI_AUDIT_WARNINGS[\(name)]=== \(warnings.prefix(10).joined(separator: " | "))")
         }
 
-        let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
-        let image = renderer.image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        autoreleasepool {
+            let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
+            let image = renderer.image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            let attachment = XCTAttachment(image: image, quality: .medium)
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
         }
-        let attachment = XCTAttachment(image: image)
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
+        window.rootViewController = nil
     }
 
     private func inspectViewHierarchy(_ view: UIView, depth: Int, warnings: inout [String]) {

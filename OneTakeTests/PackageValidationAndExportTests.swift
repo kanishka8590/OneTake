@@ -242,4 +242,118 @@ final class PackageValidationAndExportTests: XCTestCase {
         try Data(repeating: 0x02, count: 26 * 1_048_576).write(to: largeFile)
         XCTAssertFalse(PackageExportHelper.isTotalAttachmentSizeAllowedForMail([smallFile, largeFile], maxTotalMB: 25.0))
     }
+
+    // MARK: - Large (~91 MB) Export, Hardware-Accelerated ZIP & Share Sheet Presentation
+
+    func testLarge91MBMaterializeZipAndShareSheetPresentation() throws {
+        let docsDir = try makeTempDirectory(prefix: "OneTake91MBDocs")
+        defer { try? FileManager.default.removeItem(at: docsDir) }
+
+        // Write a 91.5 MB mock audition take + 512 KB headshot
+        let videoRelPath = "Takes/large_audition_take.mp4"
+        let videoURL = docsDir.appendingPathComponent(videoRelPath)
+        try FileManager.default.createDirectory(at: videoURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: videoURL.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: videoURL)
+        let oneMBChunk = Data(repeating: 0x5A, count: 1_048_576)
+        for _ in 0..<91 {
+            try handle.write(contentsOf: oneMBChunk)
+        }
+        try handle.write(contentsOf: Data(repeating: 0x7B, count: 524_288))
+        try handle.close()
+
+        let headshotRelPath = try MediaStorage.saveData(
+            Data(repeating: 0xFF, count: 524_288),
+            relativePath: "Headshots/front.jpg",
+            documentsDirectory: docsDir
+        )
+
+        let items: [(id: String, title: String, storedPath: String, ext: String)] = [
+            (id: "headshot-Front", title: "Actor_Role_Front", storedPath: headshotRelPath, ext: "jpg"),
+            (id: "audition", title: "Actor_Role_Audition", storedPath: videoRelPath, ext: "mp4")
+        ]
+
+        // 1. "More ways to share" materialization
+        let materialized = try PackageExportHelper.materializePackageDirectory(
+            items: items,
+            customNames: [:],
+            documentsDirectory: docsDir
+        )
+        defer { try? FileManager.default.removeItem(at: materialized.directory) }
+        XCTAssertEqual(materialized.files.count, 2)
+        let totalMB = PackageExportHelper.totalFileSizeMB(for: materialized.files)
+        XCTAssertGreaterThan(totalMB, 91.5)
+        XCTAssertFalse(PackageExportHelper.isTotalAttachmentSizeAllowedForMail(materialized.files, maxTotalMB: 25.0))
+
+        // 2. "Share as ZIP archive" speed + custom archive name + extract validity check (hardware zlib crc32)
+        let start = CFAbsoluteTimeGetCurrent()
+        let zipResult = try PackageExportHelper.createPackageZipArchive(
+            items: items,
+            customNames: [:],
+            archiveName: "Custom_Audition_ZIP",
+            documentsDirectory: docsDir
+        )
+        let elapsed = CFAbsoluteTimeGetCurrent() - start
+        defer { try? FileManager.default.removeItem(at: zipResult.directory) }
+
+        XCTAssertEqual(zipResult.archiveURL.lastPathComponent, "Custom_Audition_ZIP.zip")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: zipResult.archiveURL.path))
+        let zipMB = PackageExportHelper.fileSizeOnDiskMB(at: zipResult.archiveURL)
+        XCTAssertGreaterThan(zipMB, 91.5)
+        XCTAssertLessThan(elapsed, 6.0, "91 MB ZIP creation took \(elapsed)s; must not stall")
+
+        let extractDir = try makeTempDirectory(prefix: "OneTake91MBExtract")
+        defer { try? FileManager.default.removeItem(at: extractDir) }
+        try ZipArchive.extract(from: zipResult.archiveURL, to: extractDir)
+        let extractedFiles = try FileManager.default.contentsOfDirectory(atPath: extractDir.path)
+        XCTAssertEqual(Set(extractedFiles), Set(["Actor_Role_Front.jpg", "Actor_Role_Audition.mp4"]))
+        XCTAssertGreaterThan(
+            PackageExportHelper.fileSizeOnDiskMB(at: extractDir.appendingPathComponent("Actor_Role_Audition.mp4")),
+            91.0
+        )
+    }
+
+    @MainActor
+    func testSharePresenterOpensActivityViewControllerOverSheet() throws {
+        guard let hostTop = PackageSharePresenter.topMostViewController() else {
+            throw XCTSkip("No active host window view controller")
+        }
+
+        let dir = try makeTempDirectory(prefix: "OneTakeSharePresent")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let archiveURL = dir.appendingPathComponent("Test_Package.zip")
+        try ZipArchive.write([(name: "clip.mp4", data: Data(repeating: 0x22, count: 4096))], to: archiveURL)
+
+        let sheetVC = UIViewController()
+        sheetVC.view.backgroundColor = .systemBackground
+        hostTop.present(sheetVC, animated: false)
+        defer {
+            if hostTop.presentedViewController === sheetVC {
+                hostTop.dismiss(animated: false)
+            }
+        }
+
+        let attachDeadline = Date().addingTimeInterval(0.6)
+        while Date() < attachDeadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertTrue(PackageSharePresenter.topMostViewController() === sheetVC, "Expected topMostViewController() to resolve the open sheet")
+
+        let activityController = PackageSharePresenter.presentActivity(
+            items: [archiveURL],
+            subject: "Test_Package"
+        ) { _ in }
+
+        XCTAssertNotNil(activityController)
+
+        let deadline = Date().addingTimeInterval(3.5)
+        while Date() < deadline && sheetVC.presentedViewController == nil {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertTrue(
+            sheetVC.presentedViewController is UIActivityViewController,
+            "Expected UIActivityViewController, got: \(String(describing: sheetVC.presentedViewController))"
+        )
+        sheetVC.dismiss(animated: false)
+    }
 }

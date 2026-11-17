@@ -443,6 +443,41 @@ final class MediaPipelineAndTakesTests: XCTestCase {
         XCTAssertEqual(utterance.volume, 0.42, accuracy: 0.001)
     }
 
+    func testCleanAudioSamplesSuppressesRoomRumbleAndQuietNoiseWhilePreservingSpeech() {
+        let sampleRate = 44_100.0
+        let totalSeconds = 2.0
+        let totalSamples = Int(sampleRate * totalSeconds)
+        var samples = [Float](repeating: 0, count: totalSamples)
+
+        // First 1.0s: 50 Hz AC hum + low ambient hiss (room noise floor).
+        // Second 1.0s: 1 kHz dialogue-band tone bursts + same background noise.
+        for i in 0..<totalSamples {
+            let t = Double(i) / sampleRate
+            let hum = 0.035 * sin(2.0 * .pi * 50.0 * t)
+            let hiss = 0.015 * sin(2.0 * .pi * 6200.0 * t)
+            let speech = (t >= 1.1 && t <= 1.8) ? 0.28 * sin(2.0 * .pi * 1000.0 * t) : 0.0
+            samples[i] = Float(hum + hiss + speech)
+        }
+
+        let beforeNoiseRMS = rms(of: samples, range: Int(0.2 * sampleRate)..<Int(0.9 * sampleRate))
+        let beforeSpeechRMS = rms(of: samples, range: Int(1.2 * sampleRate)..<Int(1.7 * sampleRate))
+
+        VideoPostProcessingService.cleanAudioSamples(&samples, sampleRate: sampleRate, channels: 1)
+
+        let afterNoiseRMS = rms(of: samples, range: Int(0.2 * sampleRate)..<Int(0.9 * sampleRate))
+        let afterSpeechRMS = rms(of: samples, range: Int(1.2 * sampleRate)..<Int(1.7 * sampleRate))
+
+        XCTAssertLessThan(afterNoiseRMS, beforeNoiseRMS * 0.35, "Room rumble + noise floor must be strongly attenuated")
+        XCTAssertGreaterThan(afterSpeechRMS, beforeSpeechRMS * 0.65, "Spoken dialogue section must remain clear and audible")
+        XCTAssertGreaterThan(afterSpeechRMS / max(0.0001, afterNoiseRMS), beforeSpeechRMS / max(0.0001, beforeNoiseRMS))
+    }
+
+    private func rms(of samples: [Float], range: Range<Int>) -> Double {
+        let slice = samples[range]
+        let sumSq = slice.reduce(0.0) { $0 + Double($1 * $1) }
+        return sqrt(sumSq / Double(slice.count))
+    }
+
     // MARK: - Helpers
 
     private func writeAudioWav(

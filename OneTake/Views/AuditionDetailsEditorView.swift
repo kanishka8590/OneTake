@@ -81,6 +81,7 @@ struct AuditionDetailsEditorView: View {
     @State private var selectedSidesPhotoItems: [PhotosPickerItem] = []
     @State private var showingSidesPhotoPicker = false
     @State private var showingDocumentScanner = false
+    @State private var pendingScannedSidesImages: [UIImage] = []
     @State private var showingFileImporter = false
     @State private var showingPasteEditor = false
     @State private var pastedScriptBuffer = ""
@@ -422,14 +423,15 @@ struct AuditionDetailsEditorView: View {
                 selectedSidesPhotoItems = []
                 loadSidesPhotos(toProcess)
             }
-            .sheet(isPresented: $showingDocumentScanner) {
+            .sheet(isPresented: $showingDocumentScanner, onDismiss: processPendingSidesScannedImages) {
                 DocumentScannerRepresentable { images in
+                    pendingScannedSidesImages = images
                     showingDocumentScanner = false
-                    guard !images.isEmpty else { return }
-                    processSidesScannedImages(images)
                 } onCancel: {
+                    pendingScannedSidesImages = []
                     showingDocumentScanner = false
                 } onError: { error in
+                    pendingScannedSidesImages = []
                     showingDocumentScanner = false
                     presentImportError(error.localizedDescription)
                 }
@@ -924,6 +926,13 @@ struct AuditionDetailsEditorView: View {
         }
     }
 
+    private func processPendingSidesScannedImages() {
+        let images = pendingScannedSidesImages
+        pendingScannedSidesImages = []
+        guard !images.isEmpty else { return }
+        processSidesScannedImages(images)
+    }
+
     private func processSidesScannedImages(_ images: [UIImage]) {
         isProcessingSides = true
         let fallbackRole = roleName.isEmpty ? "ACTOR" : roleName
@@ -1229,23 +1238,123 @@ struct AuditionDetailsEditorView: View {
         .presentationDetents([.fraction(0.35)])
     }
 
+    private struct PresetRequirementOption: Identifiable {
+        let id: String
+        let displayName: String
+        let title: String
+        let subtitle: String
+        let icon: String
+        let matchKeywords: [String]
+    }
+
+    private var presetRequirementOptions: [PresetRequirementOption] {
+        [
+            PresetRequirementOption(
+                id: "headshots",
+                displayName: "Headshots",
+                title: "Guided Headshots (3 Angles: Front, Left, Right)",
+                subtitle: "Front, Left Profile & Right Profile photos",
+                icon: "person.crop.rectangle.stack",
+                matchKeywords: ["headshot"]
+            ),
+            PresetRequirementOption(
+                id: "slate",
+                displayName: "Slate",
+                title: "Slate / Introduction Video",
+                subtitle: "Name, agency & role introduction take",
+                icon: "person.wave.2",
+                matchKeywords: ["slate", "intro"]
+            ),
+            PresetRequirementOption(
+                id: "selftape",
+                displayName: "Self-Tape",
+                title: "Audition Self-Tape Take",
+                subtitle: "Main scene performance self-tape",
+                icon: "video",
+                matchKeywords: ["self-tape", "self tape", "audition", "monologue", "scene"]
+            )
+        ]
+    }
+
+    private func isPresetSelected(_ option: PresetRequirementOption) -> Bool {
+        draftRequirements.contains { req in
+            let lower = req.title.lowercased()
+            return option.matchKeywords.contains { lower.contains($0) }
+        }
+    }
+
+    private func setPreset(_ option: PresetRequirementOption, enabled: Bool) {
+        if enabled {
+            guard !isPresetSelected(option) else { return }
+            draftRequirements.append(SubmissionRequirement(title: option.title))
+        } else {
+            draftRequirements.removeAll { req in
+                let lower = req.title.lowercased()
+                return option.matchKeywords.contains { lower.contains($0) }
+            }
+        }
+    }
+
+    private func presetRequirementRow(_ option: PresetRequirementOption) -> some View {
+        Toggle(isOn: Binding(
+            get: { isPresetSelected(option) },
+            set: { setPreset(option, enabled: $0) }
+        )) {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(option.displayName)
+                        .font(Theme.Typography.bodyRegular.weight(.medium))
+                    Text(option.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                }
+            } icon: {
+                Image(systemName: option.icon)
+                    .foregroundStyle(Theme.Colors.accent)
+            }
+        }
+        .tint(Theme.Colors.accent)
+    }
+
     private var editRequirementsSheet: some View {
         NavigationStack {
             List {
-                Section("Current Requirements") {
-                    ForEach(draftRequirements) { req in
-                        HStack {
-                            Text(req.title)
-                                .font(Theme.Typography.bodyRegular)
-                            Spacer()
-                        }
-                    }
-                    .onDelete { indexSet in
-                        draftRequirements.remove(atOffsets: indexSet)
+                Section("Submission Types") {
+                    ForEach(presetRequirementOptions) { option in
+                        presetRequirementRow(option)
                     }
                 }
 
-                Section("Add Requirement") {
+                Section("Current Requirements") {
+                    if draftRequirements.isEmpty {
+                        Text("No submission requirements selected.")
+                            .font(Theme.Typography.bodyRegular)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                    } else {
+                        ForEach(draftRequirements) { req in
+                            HStack {
+                                Image(systemName: req.isCompleted ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(req.isCompleted ? Theme.Colors.successGreen : Theme.Colors.textSecondary)
+                                Text(req.title)
+                                    .font(Theme.Typography.bodyRegular)
+                                Spacer()
+                                Button(role: .destructive) {
+                                    draftRequirements.removeAll { $0.id == req.id }
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundStyle(Theme.Colors.errorCrimson)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Remove \(req.title)")
+                            }
+                        }
+                        .onDelete { indexSet in
+                            draftRequirements.remove(atOffsets: indexSet)
+                        }
+                    }
+                }
+
+                Section("Add Custom Requirement") {
                     HStack {
                         TextField("New requirement...", text: $newRequirementTitle)
                         Button {
@@ -1254,9 +1363,10 @@ struct AuditionDetailsEditorView: View {
                             draftRequirements.append(SubmissionRequirement(title: trimmed))
                             newRequirementTitle = ""
                         } label: {
-                            Image(systemName: "plus")
+                            Image(systemName: "plus.circle.fill")
                                 .foregroundStyle(Theme.Colors.accent)
                         }
+                        .disabled(newRequirementTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .accessibilityLabel("Add requirement")
                     }
                 }
@@ -1275,7 +1385,7 @@ struct AuditionDetailsEditorView: View {
                 }
             }
         }
-        .presentationDetents([.fraction(0.65)])
+        .presentationDetents([.large])
     }
 
     private var attachSidesSheet: some View {

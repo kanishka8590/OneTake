@@ -64,7 +64,7 @@ struct DocumentScannerRepresentable: UIViewControllerRepresentable {
             for i in 0..<count {
                 autoreleasepool {
                     let raw = scan.imageOfPage(at: i)
-                    images.append(NoticeOCR.normalizedScanImage(raw))
+                    images.append(NoticeOCR.normalizedScanImage(raw, maxDimension: 1800))
                 }
             }
             controller.delegate = nil

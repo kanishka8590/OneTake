@@ -676,8 +676,8 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
             isFaceCentered: true,
             isAngleCorrect: true,
             resolvedYawDegrees: yawDegrees,
-            headline: autoCaptureEnabled ? "Perfect — holding steady to auto-shoot" : "Hold still — ready to shoot",
-            spoken: autoCaptureEnabled ? "Hold still." : "Framing and lighting look great. Ready to shoot.",
+            headline: autoCaptureEnabled ? "Perfect — holding steady to auto-shoot" : "Hold still — ready",
+            spoken: autoCaptureEnabled ? "Hold still." : "Framing and lighting look great. Ready!",
             isAligned: true
         )
     }
@@ -1370,7 +1370,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         request.contextualStrings = [
             "Now", "Action", "Capture", "Shoot", "Snap", "Click", "Photo", "How do I look", "Check framing"
         ]
-        request.requiresOnDeviceRecognition = speechRecognizer.supportsOnDeviceRecognition
+        request.requiresOnDeviceRecognition = false
         stateBox.recognitionRequest = request
         let taskID = UUID()
         stateBox.activeRecognitionTaskID = taskID
@@ -1441,13 +1441,9 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     /// bleed from triggering the shutter.
     @MainActor
     func handleRecognizedTranscript(_ transcript: String, isFinal: Bool) {
-        let inEchoWindow = isTTSSpeaking || speechSynthesizer.isSpeaking || Date().timeIntervalSince(lastTTSEndedAt) < 0.55
-        if inEchoWindow {
-            if isFinal {
-                voiceCommandController.resetTranscriptCursor()
-            }
-            return
-        }
+        // Avoid dropping real voice commands while guidance TTS is speaking;
+        // TTS strings omit trigger words ("shoot", "capture", "retake", "next", "cancel")
+        // and countdown digits only trigger nothing on VoiceCommandController.
         voiceCommandController.handleRecognizedTranscript(transcript, isFinal: isFinal)
     }
 

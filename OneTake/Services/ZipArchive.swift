@@ -1,5 +1,6 @@
 import Foundation
 import Compression
+import zlib
 
 /// Writes standards-compliant, store-only ZIP archives without loading large media into memory,
 /// and safely reads/extracts store (`method == 0`) and deflate (`method == 8`) ZIP archives
@@ -525,12 +526,10 @@ nonisolated enum ZipArchive {
     }
 
     static func crc32(_ data: Data) -> UInt32 {
-        var crc: UInt32 = 0xffffffff
-        for byte in data {
-            crc ^= UInt32(byte)
-            for _ in 0..<8 { crc = (crc & 1 != 0) ? ((crc >> 1) ^ 0xedb88320) : (crc >> 1) }
+        data.withUnsafeBytes { raw -> UInt32 in
+            guard let ptr = raw.bindMemory(to: Bytef.self).baseAddress else { return 0 }
+            return UInt32(zlib.crc32(0, ptr, uInt(raw.count)))
         }
-        return ~crc
     }
 
     static func crc32(of data: Data) -> UInt32 {
@@ -540,11 +539,14 @@ nonisolated enum ZipArchive {
     static func crc32(of url: URL) throws -> UInt32 {
         let input = try FileHandle(forReadingFrom: url)
         defer { try? input.close() }
-        var crc: UInt32 = 0xffffffff
+        var crc: uLong = zlib.crc32(0, nil, 0)
         while let chunk = try input.read(upToCount: 1024 * 1024), !chunk.isEmpty {
-            for byte in chunk { crc ^= UInt32(byte); for _ in 0..<8 { crc = (crc >> 1) ^ (0xedb88320 & (0 &- (crc & 1))) } }
+            crc = chunk.withUnsafeBytes { raw -> uLong in
+                guard let ptr = raw.bindMemory(to: Bytef.self).baseAddress else { return crc }
+                return zlib.crc32(crc, ptr, uInt(raw.count))
+            }
         }
-        return ~crc
+        return UInt32(crc)
     }
 
     private static func appendUInt16(_ value: UInt16, to data: inout Data) {

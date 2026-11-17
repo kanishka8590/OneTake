@@ -42,6 +42,10 @@ struct TeleprompterRecorderView: View {
     @State private var takeReviewRoute: TakeReviewRoute?
     @State private var didSaveApprovedTake = false
 
+    // Hands-free open-palm gesture debounce
+    @State private var gestureHoldTask: Task<Void, Never>?
+    @State private var lastGestureTriggerAt: Date = .distantPast
+
     private var effectiveScriptLines: [String] {
         scriptLines.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
@@ -60,6 +64,25 @@ struct TeleprompterRecorderView: View {
 
                 VStack(spacing: 0) {
                     Spacer().frame(height: 8)
+
+                    topQuickControlsBar
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 6)
+
+                    if recorderService.gesturesEnabled && recorderService.openPalmDetected && !recorderService.isCountingDown {
+                        HStack(spacing: 6) {
+                            Image(systemName: "hand.raised.fill")
+                                .foregroundStyle(Theme.Colors.cameraGuideGold)
+                            Text(recorderService.isRecording ? "Hold open palm to Stop..." : "Hold open palm to Record...")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.white)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .nativeGlassCapsuleSurface()
+                        .padding(.bottom, 6)
+                        .transition(.opacity.combined(with: .scale(scale: 0.94)))
+                    }
 
                     // Scrolling Teleprompter Overlay (hidden if empty)
                     if !effectiveScriptLines.isEmpty {
@@ -215,6 +238,32 @@ struct TeleprompterRecorderView: View {
                     cueEngine.stopListening()
                 }
             }
+            .onChange(of: recorderService.openPalmDetected) { _, detected in
+                gestureHoldTask?.cancel()
+                gestureHoldTask = nil
+                guard detected,
+                      recorderService.gesturesEnabled,
+                      !recorderService.isCountingDown,
+                      !recorderService.cameraPermissionDenied,
+                      takeReviewRoute == nil else { return }
+
+                gestureHoldTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    guard !Task.isCancelled,
+                          recorderService.gesturesEnabled,
+                          recorderService.openPalmDetected,
+                          !recorderService.isCountingDown,
+                          takeReviewRoute == nil,
+                          Date().timeIntervalSince(lastGestureTriggerAt) > 2.0 else { return }
+                    lastGestureTriggerAt = Date()
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    if recorderService.isRecording {
+                        stopRecordingAndReview()
+                    } else {
+                        startCountdownAndRecord()
+                    }
+                }
+            }
             .fullScreenCover(item: $takeReviewRoute, onDismiss: {
                 if !didSaveApprovedTake && !recorderService.isSessionRunning {
                     resetPrompterPosition()
@@ -289,6 +338,57 @@ struct TeleprompterRecorderView: View {
                 Color.black.ignoresSafeArea()
             }
             #endif
+        }
+    }
+
+    // MARK: - Top Gesture & Voice Toggles
+
+    private var voiceToggleTitle: String {
+        guard recorderService.voiceCommandsEnabled else { return "Voice Off" }
+        switch recorderService.voiceStatus {
+        case .listening: return "Voice On"
+        case .starting: return "Voice…"
+        default: return "Voice"
+        }
+    }
+
+    private var topQuickControlsBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                recorderService.gesturesEnabled.toggle()
+            } label: {
+                Label(
+                    "Gesture",
+                    systemImage: recorderService.gesturesEnabled ? "hand.raised.fill" : "hand.raised.slash"
+                )
+                .font(.system(size: 12, weight: .semibold))
+            }
+            .nativeGlassCapsuleButton(
+                tint: recorderService.gesturesEnabled ? Theme.Colors.cameraGuideGold : nil
+            )
+            .disabled(recorderService.cameraPermissionDenied)
+            .accessibilityLabel(recorderService.gesturesEnabled ? "Disable open palm gesture trigger" : "Enable open palm gesture trigger")
+
+            Button {
+                if recorderService.voiceCommandsEnabled {
+                    recorderService.disableVoiceCommands()
+                } else {
+                    recorderService.enableVoiceCommands()
+                }
+            } label: {
+                Label(
+                    voiceToggleTitle,
+                    systemImage: recorderService.voiceCommandsEnabled ? "mic.fill" : "mic.slash"
+                )
+                .font(.system(size: 12, weight: .semibold))
+            }
+            .nativeGlassCapsuleButton(
+                tint: recorderService.voiceCommandsEnabled
+                    ? (recorderService.isVoiceListening ? .green : Theme.Colors.cameraGuideGold)
+                    : nil
+            )
+            .disabled(recorderService.cameraPermissionDenied)
+            .accessibilityLabel(recorderService.voiceCommandsEnabled ? "Disable voice commands" : "Enable voice commands")
         }
     }
 
@@ -640,6 +740,8 @@ struct TeleprompterRecorderView: View {
     }
 
     private func stopAllOperations() {
+        gestureHoldTask?.cancel()
+        gestureHoldTask = nil
         stopPrompterScroll()
         cueEngine.stopListening()
         recorderService.stopSession()

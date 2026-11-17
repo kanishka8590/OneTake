@@ -279,4 +279,41 @@ final class AuditionVoicePipelineTests: XCTestCase {
         XCTAssertGreaterThan(tracker.matchedWordCount, countAfterFirstSentence)
         XCTAssertEqual(tracker.activeLineIndex, 2)
     }
+
+    @MainActor
+    func testRecorderVoiceAndGestureTogglesGateVoiceTriggersCleanly() {
+        let service = TeleprompterRecorderService.shared
+        let prevTrigger = service.onVoiceActionTriggered
+        let prevMic = service.onLiveMicData
+        let prevVoiceEnabled = service.voiceCommandsEnabled
+        let prevGesturesEnabled = service.gesturesEnabled
+        defer {
+            service.onVoiceActionTriggered = prevTrigger
+            service.onLiveMicData = prevMic
+            service.voiceCommandsEnabled = prevVoiceEnabled
+            service.gesturesEnabled = prevGesturesEnabled
+            service.stopSession()
+        }
+
+        var voiceTriggeredCount = 0
+        var micTranscripts: [String] = []
+        service.onVoiceActionTriggered = { voiceTriggeredCount += 1 }
+        service.onLiveMicData = { _, transcript, _ in micTranscripts.append(transcript) }
+
+        service.disableVoiceCommands()
+        XCTAssertFalse(service.voiceCommandsEnabled)
+        service.handleRecognizedTranscript("action", isFinal: true)
+        XCTAssertEqual(voiceTriggeredCount, 0, "Disabled voice commands must not trigger action")
+        XCTAssertEqual(micTranscripts, ["action"], "Voice sync transcript stream must still remain alive")
+
+        service.enableVoiceCommands()
+        XCTAssertTrue(service.voiceCommandsEnabled)
+        service.handleRecognizedTranscript("action", isFinal: true)
+        XCTAssertEqual(voiceTriggeredCount, 1, "Re-enabled voice commands must fire 'action' trigger")
+
+        service.gesturesEnabled = false
+        XCTAssertFalse(service.gesturesEnabled)
+        service.gesturesEnabled = true
+        XCTAssertTrue(service.gesturesEnabled)
+    }
 }

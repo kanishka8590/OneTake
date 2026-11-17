@@ -15,6 +15,8 @@ nonisolated final class BPETokenizer: @unchecked Sendable {
     private var vocab: [String: Int] = [:]
     private var idToToken: [Int: String] = [:]
     private var bpeRanks: [String: Int] = [:]
+    private let usesBundledAssets: Bool
+    private var isLoaded: Bool = false
 
     init(vocabMap: [String: Int] = [:], merges: [String] = []) {
         var b2u: [UInt8: Character] = [:]
@@ -49,14 +51,14 @@ nonisolated final class BPETokenizer: @unchecked Sendable {
 
         self.bytesToUnicode = b2u
         self.unicodeToBytes = u2b
+        self.usesBundledAssets = vocabMap.isEmpty && merges.isEmpty
 
         if !vocabMap.isEmpty {
             self.vocab = vocabMap
             var rev: [Int: String] = [:]
             for (k, v) in vocabMap { rev[v] = k }
             self.idToToken = rev
-        } else {
-            loadBundledVocab()
+            self.isLoaded = true
         }
 
         if !merges.isEmpty {
@@ -66,13 +68,35 @@ nonisolated final class BPETokenizer: @unchecked Sendable {
                     self.bpeRanks[trimmed] = idx
                 }
             }
-        } else {
+            self.isLoaded = true
+        }
+    }
+
+    private func ensureLoaded() {
+        guard usesBundledAssets, !isLoaded else { return }
+        autoreleasepool {
+            loadBundledVocab()
             loadBundledMerges()
         }
+        isLoaded = true
+    }
+
+    func unload() {
+        guard usesBundledAssets, isLoaded else { return }
+        vocab.removeAll(keepingCapacity: false)
+        idToToken.removeAll(keepingCapacity: false)
+        bpeRanks.removeAll(keepingCapacity: false)
+        isLoaded = false
+    }
+
+    var hasFullVocab: Bool {
+        ensureLoaded()
+        return !bpeRanks.isEmpty && vocab.count > 1000
     }
 
     private func loadBundledVocab() {
         var fileURL: URL? = Bundle.main.url(forResource: "vocab", withExtension: "json")
+            ?? Bundle(for: BPETokenizer.self).url(forResource: "vocab", withExtension: "json")
         if fileURL == nil {
             let modelsPath = Bundle.main.bundleURL.appendingPathComponent("models/onetake-parser-merged/vocab.json")
             if FileManager.default.fileExists(atPath: modelsPath.path) {
@@ -93,6 +117,7 @@ nonisolated final class BPETokenizer: @unchecked Sendable {
 
     private func loadBundledMerges() {
         var fileURL: URL? = Bundle.main.url(forResource: "merges", withExtension: "txt")
+            ?? Bundle(for: BPETokenizer.self).url(forResource: "merges", withExtension: "txt")
         if fileURL == nil {
             let modelsPath = Bundle.main.bundleURL.appendingPathComponent("models/onetake-parser-merged/merges.txt")
             if FileManager.default.fileExists(atPath: modelsPath.path) {
@@ -211,23 +236,36 @@ nonisolated final class BPETokenizer: @unchecked Sendable {
     }
 
     func decode(tokens: [Int]) -> String {
-        var result = ""
+        ensureLoaded()
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(tokens.count * 4)
+
         for tokenID in tokens {
             if tokenID == eosTokenID || tokenID == imEndTokenID {
                 break
             }
             if let tokenStr = idToToken[tokenID] {
-                result += tokenStr
-            } else if tokenID >= 0 && tokenID < 256 {
-                if let scalar = UnicodeScalar(tokenID) {
-                    result.append(Character(scalar))
+                if tokenStr.hasPrefix("<|") && tokenStr.hasSuffix("|>") {
+                    continue
                 }
+                for ch in tokenStr {
+                    if let byte = unicodeToBytes[ch] {
+                        bytes.append(byte)
+                    } else {
+                        // Fallback for non-byte-mapped default vocab entries (e.g., ASCII space/newline)
+                        bytes.append(contentsOf: String(ch).utf8)
+                    }
+                }
+            } else if tokenID >= 0 && tokenID < 256 {
+                bytes.append(UInt8(tokenID))
             }
         }
-        return result
+
+        return String(decoding: bytes, as: UTF8.self)
     }
 
     func encode(text: String) -> [Int] {
+        ensureLoaded()
         if !bpeRanks.isEmpty {
             var tokenIDs: [Int] = []
             let pattern = #"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"#

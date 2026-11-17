@@ -21,6 +21,11 @@ struct TakeReviewView: View {
     @State private var player: AVPlayer?
     @State private var observedPlayer: AVPlayer?
     @State private var timeObserverToken: Any?
+    @State private var isPlaying: Bool = false
+    @State private var playheadSeconds: Double = 0.0
+    @State private var filmstrip: [UIImage] = []
+    @State private var cleanedPreviewURL: URL?
+    @State private var isPreparingCleanPreview: Bool = false
     @State private var trimStart: Double = 0.0
     @State private var trimEnd: Double = 0.0
     @State private var didAutoTrimSilence: Bool = false
@@ -47,19 +52,39 @@ struct TakeReviewView: View {
                     .ignoresSafeArea()
 
                 ScrollView {
-                    VStack(spacing: 20) {
+                    VStack(spacing: 18) {
                         // Video Player Preview
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 16)
-                                .fill(Color.black)
-                                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                        VStack(spacing: 10) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .fill(Color.black)
+                                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
 
-                            if let player = player {
-                                VideoPlayer(player: player)
-                                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                            } else {
-                                ProgressView()
-                                    .tint(.white)
+                                if let player = player {
+                                    VideoPlayer(player: player)
+                                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                } else {
+                                    ProgressView()
+                                        .tint(.white)
+                                }
+                            }
+
+                            HStack(spacing: 12) {
+                                Button {
+                                    togglePlayPause()
+                                } label: {
+                                    Label(isPlaying ? "Pause" : "Play Selection", systemImage: isPlaying ? "pause.fill" : "play.fill")
+                                        .font(.system(size: 13, weight: .semibold))
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(Theme.Colors.accent)
+                                .disabled(player == nil || isExporting)
+
+                                Spacer()
+
+                                Text("\(formattedTime(playheadSeconds)) / \(formattedTime(safeDuration))")
+                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(Theme.Colors.textSecondary)
                             }
                         }
                         .padding(.horizontal, 16)
@@ -67,80 +92,39 @@ struct TakeReviewView: View {
 
                         qualityChecks
 
-                        // Interactive Video Trimmer
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack {
-                                Text("Trim Start & End")
-                                    .font(Theme.Typography.sectionHeader)
-                                    .foregroundStyle(Theme.Colors.textPrimary)
+                        // Interactive Filmstrip Timeline Trimmer (ported from OneTake-iOS-main VideoTrimmer)
+                        timelineCard
+                            .padding(.horizontal, Theme.Layout.screenHPadding)
 
-                                Spacer()
-
-                                Text(String(format: "%.1fs - %.1fs (Duration: %.1fs)", trimStart, trimEnd, max(0.1, trimEnd - trimStart)))
-                                    .font(Theme.Typography.captionBadge)
-                                    .foregroundStyle(Theme.Colors.accent)
-                            }
-
-                            if didAutoTrimSilence {
-                                HStack(spacing: 5) {
-                                    Image(systemName: "waveform.path")
-                                        .font(.system(size: 11, weight: .semibold))
-                                    Text("Auto-trimmed silence")
-                                        .font(.system(size: 11, weight: .semibold))
-                                }
-                                .foregroundStyle(Theme.Colors.accent)
-                                .padding(.horizontal, 9)
-                                .padding(.vertical, 4)
-                                .background(Theme.Colors.lavenderSurface)
-                                .clipShape(Capsule())
-                            }
-
-                            VStack(spacing: 8) {
-                                HStack {
-                                    Text("Start:")
-                                        .font(Theme.Typography.captionBadge)
-                                        .frame(width: 44, alignment: .leading)
-                                    let startUpper = max(0.05, trimEnd - minTrimGap)
-                                    Slider(value: $trimStart, in: 0...startUpper)
-                                        .tint(Theme.Colors.accent)
-                                        .onChange(of: trimStart) { _, newVal in
-                                            seekPlayer(to: newVal)
-                                        }
-                                }
-
-                                HStack {
-                                    Text("End:")
-                                        .font(Theme.Typography.captionBadge)
-                                        .frame(width: 44, alignment: .leading)
-                                    let endLower = min(safeDuration - 0.05, trimStart + minTrimGap)
-                                    Slider(value: $trimEnd, in: endLower...safeDuration)
-                                        .tint(Theme.Colors.accent)
-                                        .onChange(of: trimEnd) { _, newVal in
-                                            seekPlayer(to: newVal)
-                                        }
-                                }
-                            }
-                        }
-                        .padding(16)
-                        .cardStyle()
-                        .padding(.horizontal, Theme.Layout.screenHPadding)
-
-                        // Clean up Room Sound Toggle (A/B Audio Toggle)
+                        // Clean up Room Sound Toggle (Real DSP A/B Audio Toggle)
                         HStack(alignment: .center, spacing: 12) {
                             Image(systemName: "waveform.badge.magnifyingglass")
                                 .foregroundStyle(Theme.Colors.accent)
 
-                            Text("Clean up room sound")
-                                .font(Theme.Typography.cardTitle)
-                                .foregroundStyle(Theme.Colors.textPrimary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.85)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Clean up room sound")
+                                    .font(Theme.Typography.cardTitle)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.85)
+                                Text(isNoiseCleaned
+                                     ? (isPreparingCleanPreview ? "Cleaning ambient noise & rumble..." : "85 Hz rumble cut, echo trim & noise gate active")
+                                     : "Tap to filter room noise & boost voice clarity")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                            }
 
                             Spacer()
+
+                            if isPreparingCleanPreview {
+                                ProgressView()
+                                    .scaleEffect(0.85)
+                            }
 
                             Toggle("", isOn: $isNoiseCleaned)
                                 .labelsHidden()
                                 .tint(Theme.Colors.accent)
+                                .disabled(isExporting)
                         }
                         .padding(16)
                         .cardStyle()
@@ -164,18 +148,11 @@ struct TakeReviewView: View {
             .navigationTitle("Review Take")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItemGroup(placement: .topBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Close") {
                         teardownPlayer()
                         cleanupTempRawVideoIfNeeded()
                         dismiss()
-                    }
-                    .disabled(isExporting)
-
-                    Button("Retake") {
-                        teardownPlayer()
-                        cleanupTempRawVideoIfNeeded()
-                        onRetake()
                     }
                     .disabled(isExporting)
                 }
@@ -193,6 +170,26 @@ struct TakeReviewView: View {
                     }
                 }
             }
+            .safeAreaInset(edge: .bottom) {
+                HStack(spacing: 12) {
+                    Button {
+                        teardownPlayer()
+                        cleanupTempRawVideoIfNeeded()
+                        onRetake()
+                    } label: {
+                        Label("Retake", systemImage: "arrow.counterclockwise")
+                            .font(.system(size: 15, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(Theme.Colors.textPrimary)
+                    .disabled(isExporting)
+                }
+                .padding(.horizontal, Theme.Layout.screenHPadding)
+                .padding(.vertical, 10)
+                .background(.ultraThinMaterial)
+            }
             .alert("Export Failed", isPresented: $showingExportError) {
                 Button("Retry") {
                     finalizeAndSaveTake()
@@ -207,6 +204,15 @@ struct TakeReviewView: View {
             }
             .task {
                 await applyAutoTrimSuggestionIfEnabled()
+                filmstrip = await Self.generateFilmstrip(for: rawVideoURL, duration: safeDuration, count: 8)
+                if isNoiseCleaned {
+                    await switchPlaybackAudio(cleaned: true)
+                }
+            }
+            .onChange(of: isNoiseCleaned) { _, cleaned in
+                Task {
+                    await switchPlaybackAudio(cleaned: cleaned)
+                }
             }
             .onDisappear {
                 teardownPlayer()
@@ -236,10 +242,200 @@ struct TakeReviewView: View {
         .clipShape(Capsule())
     }
 
+    // MARK: - Filmstrip Trimmer Card
+
+    private var timelineCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                HStack(spacing: 4) {
+                    Text("START")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                    Text(formattedTime(trimStart))
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                }
+
+                Spacer()
+
+                HStack(spacing: 4) {
+                    Image(systemName: "scissors")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.accent)
+                    Text(formattedTime(max(0.1, trimEnd - trimStart)))
+                        .font(.caption.monospacedDigit().weight(.bold))
+                        .foregroundStyle(Theme.Colors.accent)
+                }
+
+                Spacer()
+
+                HStack(spacing: 4) {
+                    Text("END")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                    Text(formattedTime(trimEnd))
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                }
+            }
+
+            if didAutoTrimSilence {
+                HStack(spacing: 5) {
+                    Image(systemName: "waveform.path")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Auto-trimmed silence")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundStyle(Theme.Colors.accent)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(Theme.Colors.lavenderSurface)
+                .clipShape(Capsule())
+            }
+
+            GeometryReader { geo in
+                timelineTrack(totalWidth: geo.size.width)
+            }
+            .frame(height: 58)
+        }
+        .padding(16)
+        .cardStyle()
+    }
+
+    private func timelineTrack(totalWidth: CGFloat) -> some View {
+        let width = max(120, totalWidth)
+        let handleWidth: CGFloat = 18
+        let trackHeight: CGFloat = 52
+        let duration = safeDuration
+        let startX = max(0, min(width - handleWidth * 2, CGFloat(trimStart / duration) * width))
+        let endX = max(startX + handleWidth * 2, min(width, CGFloat(trimEnd / duration) * width))
+        let playheadX = max(0, min(width, CGFloat(playheadSeconds / duration) * width))
+
+        return ZStack(alignment: .leading) {
+            ZStack {
+                if !filmstrip.isEmpty {
+                    HStack(spacing: 0) {
+                        ForEach(filmstrip.indices, id: \.self) { index in
+                            Image(uiImage: filmstrip[index])
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: width / CGFloat(filmstrip.count), height: trackHeight)
+                                .clipped()
+                        }
+                    }
+                } else {
+                    HStack(spacing: 0) {
+                        ForEach(0..<16, id: \.self) { _ in
+                            Spacer(minLength: 0)
+                            Rectangle()
+                                .fill(Theme.Colors.textSecondary.opacity(0.25))
+                                .frame(width: 1, height: 24)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+            .frame(width: width, height: trackHeight)
+            .background(Color.black.opacity(0.18))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            if startX > 0 {
+                Rectangle()
+                    .fill(Color.black.opacity(0.55))
+                    .frame(width: startX, height: trackHeight)
+            }
+            if endX < width {
+                Rectangle()
+                    .fill(Color.black.opacity(0.55))
+                    .frame(width: width - endX, height: trackHeight)
+                    .offset(x: endX)
+            }
+
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Theme.Colors.accent, lineWidth: 2.5)
+                .frame(width: max(handleWidth * 2, endX - startX), height: trackHeight)
+                .offset(x: startX)
+
+            Rectangle()
+                .fill(Color.white)
+                .frame(width: 2.5, height: 58)
+                .shadow(color: .black.opacity(0.6), radius: 2)
+                .offset(x: max(0, min(width - 2.5, playheadX - 1.25)))
+
+            trimHandle(icon: "chevron.compact.left", width: handleWidth, height: trackHeight)
+                .offset(x: startX)
+                .gesture(
+                    DragGesture(minimumDistance: 0, coordinateSpace: .named("takeScrubberTrack"))
+                        .onChanged { value in
+                            let clampedX = max(0, min(endX - handleWidth * 2, value.location.x))
+                            let newSec = Double(clampedX / width) * duration
+                            trimStart = max(0, min(trimEnd - minTrimGap, newSec))
+                            playheadSeconds = trimStart
+                            seekPlayer(to: trimStart)
+                        }
+                )
+
+            trimHandle(icon: "chevron.compact.right", width: handleWidth, height: trackHeight)
+                .offset(x: max(handleWidth, endX - handleWidth))
+                .gesture(
+                    DragGesture(minimumDistance: 0, coordinateSpace: .named("takeScrubberTrack"))
+                        .onChanged { value in
+                            let clampedX = max(startX + handleWidth * 2, min(width, value.location.x))
+                            let newSec = Double(clampedX / width) * duration
+                            trimEnd = min(duration, max(trimStart + minTrimGap, newSec))
+                            playheadSeconds = trimEnd
+                            seekPlayer(to: trimEnd)
+                        }
+                )
+        }
+        .frame(width: width, height: 58, alignment: .leading)
+        .coordinateSpace(name: "takeScrubberTrack")
+        .contentShape(Rectangle())
+        .onTapGesture { location in
+            let clampedX = max(0, min(width, location.x))
+            let tappedSec = Double(clampedX / width) * duration
+            playheadSeconds = min(duration, max(0, tappedSec))
+            seekPlayer(to: playheadSeconds)
+        }
+    }
+
+    private func trimHandle(icon: String, width: CGFloat, height: CGFloat) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Theme.Colors.accent)
+                .frame(width: width, height: height)
+            Image(systemName: icon)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.white)
+        }
+    }
+
+    private func formattedTime(_ seconds: Double) -> String {
+        let value = max(0, Int(seconds.rounded()))
+        return String(format: "%02d:%02d", value / 60, value % 60)
+    }
+
+    private static func generateFilmstrip(for url: URL, duration: Double, count: Int) async -> [UIImage] {
+        guard count > 0, duration > 0.1 else { return [] }
+        let asset = AVURLAsset(url: url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 160, height: 160)
+        var images: [UIImage] = []
+        for i in 0..<count {
+            let t = CMTime(seconds: duration * (Double(i) + 0.5) / Double(count), preferredTimescale: 600)
+            if let cg = try? await generator.image(at: t).image {
+                images.append(UIImage(cgImage: cg))
+            }
+        }
+        return images
+    }
+
     private func setupPlayer() {
         teardownPlayer()
         trimStart = 0.0
         trimEnd = safeDuration
+        playheadSeconds = 0.0
 
         let playerItem = AVPlayerItem(url: rawVideoURL)
         let newPlayer = AVPlayer(playerItem: playerItem)
@@ -247,25 +443,85 @@ struct TakeReviewView: View {
         self.observedPlayer = newPlayer
 
         let interval = CMTime(seconds: 0.05, preferredTimescale: 600)
-        timeObserverToken = newPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak newPlayer] time in
-            guard let newPlayer else { return }
+        timeObserverToken = newPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
             let seconds = time.seconds
             guard seconds.isFinite else { return }
+            self.playheadSeconds = seconds
+            self.isPlaying = (newPlayer.timeControlStatus == .playing)
 
-            if seconds >= trimEnd {
+            if seconds >= self.trimEnd {
                 newPlayer.pause()
+                self.isPlaying = false
+                self.playheadSeconds = self.trimStart
                 newPlayer.seek(
-                    to: CMTime(seconds: trimStart, preferredTimescale: 600),
+                    to: CMTime(seconds: self.trimStart, preferredTimescale: 600),
                     toleranceBefore: .zero,
                     toleranceAfter: .zero
                 )
-            } else if seconds < trimStart - 0.05 {
+            } else if seconds < self.trimStart - 0.05 {
+                self.playheadSeconds = self.trimStart
                 newPlayer.seek(
-                    to: CMTime(seconds: trimStart, preferredTimescale: 600),
+                    to: CMTime(seconds: self.trimStart, preferredTimescale: 600),
                     toleranceBefore: .zero,
                     toleranceAfter: .zero
                 )
             }
+        }
+    }
+
+    private func togglePlayPause() {
+        guard let player else { return }
+        if player.timeControlStatus == .playing {
+            player.pause()
+            isPlaying = false
+        } else {
+            if playheadSeconds >= trimEnd - 0.05 || playheadSeconds < trimStart {
+                playheadSeconds = trimStart
+                seekPlayer(to: trimStart)
+            }
+            player.play()
+            isPlaying = true
+        }
+    }
+
+    private func switchPlaybackAudio(cleaned: Bool) async {
+        guard let player else { return }
+        let targetURL: URL
+        if cleaned {
+            if let cached = cleanedPreviewURL, FileManager.default.fileExists(atPath: cached.path) {
+                targetURL = cached
+            } else {
+                isPreparingCleanPreview = true
+                let previewURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("onetake_preview_clean_\(UUID().uuidString).mp4")
+                do {
+                    let generated = try await postProcessor.prepareCleanedPreview(
+                        sourceURL: rawVideoURL,
+                        destinationURL: previewURL
+                    )
+                    cleanedPreviewURL = generated
+                    targetURL = generated
+                } catch {
+                    isPreparingCleanPreview = false
+                    return
+                }
+                isPreparingCleanPreview = false
+            }
+        } else {
+            targetURL = rawVideoURL
+        }
+
+        let currentTime = player.currentTime()
+        let wasPlaying = (player.timeControlStatus == .playing)
+        player.pause()
+        let item = AVPlayerItem(url: targetURL)
+        player.replaceCurrentItem(with: item)
+        if currentTime.seconds.isFinite && currentTime.seconds >= 0 {
+            await player.seek(to: currentTime, toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        if wasPlaying {
+            player.play()
+            isPlaying = true
         }
     }
 
@@ -276,12 +532,14 @@ struct TakeReviewView: View {
         timeObserverToken = nil
         observedPlayer = nil
         player?.pause()
+        isPlaying = false
         player?.replaceCurrentItem(with: nil)
         player = nil
     }
 
     private func seekPlayer(to seconds: Double) {
         let clamped = max(0.0, min(seconds, safeDuration))
+        playheadSeconds = clamped
         player?.seek(
             to: CMTime(seconds: clamped, preferredTimescale: 600),
             toleranceBefore: .zero,
@@ -294,6 +552,10 @@ struct TakeReviewView: View {
         let rawPath = rawVideoURL.standardizedFileURL.path
         if rawPath.hasPrefix(tempRoot), FileManager.default.fileExists(atPath: rawPath) {
             try? FileManager.default.removeItem(at: rawVideoURL)
+        }
+        if let cleaned = cleanedPreviewURL {
+            try? FileManager.default.removeItem(at: cleaned)
+            cleanedPreviewURL = nil
         }
     }
 

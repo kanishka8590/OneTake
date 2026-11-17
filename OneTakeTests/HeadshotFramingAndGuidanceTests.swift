@@ -322,5 +322,25 @@ final class HeadshotFramingAndGuidanceTests: XCTestCase {
         XCTAssertTrue(eval.isAligned)
         XCTAssertFalse(eval.spoken.lowercased().contains("now"))
         XCTAssertFalse(eval.spoken.lowercased().contains("action"))
+        XCTAssertFalse(eval.spoken.lowercased().contains("shoot"))
+    }
+
+    @MainActor
+    func testHeadshotVoiceCommandTriggersCaptureDuringActiveSession() {
+        let service = HeadshotGuidanceService.shared
+        let prevCallback = service.onShutterTriggered
+        defer {
+            service.onShutterTriggered = prevCallback
+            service.stopSession()
+        }
+
+        var didTrigger = false
+        service.startSession(for: .front, isDemoMode: true)
+        service.onShutterTriggered = {
+            didTrigger = true
+        }
+
+        service.handleRecognizedTranscript("shoot", isFinal: false)
+        XCTAssertTrue(didTrigger, "Headshot voice trigger 'shoot' must fire capture callback immediately")
     }
 }
