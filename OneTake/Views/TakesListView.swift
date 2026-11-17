@@ -122,6 +122,7 @@ struct TakesListView: View {
             }
             .navigationTitle(isSlate ? "Slate Takes" : "Audition Takes")
             .navigationBarTitleDisplayMode(.inline)
+            .hideTabBarPastRoot()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }

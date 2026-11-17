@@ -60,7 +60,12 @@ struct HeadshotCropView: View {
 
                         if let preview = croppedPreviewImage {
                             GeometryReader { geo in
-                                let effectiveScale = max(1.0, min(3.5, zoomScale * pinchScale))
+                                let isDraggingNow = abs(dragTranslation.width) > 1 || abs(dragTranslation.height) > 1
+                                let baseLimit = HeadshotCropMath.maxOffset(imageSize: preview.size, containerSize: geo.size, scale: zoomScale)
+                                let baseForDrag = (isDraggingNow && (baseLimit.width < 20 || baseLimit.height < 20))
+                                    ? max(zoomScale, 1.24)
+                                    : zoomScale
+                                let effectiveScale = max(1.0, min(3.5, baseForDrag * pinchScale))
                                 let proposedOffset = CGSize(
                                     width: panOffset.width + dragTranslation.width,
                                     height: panOffset.height + dragTranslation.height
@@ -96,20 +101,23 @@ struct HeadshotCropView: View {
                                                     )
                                                     pinchScale = 1.0
                                                 },
-                                            DragGesture()
+                                            DragGesture(minimumDistance: 2)
                                                 .onChanged { val in
                                                     dragTranslation = val.translation
                                                 }
                                                 .onEnded { val in
+                                                    let limit = HeadshotCropMath.maxOffset(imageSize: preview.size, containerSize: geo.size, scale: zoomScale)
+                                                    let promotedScale = (limit.width < 20 || limit.height < 20) ? max(zoomScale, 1.24) : zoomScale
                                                     let raw = CGSize(
                                                         width: panOffset.width + val.translation.width,
                                                         height: panOffset.height + val.translation.height
                                                     )
+                                                    zoomScale = promotedScale
                                                     panOffset = HeadshotCropMath.clampedOffset(
                                                         raw,
                                                         imageSize: preview.size,
                                                         containerSize: geo.size,
-                                                        scale: zoomScale
+                                                        scale: promotedScale
                                                     )
                                                     dragTranslation = .zero
                                                 }
@@ -140,7 +148,44 @@ struct HeadshotCropView: View {
                             .padding(.horizontal, 24)
                             .allowsHitTesting(false)
                     }
-                    .frame(maxHeight: 380)
+                    .frame(maxHeight: 340)
+
+                    HStack(spacing: 10) {
+                        Image(systemName: "minus.magnifyingglass")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.Colors.textSecondary)
+
+                        Slider(
+                            value: Binding(
+                                get: { Double(zoomScale) },
+                                set: { newVal in
+                                    let nextScale = CGFloat(max(1.0, min(3.5, newVal)))
+                                    zoomScale = nextScale
+                                    if let preview = croppedPreviewImage {
+                                        panOffset = HeadshotCropMath.clampedOffset(
+                                            panOffset,
+                                            imageSize: preview.size,
+                                            containerSize: previewContainerSize,
+                                            scale: nextScale
+                                        )
+                                    }
+                                }
+                            ),
+                            in: 1.0...3.0,
+                            step: 0.02
+                        )
+                        .tint(Theme.Colors.accent)
+
+                        Image(systemName: "plus.magnifyingglass")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.Colors.textSecondary)
+
+                        Text(String(format: "%.1f×", zoomScale))
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                            .frame(width: 38, alignment: .trailing)
+                    }
+                    .padding(.horizontal, 24)
 
                     // Aspect Ratio Picker
                     Picker("Ratio", selection: $selectedRatio) {

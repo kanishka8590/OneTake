@@ -93,6 +93,8 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
     // Shared state
     @ObservationIgnored private var activeCues: [CueLine] = []
     @ObservationIgnored private var cueTriggerCallback: ((Int) -> Void)?
+    @ObservationIgnored var onCueStarted: ((Int) -> Void)?
+    @ObservationIgnored var onCueFinished: ((Int) -> Void)?
     @ObservationIgnored private var pendingPlaybackCompletion: (() -> Void)?
     @ObservationIgnored private var pendingManualCueIndex: Int?
     @ObservationIgnored private var ignoreMicUntil: Date = .distantPast
@@ -379,12 +381,23 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
         cueTriggerCallback = nil
     }
 
-    // MARK: - Manual Cue Advance
+    // MARK: - Manual & Teleprompter-Synced Cue Advance
 
     func playNextCue() {
         guard let coordinator = scriptCueCoordinator,
               let index = coordinator.requestManualCue() else { return }
         pendingManualCueIndex = index
+    }
+
+    func triggerCueFromTeleprompter(at index: Int) {
+        guard isListening, !isCuePlaying, currentCueIndex == index,
+              let coordinator = scriptCueCoordinator else { return }
+        pendingManualCueIndex = index
+        if coordinator.requestTeleprompterSyncedCue(at: index) {
+            isCuePlaying = true
+        } else {
+            pendingManualCueIndex = nil
+        }
     }
 
     /// Exposes coordinator lock state for diagnostics and unit tests.
@@ -416,6 +429,7 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
         isCuePlaying = true
         ignoreMicUntil = .distantFuture
         cueTriggerCallback?(index)
+        onCueStarted?(index)
 
         let generation = playbackGeneration
         let onDone: () -> Void = { [weak self] in
@@ -429,11 +443,12 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
             if self.currentCueIndex >= self.activeCues.count {
                 self.isListening = false
             }
+            self.onCueFinished?(index)
         }
 
         if let audioURL = MediaStorage.resolveURL(for: cueToPlay.audioFilePath),
            FileManager.default.fileExists(atPath: audioURL.path) {
-            // Avoid reconfiguring the active AVAudioSession category while TeleprompterRecorderService is recording.
+            VoiceAudioSessionCoordinator.shared.activate()
             routeToSpeakerIfNoExternalOutput(AVAudioSession.sharedInstance())
             let targetVolume = cueVolume
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -473,6 +488,12 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
         guard !trimmed.isEmpty else {
             completion()
             return
+        }
+        VoiceAudioSessionCoordinator.shared.activate()
+        routeToSpeakerIfNoExternalOutput(AVAudioSession.sharedInstance())
+        if fallbackSynthesizer.isSpeaking {
+            activeUtterance = nil
+            fallbackSynthesizer.stopSpeaking(at: .immediate)
         }
         isCuePlaying = true
         pendingPlaybackCompletion = completion

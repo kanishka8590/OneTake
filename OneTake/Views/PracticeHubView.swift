@@ -41,6 +41,7 @@ struct PracticeHubView: View {
                 ForEach(appState.practiceScripts) { script in
                     NavigationLink {
                         MemoriseView(script: script, appState: appState)
+                            .hideTabBarPastRoot()
                     } label: {
                         PracticeScriptRow(script: script)
                     }
@@ -103,6 +104,7 @@ struct PracticeHubView: View {
             }
             .navigationTitle("Practice")
             .navigationBarTitleDisplayMode(.large)
+            .showTabBarOnRoot()
             .toolbar {
                 if #available(iOS 26.0, *) {
                     ToolbarItem(placement: .topBarTrailing) {

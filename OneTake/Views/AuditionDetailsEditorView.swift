@@ -423,7 +423,7 @@ struct AuditionDetailsEditorView: View {
                 selectedSidesPhotoItems = []
                 loadSidesPhotos(toProcess)
             }
-            .sheet(isPresented: $showingDocumentScanner, onDismiss: processPendingSidesScannedImages) {
+            .fullScreenCover(isPresented: $showingDocumentScanner, onDismiss: processPendingSidesScannedImages) {
                 DocumentScannerRepresentable { images in
                     pendingScannedSidesImages = images
                     showingDocumentScanner = false
@@ -435,6 +435,7 @@ struct AuditionDetailsEditorView: View {
                     showingDocumentScanner = false
                     presentImportError(error.localizedDescription)
                 }
+                .ignoresSafeArea()
             }
             .fileImporter(
                 isPresented: $showingFileImporter,

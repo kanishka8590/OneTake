@@ -283,3 +283,29 @@ private func colorSwatch(_ name: String, _ color: Color) -> some View {
             .minimumScaleFactor(0.7)
     }
 }
+
+// MARK: - Navigation Tab Bar Modifiers
+
+extension View {
+    @ViewBuilder
+    func hideTabBarPastRoot() -> some View {
+        if #available(iOS 18.0, *) {
+            self
+                .toolbarVisibility(.hidden, for: .tabBar)
+                .toolbar(.hidden, for: .tabBar)
+        } else {
+            self.toolbar(.hidden, for: .tabBar)
+        }
+    }
+
+    @ViewBuilder
+    func showTabBarOnRoot() -> some View {
+        if #available(iOS 18.0, *) {
+            self
+                .toolbarVisibility(.visible, for: .tabBar)
+                .toolbar(.visible, for: .tabBar)
+        } else {
+            self.toolbar(.visible, for: .tabBar)
+        }
+    }
+}

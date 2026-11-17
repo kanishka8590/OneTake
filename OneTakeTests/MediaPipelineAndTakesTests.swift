@@ -472,6 +472,70 @@ final class MediaPipelineAndTakesTests: XCTestCase {
         XCTAssertGreaterThan(afterSpeechRMS / max(0.0001, afterNoiseRMS), beforeSpeechRMS / max(0.0001, beforeNoiseRMS))
     }
 
+    func testPrepareCleanedAudioPreviewProducesPlayableWAVWithoutDisablingPreview() async throws {
+        let dir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let sourceURL = dir.appendingPathComponent("take_preview_source.mp4")
+        let ok = await DemoMediaGenerator.writeQuickSimulatedClip(
+            to: sourceURL,
+            title: "Room Sound Preview",
+            subtitle: "Lockstep WAV Test",
+            durationSeconds: 1.5
+        )
+        XCTAssertTrue(ok)
+
+        let wavURL = dir.appendingPathComponent("cleaned_preview.wav")
+        let producedURL = try await VideoPostProcessingService.shared.prepareCleanedAudioPreview(
+            sourceURL: sourceURL,
+            destinationURL: wavURL
+        )
+        XCTAssertEqual(producedURL.standardizedFileURL, wavURL.standardizedFileURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: wavURL.path))
+
+        let player = try AVAudioPlayer(contentsOf: wavURL)
+        XCTAssertGreaterThan(player.duration, 1.0, "Cleaned WAV preview must be immediately playable via AVAudioPlayer")
+    }
+
+    func testCameraRotationCoordinatorUprightPreviewAndCaptureAngles() async throws {
+        #if !targetEnvironment(simulator)
+        let windowScene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first
+        for pos in [AVCaptureDevice.Position.front, AVCaptureDevice.Position.back] {
+            if let dev = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: pos) {
+                let session = AVCaptureSession()
+                session.beginConfiguration()
+                if let input = try? AVCaptureDeviceInput(device: dev), session.canAddInput(input) {
+                    session.addInput(input)
+                }
+                let out = AVCaptureVideoDataOutput()
+                if session.canAddOutput(out) {
+                    session.addOutput(out)
+                }
+                session.commitConfiguration()
+                let previewView = LiveCameraPreview.PreviewUIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+                previewView.previewLayer.session = session
+                if let win = windowScene?.windows.first {
+                    win.addSubview(previewView)
+                }
+                let coord = AVCaptureDevice.RotationCoordinator(device: dev, previewLayer: previewView.previewLayer)
+                let expectedPreview = coord.videoRotationAngleForHorizonLevelPreview
+                let expectedCapture = coord.videoRotationAngleForHorizonLevelCapture
+                if let previewConn = previewView.previewLayer.connection {
+                    XCTAssertTrue(previewConn.isVideoRotationAngleSupported(expectedPreview))
+                    previewConn.videoRotationAngle = expectedPreview
+                    XCTAssertEqual(previewConn.videoRotationAngle, expectedPreview)
+                }
+                if let outConn = out.connection(with: .video) {
+                    XCTAssertTrue(outConn.isVideoRotationAngleSupported(expectedCapture))
+                    outConn.videoRotationAngle = expectedCapture
+                    XCTAssertEqual(outConn.videoRotationAngle, expectedCapture)
+                }
+                previewView.removeFromSuperview()
+            }
+        }
+        #endif
+    }
+
     private func rms(of samples: [Float], range: Range<Int>) -> Double {
         let slice = samples[range]
         let sumSq = slice.reduce(0.0) { $0 + Double($1 * $1) }

@@ -78,11 +78,7 @@ actor CoreMLParserRunner {
         }
 
         let config = MLModelConfiguration()
-        #if targetEnvironment(simulator)
         config.computeUnits = .cpuOnly
-        #else
-        config.computeUnits = .all
-        #endif
         config.allowLowPrecisionAccumulationOnGPU = true
 
         self.model = try MLModel(contentsOf: modelURL, configuration: config)
@@ -172,30 +168,49 @@ actor CoreMLParserRunner {
         return result.isEmpty ? nil : result
     }
 
+    private static let sequenceBuckets = [128, 256, 384, 512]
+
     private func makeInputFeatures(tokenIDs: [Int], usesExplicitMaskAndPos: Bool) -> MLFeatureProvider? {
-        let s = tokenIDs.count
-        guard let inputArray = try? MLMultiArray(shape: [1, NSNumber(value: s)], dataType: .int32) else {
-            return nil
-        }
-        let idStride = inputArray.strides.last?.intValue ?? 1
-        let idsPtr = inputArray.dataPointer.bindMemory(to: Int32.self, capacity: inputArray.count)
-        for i in 0..<s {
-            idsPtr[i * idStride] = Int32(tokenIDs[i])
-        }
+        let realLen = tokenIDs.count
+        guard realLen > 0 else { return nil }
 
         guard usesExplicitMaskAndPos else {
+            guard let inputArray = try? MLMultiArray(shape: [1, NSNumber(value: realLen)], dataType: .int32) else {
+                return nil
+            }
+            let idStride = inputArray.strides.last?.intValue ?? 1
+            let idsPtr = inputArray.dataPointer.bindMemory(to: Int32.self, capacity: inputArray.count)
+            for i in 0..<realLen {
+                idsPtr[i * idStride] = Int32(tokenIDs[i])
+            }
             return DictionaryFeatureProvider(values: ["input_ids": MLFeatureValue(multiArray: inputArray)])
         }
 
-        guard let maskArray = try? MLMultiArray(
-            shape: [1, 1, NSNumber(value: s), NSNumber(value: s)],
-            dataType: .float16
-        ),
-        let posArray = try? MLMultiArray(
-            shape: [1, NSNumber(value: s)],
-            dataType: .float16
-        ) else {
+        // Left-pad into a fixed sequence bucket (128, 256, 384, 512) so Apple E5RT / ANE / Metal
+        // compiles a single static-shape executable instead of reallocating per token step.
+        let s = Self.sequenceBuckets.first(where: { $0 >= realLen }) ?? maxContextTokens
+        let padLen = s - realLen
+
+        guard let inputArray = try? MLMultiArray(shape: [1, NSNumber(value: s)], dataType: .int32),
+              let maskArray = try? MLMultiArray(
+                  shape: [1, 1, NSNumber(value: s), NSNumber(value: s)],
+                  dataType: .float16
+              ),
+              let posArray = try? MLMultiArray(
+                  shape: [1, NSNumber(value: s)],
+                  dataType: .float16
+              ) else {
             return nil
+        }
+
+        let idStride = inputArray.strides.last?.intValue ?? 1
+        let idsPtr = inputArray.dataPointer.bindMemory(to: Int32.self, capacity: inputArray.count)
+        let padToken = Int32(tokenizer.eosTokenID)
+        for i in 0..<padLen {
+            idsPtr[i * idStride] = padToken
+        }
+        for i in 0..<realLen {
+            idsPtr[(padLen + i) * idStride] = Int32(tokenIDs[i])
         }
 
         let maskRowStride = maskArray.strides.count >= 3 ? maskArray.strides[2].intValue : s
@@ -205,15 +220,24 @@ actor CoreMLParserRunner {
         let zero = Float16(0.0)
         for r in 0..<s {
             let rowBase = r * maskRowStride
-            for c in 0..<s {
-                maskPtr[rowBase + c * maskColStride] = c <= r ? zero : negInf
+            if r < padLen {
+                for c in 0..<s {
+                    maskPtr[rowBase + c * maskColStride] = (c == r) ? zero : negInf
+                }
+            } else {
+                for c in 0..<s {
+                    maskPtr[rowBase + c * maskColStride] = (c >= padLen && c <= r) ? zero : negInf
+                }
             }
         }
 
         let posStride = posArray.strides.last?.intValue ?? 1
         let posPtr = posArray.dataPointer.bindMemory(to: Float16.self, capacity: posArray.count)
-        for i in 0..<s {
-            posPtr[i * posStride] = Float16(i)
+        for i in 0..<padLen {
+            posPtr[i * posStride] = zero
+        }
+        for i in 0..<realLen {
+            posPtr[(padLen + i) * posStride] = Float16(i)
         }
 
         return DictionaryFeatureProvider(values: [
@@ -274,7 +298,9 @@ actor CoreMLParserRunner {
 
     func unloadModel() {
         self.model = nil
-        self.tokenizer.unload()
+        if !Self.supportsInProcessParserModel {
+            self.tokenizer.unload()
+        }
     }
 }
 

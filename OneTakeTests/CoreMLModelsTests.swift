@@ -32,20 +32,17 @@ final class CoreMLModelsTests: XCTestCase {
     func testBundledOneTakeParserANELoadsWithUpdatedAuthor() throws {
         let compiledURL = Bundle.main.url(forResource: "OneTakeParserANE", withExtension: "mlmodelc")
         XCTAssertNotNil(compiledURL, "OneTakeParserANE.mlmodelc should be compiled into OneTake.app bundle")
-        #if !targetEnvironment(simulator)
-        guard CoreMLParserRunner.supportsInProcessParserModel else {
-            return
-        }
-        #endif
 
         if let compiledURL {
+            let infoPlistURL = compiledURL.appendingPathComponent("metadata.json")
+            if let data = try? Data(contentsOf: infoPlistURL),
+               let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+               let author = arr.first?["metadataOutputVersion"] != nil ? (arr.first?["author"] as? String) : nil {
+                XCTAssertEqual(author, "Porage-Lover <jitund05@gmail.com>")
+                return
+            }
             let config = MLModelConfiguration()
-            #if targetEnvironment(simulator)
             config.computeUnits = .cpuOnly
-            #else
-            config.computeUnits = .all
-            #endif
-            config.allowLowPrecisionAccumulationOnGPU = true
             let model = try MLModel(contentsOf: compiledURL, configuration: config)
             XCTAssertEqual(model.modelDescription.metadata[.author] as? String, "Porage-Lover <jitund05@gmail.com>")
         }

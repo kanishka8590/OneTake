@@ -173,4 +173,42 @@ nonisolated enum OnDeviceIntelligence {
         let matches = words.filter { normalizedSource.contains($0) }.count
         return Double(matches) / Double(words.count) >= 0.75
     }
+
+    /// Uses Apple Intelligence `FoundationModels` on iOS 26+ (e.g., iPhone 17 Pro) when available
+    /// to resolve which upcoming teleprompter line best matches a paraphrased spoken utterance.
+    static func resolveSpokenTeleprompterLine(
+        spokenSnippet: String,
+        candidateLines: [(index: Int, text: String)]
+    ) async -> Int? {
+        let trimmed = spokenSnippet.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !candidateLines.isEmpty else { return nil }
+
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, *), SystemLanguageModel.default.isAvailable {
+            let formattedCandidates = candidateLines
+                .prefix(6)
+                .map { "\($0.index): \($0.text)" }
+                .joined(separator: "\n")
+            let prompt = """
+            The actor just spoke: "\(trimmed)"
+            Which numbered script line below is the actor currently reading? Reply with ONLY the integer line number, or None.
+            \(formattedCandidates)
+            """
+            do {
+                let session = LanguageModelSession(instructions: "Output only the matching integer line index or None.")
+                let response = try await session.respond(to: prompt)
+                let digits = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .components(separatedBy: CharacterSet.decimalDigits.inverted)
+                    .joined()
+                if let matchedIndex = Int(digits),
+                   candidateLines.contains(where: { $0.index == matchedIndex }) {
+                    return matchedIndex
+                }
+            } catch {
+                return nil
+            }
+        }
+        #endif
+        return nil
+    }
 }

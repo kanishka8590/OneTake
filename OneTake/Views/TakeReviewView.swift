@@ -14,12 +14,15 @@ struct TakeReviewView: View {
     let qualityMetrics: PreTakeQualityMetrics
     var usedFrontCamera: Bool = true
     var autoTrimSilence: Bool = false
+    var initialNoiseCleaned: Bool? = nil
     let onTakeApproved: (VideoTake) -> Void
     let onRetake: () -> Void
 
     @State private var postProcessor = VideoPostProcessingService.shared
     @State private var player: AVPlayer?
     @State private var observedPlayer: AVPlayer?
+    @State private var rawPlayerItem: AVPlayerItem?
+    @State private var cleanPlayerItem: AVPlayerItem?
     @State private var timeObserverToken: Any?
     @State private var isPlaying: Bool = false
     @State private var playheadSeconds: Double = 0.0
@@ -199,7 +202,7 @@ struct TakeReviewView: View {
                 Text(exportErrorMessage ?? "Could not export this take. Please try again.")
             }
             .onAppear {
-                isNoiseCleaned = appState.settings.noiseReductionDefault
+                isNoiseCleaned = initialNoiseCleaned ?? appState.settings.noiseReductionDefault
                 setupPlayer()
             }
             .task {
@@ -437,8 +440,9 @@ struct TakeReviewView: View {
         trimEnd = safeDuration
         playheadSeconds = 0.0
 
-        let playerItem = AVPlayerItem(url: rawVideoURL)
-        let newPlayer = AVPlayer(playerItem: playerItem)
+        let item = AVPlayerItem(url: rawVideoURL)
+        self.rawPlayerItem = item
+        let newPlayer = AVPlayer(playerItem: item)
         self.player = newPlayer
         self.observedPlayer = newPlayer
 
@@ -447,7 +451,8 @@ struct TakeReviewView: View {
             let seconds = time.seconds
             guard seconds.isFinite else { return }
             self.playheadSeconds = seconds
-            self.isPlaying = (newPlayer.timeControlStatus == .playing)
+            let currentlyPlaying = (newPlayer.timeControlStatus == .playing)
+            self.isPlaying = currentlyPlaying
 
             if seconds >= self.trimEnd {
                 newPlayer.pause()
@@ -475,6 +480,8 @@ struct TakeReviewView: View {
             player.pause()
             isPlaying = false
         } else {
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+            try? AVAudioSession.sharedInstance().setActive(true)
             if playheadSeconds >= trimEnd - 0.05 || playheadSeconds < trimStart {
                 playheadSeconds = trimStart
                 seekPlayer(to: trimStart)
@@ -484,44 +491,81 @@ struct TakeReviewView: View {
         }
     }
 
+    private func buildCleanComposition(from videoURL: URL, wavURL: URL) async -> AVPlayerItem? {
+        let videoAsset = AVURLAsset(url: videoURL)
+        let wavAsset = AVURLAsset(url: wavURL)
+        guard let sourceVideoTrack = try? await videoAsset.loadTracks(withMediaType: .video).first,
+              let cleanAudioTrack = try? await wavAsset.loadTracks(withMediaType: .audio).first else {
+            return nil
+        }
+        let composition = AVMutableComposition()
+        guard let compVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+              let compAudioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            return nil
+        }
+        let sourceTimeRange = try? await sourceVideoTrack.load(.timeRange)
+        let sourceDuration = sourceTimeRange?.duration
+        let videoAssetDuration = try? await videoAsset.load(.duration)
+        let videoDuration = sourceDuration ?? videoAssetDuration ?? CMTime(seconds: safeDuration, preferredTimescale: 600)
+
+        let cleanTimeRange = try? await cleanAudioTrack.load(.timeRange)
+        let cleanDuration = cleanTimeRange?.duration
+        let wavAssetDuration = try? await wavAsset.load(.duration)
+        let wavDuration = cleanDuration ?? wavAssetDuration ?? videoDuration
+        let insertDuration = CMTimeMinimum(videoDuration, wavDuration)
+        do {
+            try compVideoTrack.insertTimeRange(CMTimeRange(start: .zero, duration: insertDuration), of: sourceVideoTrack, at: .zero)
+            if let transform = try? await sourceVideoTrack.load(.preferredTransform) {
+                compVideoTrack.preferredTransform = transform
+            }
+            try compAudioTrack.insertTimeRange(CMTimeRange(start: .zero, duration: insertDuration), of: cleanAudioTrack, at: .zero)
+            return AVPlayerItem(asset: composition)
+        } catch {
+            return nil
+        }
+    }
+
     private func switchPlaybackAudio(cleaned: Bool) async {
         guard let player else { return }
-        let targetURL: URL
         if cleaned {
-            if let cached = cleanedPreviewURL, FileManager.default.fileExists(atPath: cached.path) {
-                targetURL = cached
-            } else {
-                isPreparingCleanPreview = true
-                let previewURL = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("onetake_preview_clean_\(UUID().uuidString).mp4")
-                do {
-                    let generated = try await postProcessor.prepareCleanedPreview(
-                        sourceURL: rawVideoURL,
-                        destinationURL: previewURL
-                    )
-                    cleanedPreviewURL = generated
-                    targetURL = generated
-                } catch {
+            if cleanPlayerItem == nil {
+                let targetWAV: URL
+                if let cached = cleanedPreviewURL, FileManager.default.fileExists(atPath: cached.path) {
+                    targetWAV = cached
+                } else {
+                    isPreparingCleanPreview = true
+                    let previewURL = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("onetake_preview_clean_\(UUID().uuidString).wav")
+                    let source = rawVideoURL
+                    let processor = postProcessor
+                    let generated = try? await Task.detached(priority: .userInitiated) {
+                        try await processor.prepareCleanedAudioPreview(
+                            sourceURL: source,
+                            destinationURL: previewURL
+                        )
+                    }.value
+                    guard let gen = generated else {
+                        isPreparingCleanPreview = false
+                        return
+                    }
+                    cleanedPreviewURL = gen
+                    targetWAV = gen
                     isPreparingCleanPreview = false
-                    return
                 }
-                isPreparingCleanPreview = false
+                cleanPlayerItem = await buildCleanComposition(from: rawVideoURL, wavURL: targetWAV)
             }
-        } else {
-            targetURL = rawVideoURL
-        }
-
-        let currentTime = player.currentTime()
-        let wasPlaying = (player.timeControlStatus == .playing)
-        player.pause()
-        let item = AVPlayerItem(url: targetURL)
-        player.replaceCurrentItem(with: item)
-        if currentTime.seconds.isFinite && currentTime.seconds >= 0 {
+            guard isNoiseCleaned, let cleanItem = cleanPlayerItem else { return }
+            let currentTime = player.currentTime()
+            let wasPlaying = (player.timeControlStatus == .playing)
+            player.replaceCurrentItem(with: cleanItem)
             await player.seek(to: currentTime, toleranceBefore: .zero, toleranceAfter: .zero)
-        }
-        if wasPlaying {
-            player.play()
-            isPlaying = true
+            if wasPlaying { player.play() }
+        } else {
+            let currentTime = player.currentTime()
+            let wasPlaying = (player.timeControlStatus == .playing)
+            player.replaceCurrentItem(with: rawPlayerItem ?? AVPlayerItem(url: rawVideoURL))
+            await player.seek(to: currentTime, toleranceBefore: .zero, toleranceAfter: .zero)
+            if wasPlaying { player.play() }
         }
     }
 
@@ -535,6 +579,8 @@ struct TakeReviewView: View {
         isPlaying = false
         player?.replaceCurrentItem(with: nil)
         player = nil
+        rawPlayerItem = nil
+        cleanPlayerItem = nil
     }
 
     private func seekPlayer(to seconds: Double) {
@@ -663,7 +709,7 @@ struct TakeReviewView: View {
         let duration = max(0.0, trimEnd - trimStart)
         HStack(spacing: 8) {
             if qualityMetrics.isLightingEvaluated {
-                qualityBadge(title: "Light: \(qualityMetrics.lightStatus)", isPassed: qualityMetrics.isLightPassed)
+                qualityBadge(title: "Light: \(qualityMetrics.lightStatus) (\(qualityMetrics.lightScore)%)", isPassed: qualityMetrics.isLightPassed)
             }
             if qualityMetrics.isFramingEvaluated {
                 qualityBadge(title: qualityMetrics.isAlignmentPassed ? "Framing: Centered" : "Framing: Adjust", isPassed: qualityMetrics.isAlignmentPassed)

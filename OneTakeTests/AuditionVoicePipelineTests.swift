@@ -280,6 +280,53 @@ final class AuditionVoicePipelineTests: XCTestCase {
         XCTAssertEqual(tracker.activeLineIndex, 2)
     }
 
+    func testVoiceTeleprompterTrackerNeverStallsOnDashHowCanISayOrOneWordPartials() {
+        let tracker = VoiceTeleprompterTracker(
+            scriptLines: [
+                "HEER: (beat) I don't know - how can I say this to you?",
+                "Wait for me at twenty seven Baker Street."
+            ],
+            cueSpeakers: ["READER"]
+        )
+
+        // Leading speaker prefix "HEER:" and stage direction "(beat)" are non-spoken and auto-cleared.
+        XCTAssertEqual(tracker.activeLineIndex, 0)
+        XCTAssertTrue(tracker.isWordMatched(lineIndex: 0, wordIndex: 0), "Leading speaker prefix must be pre-cleared")
+        XCTAssertTrue(tracker.isWordMatched(lineIndex: 0, wordIndex: 1), "Stage direction (beat) must be pre-cleared")
+
+        // Feed partial transcripts 1 word at a time just like SFSpeechRecognizer does on device.
+        let partials = [
+            "I",
+            "I don't",
+            "I don't know",
+            "I don't know how",
+            "I don't know how can",
+            "I don't know how can I",
+            "I don't know how can I say"
+        ]
+        for partial in partials {
+            tracker.ingestTranscript(partial, isFinal: false)
+        }
+
+        // Display words in line 0:
+        // 0: "HEER:", 1: "(beat)", 2: "I", 3: "don't", 4: "know", 5: "-", 6: "how", 7: "can", 8: "I", 9: "say", 10: "this", 11: "to", 12: "you?"
+        for idx in 0...9 {
+            XCTAssertTrue(
+                tracker.isWordMatched(lineIndex: 0, wordIndex: idx),
+                "Display word at index \(idx) ('\(tracker.lines[0].displayWords[idx])') must be matched without stalling at '-'"
+            )
+        }
+
+        // Now test 1-word-per-partial trailing bigram resync when "this" is skipped and actor says "to you":
+        tracker.ingestTranscript("I don't know how can I say to", isFinal: false)
+        tracker.ingestTranscript("I don't know how can I say to you", isFinal: true)
+        XCTAssertEqual(tracker.activeLineIndex, 1, "Trailing bigram resync on 1-word partials must advance to line 1")
+
+        // Compound number "27" / "twenty seven" equivalence:
+        tracker.ingestTranscript("Wait for me at 27 Baker Street", isFinal: true)
+        XCTAssertEqual(tracker.scrollFraction, 1.0, accuracy: 0.001)
+    }
+
     @MainActor
     func testRecorderVoiceAndGestureTogglesGateVoiceTriggersCleanly() {
         let service = TeleprompterRecorderService.shared

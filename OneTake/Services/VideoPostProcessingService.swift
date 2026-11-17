@@ -161,6 +161,23 @@ final class VideoPostProcessingService: NSObject, VideoPostProcessingServiceProt
         }
     }
 
+    /// Generates a studio-cleaned WAV audio track for instant A/B preview in `TakeReviewView`
+    /// without touching or reloading `VideoPlayer`'s video track.
+    func prepareCleanedAudioPreview(sourceURL: URL, destinationURL: URL) async throws -> URL {
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+            throw VideoPostProcessingError.sourceFileMissing
+        }
+        try FileManager.default.createDirectory(
+            at: destinationURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let rendered = try await Self.renderCleanedAudioWAV(from: sourceURL, to: destinationURL)
+        guard rendered else {
+            throw VideoPostProcessingError.exportSessionCreationFailed("No audio track available to clean.")
+        }
+        return destinationURL
+    }
+
     /// Generates an A/B preview clip with cleaned room audio (without trimming video),
     /// remuxing video passthrough so it completes quickly for in-review toggle auditioning.
     func prepareCleanedPreview(sourceURL: URL, destinationURL: URL) async throws -> URL {
@@ -422,13 +439,17 @@ final class VideoPostProcessingService: NSObject, VideoPostProcessingServiceProt
         let frameCount = samples.count / ch
         guard frameCount > 0, sampleRate > 1000 else { return }
 
-        var hpf = BiquadFilterState.highPass(cutoffHz: 85.0, q: 0.707, sampleRate: sampleRate, channels: ch)
-        var deMud = BiquadFilterState.peaking(centerHz: 280.0, q: 1.0, gainDB: -2.2, sampleRate: sampleRate, channels: ch)
-        var presence = BiquadFilterState.peaking(centerHz: 2800.0, q: 1.1, gainDB: 2.5, sampleRate: sampleRate, channels: ch)
+        var hpf1 = BiquadFilterState.highPass(cutoffHz: 95.0, q: 0.707, sampleRate: sampleRate, channels: ch)
+        var hpf2 = BiquadFilterState.highPass(cutoffHz: 95.0, q: 0.707, sampleRate: sampleRate, channels: ch)
+        var deMud = BiquadFilterState.peaking(centerHz: 260.0, q: 1.1, gainDB: -3.2, sampleRate: sampleRate, channels: ch)
+        var presence = BiquadFilterState.peaking(centerHz: 2900.0, q: 1.0, gainDB: 3.4, sampleRate: sampleRate, channels: ch)
+        var clarity = BiquadFilterState.peaking(centerHz: 5200.0, q: 1.2, gainDB: 1.8, sampleRate: sampleRate, channels: ch)
 
-        hpf.processInterleaved(&samples, frameCount: frameCount, channels: ch)
+        hpf1.processInterleaved(&samples, frameCount: frameCount, channels: ch)
+        hpf2.processInterleaved(&samples, frameCount: frameCount, channels: ch)
         deMud.processInterleaved(&samples, frameCount: frameCount, channels: ch)
         presence.processInterleaved(&samples, frameCount: frameCount, channels: ch)
+        clarity.processInterleaved(&samples, frameCount: frameCount, channels: ch)
 
         let stats = estimateNoiseAndSpeechStats(samples: samples, frameCount: frameCount, channels: ch, sampleRate: sampleRate)
         let noiseFloor = knownNoiseFloor ?? stats.noiseFloor
@@ -460,17 +481,17 @@ final class VideoPostProcessingService: NSObject, VideoPostProcessingServiceProt
 
         init(noiseFloor: Float, speechPeak: Float, sampleRate: Double) {
             self.noiseFloor = noiseFloor
-            self.openThreshold = max(0.003, noiseFloor * 2.4)
+            self.openThreshold = max(0.003, noiseFloor * 2.5)
             let rawNorm: Float = (speechPeak > max(0.015, noiseFloor * 2.5))
-                ? min(2.4, max(0.85, 0.55 / speechPeak))
+                ? min(2.8, max(0.95, 0.65 / speechPeak))
                 : 1.0
             self.normGain = rawNorm
-            // Keep quiet room floor well below original noise even after dialogue makeup gain.
-            self.floorGain = 0.18 / max(1.0, rawNorm)
-            self.attackCoeff = Float(1.0 - exp(-1.0 / (0.006 * sampleRate)))
-            self.releaseCoeff = Float(1.0 - exp(-1.0 / (0.120 * sampleRate)))
-            self.envCoeffFast = Float(1.0 - exp(-1.0 / (0.005 * sampleRate)))
-            self.envCoeffSlow = Float(1.0 - exp(-1.0 / (0.045 * sampleRate)))
+            // Attenuate room noise floor by ~22 dB during pauses between spoken words.
+            self.floorGain = 0.08 / max(1.0, rawNorm)
+            self.attackCoeff = Float(1.0 - exp(-1.0 / (0.005 * sampleRate)))
+            self.releaseCoeff = Float(1.0 - exp(-1.0 / (0.110 * sampleRate)))
+            self.envCoeffFast = Float(1.0 - exp(-1.0 / (0.004 * sampleRate)))
+            self.envCoeffSlow = Float(1.0 - exp(-1.0 / (0.040 * sampleRate)))
         }
     }
 
@@ -552,6 +573,62 @@ final class VideoPostProcessingService: NSObject, VideoPostProcessingServiceProt
         return (noiseFloor: max(0.0005, sorted[lowIdx]), speechPeak: max(0.01, sorted[highIdx]))
     }
 
+    /// Decodes any mono, stereo, or Spatial Audio track to canonical 44.1 kHz Float32 PCM,
+    /// runs the 5-stage studio room cleanup DSP, and writes a clean WAV file.
+    nonisolated static func renderCleanedAudioWAV(
+        from sourceURL: URL,
+        to wavURL: URL
+    ) async throws -> Bool {
+        let asset = AVURLAsset(url: sourceURL)
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        guard !audioTracks.isEmpty else { return false }
+
+        let targetSampleRate: Double = 44_100.0
+        let reader = try AVAssetReader(asset: asset)
+        let pcmSettings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: targetSampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ]
+        let output = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: pcmSettings)
+        output.alwaysCopiesSampleData = false
+        guard reader.canAdd(output) else { return false }
+        reader.add(output)
+        guard reader.startReading() else { return false }
+
+        var allSamples: [Float] = []
+        allSamples.reserveCapacity(Int(targetSampleRate * 15))
+        while let sampleBuffer = output.copyNextSampleBuffer() {
+            if let chunk = extractFloatSamples(from: sampleBuffer) {
+                allSamples.append(contentsOf: chunk)
+            }
+        }
+        guard !allSamples.isEmpty else { return false }
+
+        cleanAudioSamples(&allSamples, sampleRate: targetSampleRate, channels: 1)
+
+        try? FileManager.default.removeItem(at: wavURL)
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: targetSampleRate, channels: 1),
+              let pcmBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(allSamples.count)),
+              let channelPtr = pcmBuffer.floatChannelData?[0] else {
+            return false
+        }
+        pcmBuffer.frameLength = AVAudioFrameCount(allSamples.count)
+        allSamples.withUnsafeBufferPointer { src in
+            if let base = src.baseAddress {
+                channelPtr.update(from: base, count: allSamples.count)
+            }
+        }
+
+        let outFile = try AVAudioFile(forWriting: wavURL, settings: format.settings)
+        try outFile.write(from: pcmBuffer)
+        return true
+    }
+
     nonisolated private static func remuxWithCleanedAudio(
         sourceURL: URL,
         destinationURL: URL
@@ -575,181 +652,67 @@ final class VideoPostProcessingService: NSObject, VideoPostProcessingServiceProt
             return
         }
 
+        let tempWAVURL = fm.temporaryDirectory
+            .appendingPathComponent("onetake_clean_pcm_\(UUID().uuidString).wav")
+        defer { try? fm.removeItem(at: tempWAVURL) }
+
+        let didRenderAudio = try await renderCleanedAudioWAV(from: sourceURL, to: tempWAVURL)
+        guard didRenderAudio else {
+            if !sameLocation {
+                try? fm.removeItem(at: destinationURL)
+                try fm.copyItem(at: sourceURL, to: destinationURL)
+            }
+            return
+        }
+
         let stagedURL = sameLocation
-            ? fm.temporaryDirectory.appendingPathComponent("onetake_clean_\(UUID().uuidString).mp4")
+            ? fm.temporaryDirectory.appendingPathComponent("onetake_clean_\(UUID().uuidString).\(destinationURL.pathExtension.isEmpty ? "mp4" : destinationURL.pathExtension)")
             : destinationURL
         try? fm.removeItem(at: stagedURL)
 
-        let (noiseFloor, speechPeak, detectedSampleRate, detectedChannels) = try await scanAudioStats(
-            asset: asset,
-            audioTracks: audioTracks
-        )
+        let composition = AVMutableComposition()
+        let totalDuration = try await asset.load(.duration)
 
-        guard let reader = try? AVAssetReader(asset: asset) else {
-            throw VideoPostProcessingError.exportSessionCreationFailed("Could not initialize AVAssetReader.")
-        }
-        guard let writer = try? AVAssetWriter(outputURL: stagedURL, fileType: .mp4) else {
-            throw VideoPostProcessingError.exportSessionCreationFailed("Could not initialize AVAssetWriter.")
-        }
-
-        var videoReaderOutput: AVAssetReaderTrackOutput?
-        var videoWriterInput: AVAssetWriterInput?
-        if let videoTrack = videoTracks.first {
-            let preferredTransform = try await videoTrack.load(.preferredTransform)
-            let vOut = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: nil)
-            vOut.alwaysCopiesSampleData = false
-            let vIn = AVAssetWriterInput(mediaType: .video, outputSettings: nil)
-            vIn.expectsMediaDataInRealTime = false
-            vIn.transform = preferredTransform
-            if reader.canAdd(vOut), writer.canAdd(vIn) {
-                reader.add(vOut)
-                writer.add(vIn)
-                videoReaderOutput = vOut
-                videoWriterInput = vIn
+        if let sourceVideoTrack = videoTracks.first,
+           let compVideoTrack = composition.addMutableTrack(
+               withMediaType: .video,
+               preferredTrackID: kCMPersistentTrackID_Invalid
+           ) {
+            let videoDuration = (try? await sourceVideoTrack.load(.timeRange).duration) ?? totalDuration
+            try compVideoTrack.insertTimeRange(
+                CMTimeRange(start: .zero, duration: videoDuration),
+                of: sourceVideoTrack,
+                at: .zero
+            )
+            if let preferredTransform = try? await sourceVideoTrack.load(.preferredTransform) {
+                compVideoTrack.preferredTransform = preferredTransform
             }
         }
 
-        let pcmOutputSettings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVLinearPCMBitDepthKey: 32,
-            AVLinearPCMIsFloatKey: true,
-            AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsNonInterleaved: false
-        ]
-        let audioReaderOutput = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: pcmOutputSettings)
-        audioReaderOutput.alwaysCopiesSampleData = false
-
-        let outRate = detectedSampleRate > 1000 ? detectedSampleRate : 44100.0
-        let outChannels = max(1, min(2, detectedChannels))
-        let aacSettings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: outRate,
-            AVNumberOfChannelsKey: outChannels,
-            AVEncoderBitRateKey: outChannels > 1 ? 192_000 : 128_000
-        ]
-        let audioWriterInput = AVAssetWriterInput(mediaType: .audio, outputSettings: aacSettings)
-        audioWriterInput.expectsMediaDataInRealTime = false
-
-        guard reader.canAdd(audioReaderOutput), writer.canAdd(audioWriterInput) else {
-            throw VideoPostProcessingError.exportSessionCreationFailed("Audio cleanup pipeline incompatible with track format.")
-        }
-        reader.add(audioReaderOutput)
-        writer.add(audioWriterInput)
-
-        guard reader.startReading() else {
-            throw VideoPostProcessingError.exportSessionCreationFailed(reader.error?.localizedDescription ?? "Reader failed to start.")
-        }
-        guard writer.startWriting() else {
-            throw VideoPostProcessingError.exportSessionCreationFailed(writer.error?.localizedDescription ?? "Writer failed to start.")
-        }
-        writer.startSession(atSourceTime: .zero)
-
-        let writerBox = UncheckedBox(value: writer)
-        let videoOutBox = videoReaderOutput.map { UncheckedBox(value: $0) }
-        let videoInBox = videoWriterInput.map { UncheckedBox(value: $0) }
-        let audioOutBox = UncheckedBox(value: audioReaderOutput)
-        let audioInBox = UncheckedBox(value: audioWriterInput)
-
-        let copyResult = await withCheckedContinuation { (continuation: CheckedContinuation<Error?, Never>) in
-            let group = DispatchGroup()
-            var firstError: Error?
-            let errLock = NSLock()
-
-            if let vOutBox = videoOutBox, let vInBox = videoInBox {
-                group.enter()
-                let vQueue = DispatchQueue(label: "com.onetake.post.video")
-                vInBox.value.requestMediaDataWhenReady(on: vQueue) {
-                    let vIn = vInBox.value
-                    let vOut = vOutBox.value
-                    while vIn.isReadyForMoreMediaData {
-                        if let sample = vOut.copyNextSampleBuffer() {
-                            if !vIn.append(sample) {
-                                errLock.lock()
-                                if firstError == nil { firstError = writerBox.value.error }
-                                errLock.unlock()
-                                vIn.markAsFinished()
-                                group.leave()
-                                return
-                            }
-                        } else {
-                            vIn.markAsFinished()
-                            group.leave()
-                            return
-                        }
-                    }
-                }
-            }
-
-            group.enter()
-            let aQueue = DispatchQueue(label: "com.onetake.post.audio")
-            var hpf = BiquadFilterState.highPass(cutoffHz: 85.0, q: 0.707, sampleRate: outRate, channels: outChannels)
-            var deMud = BiquadFilterState.peaking(centerHz: 280.0, q: 1.0, gainDB: -2.2, sampleRate: outRate, channels: outChannels)
-            var presence = BiquadFilterState.peaking(centerHz: 2800.0, q: 1.1, gainDB: 2.5, sampleRate: outRate, channels: outChannels)
-            let expanderParams = ExpanderParameters(noiseFloor: noiseFloor, speechPeak: speechPeak, sampleRate: outRate)
-            var envSq: Float = noiseFloor * noiseFloor
-            var gain: Float = expanderParams.floorGain
-
-            audioInBox.value.requestMediaDataWhenReady(on: aQueue) {
-                let aIn = audioInBox.value
-                let aOut = audioOutBox.value
-                while aIn.isReadyForMoreMediaData {
-                    if let sample = aOut.copyNextSampleBuffer() {
-                        let pts = CMSampleBufferGetPresentationTimeStamp(sample)
-                        if let cleanedSample = Self.processPCMBuffer(
-                            sample,
-                            channels: outChannels,
-                            pts: pts,
-                            hpf: &hpf,
-                            deMud: &deMud,
-                            presence: &presence,
-                            params: expanderParams,
-                            envSq: &envSq,
-                            gain: &gain
-                        ) {
-                            if !aIn.append(cleanedSample) {
-                                errLock.lock()
-                                if firstError == nil { firstError = writerBox.value.error }
-                                errLock.unlock()
-                                aIn.markAsFinished()
-                                group.leave()
-                                return
-                            }
-                        } else if !aIn.append(sample) {
-                            aIn.markAsFinished()
-                            group.leave()
-                            return
-                        }
-                    } else {
-                        aIn.markAsFinished()
-                        group.leave()
-                        return
-                    }
-                }
-            }
-
-            group.notify(queue: DispatchQueue.global(qos: .userInitiated)) {
-                continuation.resume(returning: firstError)
-            }
+        let wavAsset = AVURLAsset(url: tempWAVURL)
+        if let cleanedAudioTrack = try? await wavAsset.loadTracks(withMediaType: .audio).first,
+           let compAudioTrack = composition.addMutableTrack(
+               withMediaType: .audio,
+               preferredTrackID: kCMPersistentTrackID_Invalid
+           ) {
+            let wavDuration = (try? await wavAsset.load(.duration)) ?? totalDuration
+            let insertDuration = CMTimeMinimum(totalDuration, wavDuration)
+            try? compAudioTrack.insertTimeRange(
+                CMTimeRange(start: .zero, duration: insertDuration),
+                of: cleanedAudioTrack,
+                at: .zero
+            )
         }
 
-        if let copyResult {
-            reader.cancelReading()
-            writer.cancelWriting()
-            try? fm.removeItem(at: stagedURL)
-            throw copyResult
-        }
+        let hasVideo = !composition.tracks(withMediaType: .video).isEmpty
+        let preset = hasVideo ? AVAssetExportPresetHighestQuality : AVAssetExportPresetAppleM4A
+        let outFileType: AVFileType = hasVideo ? .mp4 : .m4a
 
-        if reader.status == .failed {
-            writer.cancelWriting()
-            try? fm.removeItem(at: stagedURL)
-            throw reader.error ?? VideoPostProcessingError.exportSessionCreationFailed("Reader failed.")
+        guard let exportSession = AVAssetExportSession(asset: composition, presetName: preset) else {
+            throw VideoPostProcessingError.exportSessionCreationFailed("Could not initialize AVAssetExportSession for cleaned audio.")
         }
-
-        await writer.finishWriting()
-        if writer.status != .completed {
-            try? fm.removeItem(at: stagedURL)
-            throw writer.error ?? VideoPostProcessingError.exportSessionCreationFailed("Writer did not complete.")
-        }
+        exportSession.shouldOptimizeForNetworkUse = true
+        try await exportSession.export(to: stagedURL, as: outFileType)
 
         if sameLocation {
             try? fm.removeItem(at: destinationURL)

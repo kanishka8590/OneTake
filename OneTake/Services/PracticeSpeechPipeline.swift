@@ -431,15 +431,14 @@ final class PracticeSpeechClueTracker {
         for (index, sentence) in actorSentences.enumerated() {
             let sentenceWords = words(in: sentence.text)
             guard !sentenceWords.isEmpty else { continue }
-            guard let end = contiguousMatch(of: sentenceWords, in: spoken, startingAt: cursor)
-                    ?? tolerantForwardMatch(of: sentenceWords, in: spoken, startingAt: cursor) else {
+            guard let end = sentenceMatched(expected: sentenceWords, in: spoken, startingAt: cursor) else {
                 break
             }
             cursor = end
             matchedSentenceCount = index + 1
         }
 
-        currentActorSentenceIndex = min(matchedSentenceCount, actorSentences.count)
+        currentActorSentenceIndex = max(currentActorSentenceIndex, min(matchedSentenceCount, actorSentences.count))
         if currentActorSentenceIndex >= actorSentences.count {
             currentActorLineIndex = model.actorLines.count
         } else {
@@ -449,9 +448,32 @@ final class PracticeSpeechClueTracker {
     }
 
     @discardableResult
-    func requestNextSentence() -> PracticeScriptRange? {
-        guard let range = nextSentence else { return nil }
+    func requestNextSentence(spokenWords: [String] = []) -> PracticeScriptRange? {
+        var idx = currentActorSentenceIndex
+        // Advance past sentences already requested as clues
+        while idx < actorSentences.count && clueRequestedRanges.contains(where: { $0.tokenIDs == actorSentences[idx].tokenIDs }) {
+            idx += 1
+        }
+        // If the candidate sentence has already been spoken (e.g. tail words found in spokenWords), advance past it
+        if idx < actorSentences.count && !spokenWords.isEmpty {
+            let candidateWords = words(in: actorSentences[idx].text)
+            if !candidateWords.isEmpty {
+                let tail = Array(candidateWords.suffix(min(3, candidateWords.count)))
+                if contiguousMatch(of: tail, in: spokenWords, startingAt: 0) != nil {
+                    idx += 1
+                }
+            }
+        }
+        guard idx < actorSentences.count else { return nil }
+        let range = actorSentences[idx]
         addClueRange(range)
+        currentActorSentenceIndex = idx + 1
+        if currentActorSentenceIndex < actorSentences.count {
+            let activeLineID = actorSentences[currentActorSentenceIndex].lineID
+            currentActorLineIndex = model.actorLines.firstIndex(where: { $0.id == activeLineID }) ?? 0
+        } else {
+            currentActorLineIndex = model.actorLines.count
+        }
         return range
     }
 
@@ -478,6 +500,47 @@ final class PracticeSpeechClueTracker {
             .flatMap(PracticeSpeechDeliveryAnalyzer.normalizedComparisonTokens)
     }
 
+    private func sentenceMatched(expected: [String], in spoken: [String], startingAt start: Int) -> Int? {
+        guard !expected.isEmpty, start <= spoken.count else { return nil }
+        // 1. Contiguous match
+        if let end = contiguousMatch(of: expected, in: spoken, startingAt: start) {
+            return end
+        }
+        // 2. Tolerant forward match with dynamic edit distance
+        let maxEdits = max(1, expected.count / 3)
+        if let end = tolerantForwardMatch(of: expected, in: spoken, startingAt: start, maxEdits: maxEdits) {
+            return end
+        }
+        // 3. Tail match: last 3-4 words of sentence
+        if expected.count >= 4 {
+            let tail = Array(expected.suffix(min(3, expected.count)))
+            if let tailEnd = contiguousMatch(of: tail, in: spoken, startingAt: start) {
+                return tailEnd
+            }
+        }
+        // 4. Monotonic subsequence match (at least 60% of words)
+        var spokenIdx = start
+        var matchedCount = 0
+        var lastMatchedSpokenIdx = start
+        for word in expected {
+            while spokenIdx < spoken.count {
+                if spoken[spokenIdx] == word || VoiceTeleprompterTracker.tokensMatch(spoken[spokenIdx], word) {
+                    matchedCount += 1
+                    lastMatchedSpokenIdx = spokenIdx + 1
+                    spokenIdx += 1
+                    break
+                }
+                spokenIdx += 1
+            }
+            if spokenIdx >= spoken.count { break }
+        }
+        let threshold = max(2, Int(Double(expected.count) * 0.6))
+        if matchedCount >= threshold {
+            return lastMatchedSpokenIdx
+        }
+        return nil
+    }
+
     private func contiguousMatch(of expected: [String], in spoken: [String], startingAt start: Int) -> Int? {
         guard expected.count <= spoken.count - start else { return nil }
         for candidate in start...(spoken.count - expected.count) where Array(spoken[candidate..<(candidate + expected.count)]) == expected {
@@ -486,26 +549,21 @@ final class PracticeSpeechClueTracker {
         return nil
     }
 
-    /// Tolerates a single skipped, substituted, or inserted word during live
-    /// line tracking so one recognizer slip does not freeze the scene.
-    private func tolerantForwardMatch(of expected: [String], in spoken: [String], startingAt start: Int) -> Int? {
+    /// Tolerates up to `maxEdits` skipped, substituted, or inserted words during live
+    /// line tracking so recognizer speech slips do not stall the scene.
+    private func tolerantForwardMatch(of expected: [String], in spoken: [String], startingAt start: Int, maxEdits: Int = 1) -> Int? {
         let m = expected.count
         guard m >= 3, start < spoken.count else { return nil }
 
         for candidate in start..<spoken.count {
             let remaining = spoken.count - candidate
-            guard remaining >= m - 1 else { break }
+            guard remaining >= max(1, m - maxEdits) else { break }
 
-            let maxPrefix = min(remaining, m + 1)
-            let minPrefix = m - 1
+            let maxPrefix = min(remaining, m + maxEdits)
+            let minPrefix = max(1, m - maxEdits)
 
             for sLen in minPrefix...maxPrefix {
-                // Only match a shorter (m - 1) span if the trailing word matched,
-                // avoiding premature matches on incomplete prefixes.
-                if sLen == m - 1, expected[m - 1] != spoken[candidate + sLen - 1] {
-                    continue
-                }
-                if editDistance(expected, Array(spoken[candidate..<(candidate + sLen)])) <= 1 {
+                if editDistance(expected, Array(spoken[candidate..<(candidate + sLen)])) <= maxEdits {
                     return candidate + sLen
                 }
             }
@@ -516,14 +574,14 @@ final class PracticeSpeechClueTracker {
     private func editDistance(_ lhs: [String], _ rhs: [String]) -> Int {
         let m = lhs.count
         let n = rhs.count
-        if abs(m - n) > 1 { return 2 }
+        if abs(m - n) > 2 { return 3 }
         var dp = Array(0...n)
         for i in 1...m {
             var prev = dp[0]
             dp[0] = i
             for j in 1...n {
                 let temp = dp[j]
-                if lhs[i - 1] == rhs[j - 1] {
+                if lhs[i - 1] == rhs[j - 1] || VoiceTeleprompterTracker.tokensMatch(lhs[i - 1], rhs[j - 1]) {
                     dp[j] = prev
                 } else {
                     dp[j] = 1 + min(prev, dp[j], dp[j - 1])

@@ -35,6 +35,7 @@ struct GlobalSearchSections: View {
                         NavigationLink {
                             AuditionPackageHubView(audition: audition)
                                 .environment(appState)
+                                .hideTabBarPastRoot()
                         } label: {
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
@@ -79,6 +80,7 @@ struct GlobalSearchSections: View {
                     ForEach(results.scripts) { script in
                         NavigationLink {
                             MemoriseView(script: script, appState: appState)
+                                .hideTabBarPastRoot()
                         } label: {
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {

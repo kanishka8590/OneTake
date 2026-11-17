@@ -256,7 +256,7 @@ struct PracticeASceneSheet: View {
                 selectedPhotoItems = []
                 loadSelectedPhotos(items)
             }
-            .sheet(isPresented: $showingDocumentScanner, onDismiss: processPendingScannedImages) {
+            .fullScreenCover(isPresented: $showingDocumentScanner, onDismiss: processPendingScannedImages) {
                 DocumentScannerRepresentable { scannedImages in
                     pendingScannedImages = scannedImages
                     showingDocumentScanner = false
@@ -268,6 +268,7 @@ struct PracticeASceneSheet: View {
                     showingDocumentScanner = false
                     presentImportError(error.localizedDescription)
                 }
+                .ignoresSafeArea()
             }
             .fileImporter(
                 isPresented: $showingFileImporter,
@@ -751,6 +752,7 @@ struct MemoriseView: View {
         .background(Theme.Colors.canvasBackground)
         .navigationTitle(script.title)
         .navigationBarTitleDisplayMode(.inline)
+        .hideTabBarPastRoot()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -1019,7 +1021,10 @@ struct TestYourselfView: View {
         Group {
             if enteredRun { SayItAloudView(script: script, appState: appState, help: help) }
             else { VStack(spacing: 22) { Text("Test Yourself!").font(Theme.Typography.screenTitle); Text("Choose how much help you want before you start.").foregroundStyle(Theme.Colors.textSecondary); Picker("Show", selection: $help) { ForEach(HelpLevel.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.inline); Button { enteredRun = true } label: { Text("Continue").primaryCapsuleButton() } }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.Colors.canvasBackground) }
-        }.navigationTitle(enteredRun ? "Say It Aloud!" : "Test Yourself!").navigationBarTitleDisplayMode(.inline)
+        }
+        .navigationTitle(enteredRun ? "Say It Aloud!" : "Test Yourself!")
+        .navigationBarTitleDisplayMode(.inline)
+        .hideTabBarPastRoot()
     }
 }
 
@@ -1207,7 +1212,8 @@ struct SayItAloudView: View {
     }
 
     private func requestNextSentence() {
-        guard let range = clueTracker.requestNextSentence() else { return }
+        let spoken = recorder.recognizedWords.map(\.text)
+        guard let range = clueTracker.requestNextSentence(spokenWords: spoken) else { return }
         hintLineID = range.lineID
         hintText = range.text
         clueTokenIDs.formUnion(range.tokenIDs)
