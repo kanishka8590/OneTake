@@ -58,6 +58,22 @@ final class MediaPipelineAndTakesTests: XCTestCase {
         XCTAssertEqual(destMeta.aspectRatioString, "16:9")
         XCTAssertGreaterThan(destMeta.durationSeconds, 1.0)
         XCTAssertGreaterThan(destMeta.fileSizeMB, 0.0)
+
+        // When source > targetSizeMB, step-down presets also execute and settle exportProgress cleanly.
+        let tightDestURL = dir.appendingPathComponent("compressed_tight_output.mp4")
+        let tightOutputURL = try await VideoPostProcessingService.shared.compressVideoToTargetSize(
+            sourceURL: sourceURL,
+            targetSizeMB: 0.001,
+            destinationURL: tightDestURL
+        )
+        XCTAssertEqual(tightOutputURL.standardizedFileURL, tightDestURL.standardizedFileURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tightDestURL.path))
+        XCTAssertEqual(VideoPostProcessingService.shared.exportProgress, 1.0, accuracy: 0.01)
+        XCTAssertFalse(VideoPostProcessingService.shared.isProcessing)
+
+        let tightMeta = await VideoPostProcessingService.inspectTrackMetadata(at: tightDestURL)
+        XCTAssertGreaterThan(tightMeta.durationSeconds, 1.0)
+        XCTAssertGreaterThan(tightMeta.fileSizeMB, 0.0)
     }
 
     func testTrimAndProcessVideoProducesTrimmedPlayableMP4AndInspectsMetadata() async throws {

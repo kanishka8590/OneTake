@@ -290,6 +290,14 @@ nonisolated enum PackageExportHelper {
 
     // MARK: - Size & Policy Helpers
 
+    static func formattedSizeString(_ sizeMB: Double) -> String {
+        let clamped = max(0, sizeMB)
+        if clamped < 10 {
+            return String(format: "%.1f MB", clamped)
+        }
+        return "\(Int(clamped.rounded())) MB"
+    }
+
     static func effectiveHeadshotPath(
         for headshot: HeadshotAsset,
         documentsDirectory: URL = MediaStorage.documentsDirectory

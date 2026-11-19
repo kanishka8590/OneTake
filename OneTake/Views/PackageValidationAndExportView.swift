@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 import AVKit
 import UIKit
 import MessageUI
@@ -11,7 +12,8 @@ struct PackageValidationAndExportView: View {
     @Bindable var audition: Audition
 
     @State private var stage: Stage = .checking
-    @State private var showingCompressor = false
+    @State private var compressorRoute: CompressorRoute?
+    @State private var compressionFeedbackMessage: String?
     @State private var showingShareChoices = false
     @State private var showingCelebration = false
     @State private var editingFileID: String?
@@ -23,7 +25,6 @@ struct PackageValidationAndExportView: View {
     @State private var exportErrorMessage: String?
     @State private var reviewRoute: ReviewRoute?
     @State private var cropRoute: CropRoute?
-    @State private var cropSourceImage: UIImage?
     @State private var isCyclingHeadshotCrops = false
     @State private var didApplyCropForCurrentAngle = false
     @State private var slateMetadata: VideoMetadata?
@@ -44,6 +45,13 @@ struct PackageValidationAndExportView: View {
     private struct CropRoute: Identifiable {
         let id = UUID()
         let angle: HeadshotAngle
+        let image: UIImage
+    }
+    private struct CompressorRoute: Identifiable {
+        let id = UUID()
+        let take: VideoTake
+        let isSlate: Bool
+        let originalSizeMB: Double
     }
 
     private var rules: ValidationRules { audition.validationRules }
@@ -114,16 +122,18 @@ struct PackageValidationAndExportView: View {
                         .navigationTitle("Ready to Send")
                         .navigationBarTitleDisplayMode(.inline)
                 }
-            .sheet(isPresented: $showingCompressor) {
-                if let oversizedTake {
-                    VideoCompressorView(
-                        audition: audition,
-                        take: oversizedTake,
-                        isSlate: oversizedTake.id == slate?.id,
-                        isDemoMode: appState.isDemoMode
-                    ) {
-                        appState.saveChanges()
-                    }
+            .sheet(item: $compressorRoute) { route in
+                VideoCompressorView(
+                    audition: audition,
+                    take: route.take,
+                    isSlate: route.isSlate,
+                    initialSizeMB: route.originalSizeMB,
+                    isDemoMode: appState.isDemoMode
+                ) { originalMB, compressedMB in
+                    appState.saveChanges()
+                    Task { await refreshVideoMetadata() }
+                    let label = route.isSlate ? "Slate" : "Audition Clip"
+                    compressionFeedbackMessage = "\(label) compressed: \(formattedSizeString(originalMB)) → \(formattedSizeString(compressedMB))"
                 }
             }
             .fullScreenCover(item: $reviewRoute) { route in
@@ -133,10 +143,8 @@ struct PackageValidationAndExportView: View {
                 }
             }
             .fullScreenCover(item: $cropRoute, onDismiss: { handleCropDismiss() }) { route in
-                if let cropSourceImage {
-                    HeadshotCropView(originalImage: cropSourceImage, defaultRatio: rules.requiredHeadshotRatio) { image, ratio, preset in
-                        saveCrop(image, ratio: ratio, preset: preset, angle: route.angle)
-                    }
+                HeadshotCropView(originalImage: route.image, defaultRatio: rules.requiredHeadshotRatio) { image, ratio, preset in
+                    saveCrop(image, ratio: ratio, preset: preset, angle: route.angle)
                 }
             }
             .sheet(isPresented: $showingShareChoices, onDismiss: {
@@ -229,9 +237,36 @@ struct PackageValidationAndExportView: View {
                     "File Size",
                     detail: fileSizeValidationDetail,
                     passed: fileSizePass,
-                    action: nil,
-                    actionHandler: {}
-                )
+                    action: oversizedTake.map { "Compress \($0.id == clip?.id ? "Audition Clip" : "Slate")" }
+                ) {
+                    if let oversizedTake {
+                        openCompressor(for: oversizedTake)
+                    }
+                }
+
+                if let compressionFeedbackMessage {
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(Theme.Colors.successGreen)
+                        Text(compressionFeedbackMessage)
+                            .font(Theme.Typography.bodyRegular)
+                            .foregroundStyle(Theme.Colors.textPrimary)
+                        Spacer()
+                        Button {
+                            withAnimation { self.compressionFeedbackMessage = nil }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                                .frame(width: 28, height: 28)
+                        }
+                        .accessibilityLabel("Dismiss compression confirmation")
+                    }
+                    .padding(14)
+                    .background(Theme.Colors.successGreen.opacity(0.10))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
 
                 if let oversizedTake {
                     let sizeMB = actualSizeMB(for: oversizedTake, metadata: oversizedTake.id == slate?.id ? slateMetadata : clipMetadata)
@@ -245,11 +280,11 @@ struct PackageValidationAndExportView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("A couple of things need attention...").font(Theme.Typography.cardTitle)
-                                Text("\(oversizedTake.title) Size is \(Int(sizeMB.rounded())) MB — File limit is \(Int(rules.maxPerClipSizeMB)) MB")
+                                Text("\(oversizedTake.title) Size is \(formattedSizeString(sizeMB)) — File limit is \(Int(rules.maxPerClipSizeMB)) MB")
                                     .font(Theme.Typography.captionBadge).monospacedDigit().foregroundStyle(Theme.Colors.textSecondary)
                             }
                         }
-                        Button { showingCompressor = true } label: {
+                        Button { openCompressor(for: oversizedTake) } label: {
                             Label("Compress \(oversizedTake.id == clip?.id ? "Audition Clip" : "Slate")", systemImage: "arrow.down.right.and.arrow.up.left")
                                 .secondaryLavenderButton()
                         }
@@ -610,7 +645,14 @@ struct PackageValidationAndExportView: View {
         if !takes.allSatisfy({ MediaStorage.fileExists(at: $0.filePath) }) {
             return "One or more clip files missing on disk · limit \(Int(rules.maxPerClipSizeMB)) MB each"
         }
-        return "Each clip must be at most \(Int(rules.maxPerClipSizeMB)) MB"
+        var parts: [String] = []
+        if let slate {
+            parts.append("Slate \(formattedSizeString(actualSizeMB(for: slate, metadata: slateMetadata)))")
+        }
+        if let clip {
+            parts.append("Clip \(formattedSizeString(actualSizeMB(for: clip, metadata: clipMetadata)))")
+        }
+        return "\(parts.joined(separator: " · ")) (limit \(Int(rules.maxPerClipSizeMB)) MB)"
     }
 
     private func durationDetail(_ take: VideoTake?, metadata: VideoMetadata?, cap: Double) -> String {
@@ -623,10 +665,13 @@ struct PackageValidationAndExportView: View {
     }
 
     private func formattedSizeString(_ sizeMB: Double) -> String {
-        if sizeMB < 10 {
-            return String(format: "%.1f MB", max(0, sizeMB))
-        }
-        return "\(Int(sizeMB.rounded())) MB"
+        PackageExportHelper.formattedSizeString(sizeMB)
+    }
+
+    private func openCompressor(for take: VideoTake) {
+        let isSlate = take.id == slate?.id
+        let currentMB = actualSizeMB(for: take, metadata: isSlate ? slateMetadata : clipMetadata)
+        compressorRoute = CompressorRoute(take: take, isSlate: isSlate, originalSizeMB: currentMB)
     }
 
     private func refreshVideoMetadata() async {
@@ -865,8 +910,7 @@ struct PackageValidationAndExportView: View {
             isCyclingHeadshotCrops = false
             return
         }
-        cropSourceImage = image
-        cropRoute = CropRoute(angle: asset.angle)
+        cropRoute = CropRoute(angle: asset.angle, image: image)
     }
 
     private func loadHeadshotImage(for asset: HeadshotAsset) -> UIImage? {
@@ -882,14 +926,17 @@ struct PackageValidationAndExportView: View {
     }
 
     private func handleCropDismiss() {
-        cropSourceImage = nil
         guard isCyclingHeadshotCrops, didApplyCropForCurrentAngle else {
             isCyclingHeadshotCrops = false
             didApplyCropForCurrentAngle = false
             return
         }
         didApplyCropForCurrentAngle = false
-        presentNextMismatchedHeadshotIfNeeded()
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard isCyclingHeadshotCrops, cropRoute == nil else { return }
+            presentNextMismatchedHeadshotIfNeeded()
+        }
     }
 
     private func saveCrop(_ image: UIImage, ratio: HeadshotAspectRatio, preset: HeadshotCropPreset, angle: HeadshotAngle) {
@@ -914,30 +961,153 @@ private struct VideoCompressorView: View {
     @Bindable var audition: Audition
     let take: VideoTake
     let isSlate: Bool
+    let initialSizeMB: Double
     let isDemoMode: Bool
-    let onCompressed: () -> Void
+    let onCompressed: (_ originalMB: Double, _ compressedMB: Double) -> Void
 
     @State private var progress = 0.0
     @State private var isCompressing = false
     @State private var completed = false
+    @State private var compressedSizeMB: Double?
+    @State private var thumbnailImage: UIImage?
     @State private var simulation: Timer?
+    @State private var compressionTask: Task<Void, Never>?
     @State private var errorMessage: String?
     @State private var showingErrorAlert = false
 
     private var clipLabel: String { isSlate ? "Slate" : "Audition Clip" }
 
+    private var originalSizeMB: Double {
+        initialSizeMB > 0 ? initialSizeMB : take.fileSizeMB
+    }
+
+    private var targetSize: Double {
+        min(originalSizeMB * 0.67, audition.validationRules.maxPerClipSizeMB * 0.85)
+    }
+
+    private var headlineText: String {
+        if completed { return "\(clipLabel.uppercased()) COMPRESSED" }
+        if isCompressing { return "COMPRESSING YOUR \(isSlate ? "SLATE" : "CLIP")..." }
+        return "COMPRESS YOUR \(isSlate ? "SLATE" : "CLIP")"
+    }
+
+    private var savingsSummary: String? {
+        guard let compressedSizeMB, originalSizeMB > 0, compressedSizeMB < originalSizeMB else { return nil }
+        let savedMB = originalSizeMB - compressedSizeMB
+        let pct = Int(((savedMB / originalSizeMB) * 100).rounded())
+        return "Saved \(PackageExportHelper.formattedSizeString(savedMB)) (\(pct)% smaller)"
+    }
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 24) {
+            VStack(spacing: 20) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 18).fill(.black).aspectRatio(16 / 9, contentMode: .fit)
-                    Image(systemName: "play.rectangle").font(.system(size: 44)).foregroundStyle(.white)
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(.black)
+                        .aspectRatio(16 / 9, contentMode: .fit)
+
+                    if let thumbnailImage {
+                        Image(uiImage: thumbnailImage)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(maxWidth: .infinity)
+                            .aspectRatio(16 / 9, contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: 18))
+                            .overlay(
+                                Color.black.opacity(isCompressing ? 0.45 : 0.2)
+                                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                            )
+                    } else {
+                        Image(systemName: "film")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.white.opacity(0.85))
+                    }
+
+                    if isCompressing {
+                        ProgressView()
+                            .tint(.white)
+                            .scaleEffect(1.2)
+                    } else if completed {
+                        VStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 44))
+                                .foregroundStyle(Theme.Colors.successGreen)
+                                .background(Circle().fill(.white).padding(4))
+                            if let compressedSizeMB {
+                                Text(PackageExportHelper.formattedSizeString(compressedSizeMB))
+                                    .font(Theme.Typography.captionBadge)
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(Theme.Colors.successGreen)
+                                    .clipShape(Capsule())
+                            }
+                        }
+                    }
                 }
-                VStack(spacing: 8) {
-                    Text("COMPRESSING YOUR \(isSlate ? "SLATE" : "CLIP")").font(Theme.Typography.cardTitle)
-                    Text(isCompressing ? "\(Int(progress * 100))%" : "Original: \(Int(take.fileSizeMB.rounded())) MB → Compressed: ~\(Int(targetSize.rounded())) MB")
-                        .font(Theme.Typography.bodyRegular).monospacedDigit().foregroundStyle(Theme.Colors.textSecondary)
-                    ProgressView(value: progress).tint(Theme.Colors.accent).opacity(isCompressing ? 1 : 0)
+                .clipped()
+
+                VStack(spacing: 10) {
+                    Text(headlineText)
+                        .font(Theme.Typography.cardTitle)
+                        .foregroundStyle(completed ? Theme.Colors.successGreen : Theme.Colors.textPrimary)
+
+                    if completed, let finalMB = compressedSizeMB {
+                        Text("\(PackageExportHelper.formattedSizeString(originalSizeMB)) → \(PackageExportHelper.formattedSizeString(finalMB))")
+                            .font(Theme.Typography.sectionHeader)
+                            .monospacedDigit()
+                            .foregroundStyle(Theme.Colors.textPrimary)
+
+                        if let savingsSummary {
+                            Text(savingsSummary)
+                                .font(Theme.Typography.captionBadge)
+                                .foregroundStyle(Theme.Colors.successGreen)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 5)
+                                .background(Theme.Colors.successGreen.opacity(0.12))
+                                .clipShape(Capsule())
+                        }
+
+                        let limitMB = audition.validationRules.maxPerClipSizeMB
+                        HStack(spacing: 6) {
+                            Image(systemName: finalMB <= limitMB ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                .foregroundStyle(finalMB <= limitMB ? Theme.Colors.successGreen : Theme.Colors.warningAmber)
+                            Text(
+                                finalMB <= limitMB
+                                    ? "Now under the \(Int(limitMB)) MB package limit."
+                                    : "Smallest export reached (\(PackageExportHelper.formattedSizeString(finalMB))), still above the \(Int(limitMB)) MB limit. Try trimming the clip shorter."
+                            )
+                            .font(Theme.Typography.captionBadge)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                            .multilineTextAlignment(.center)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity)
+                        .background(
+                            (finalMB <= limitMB ? Theme.Colors.successGreen : Theme.Colors.warningAmber)
+                                .opacity(0.08)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .padding(.top, 4)
+                    } else if isCompressing {
+                        Text("\(Int((progress * 100).rounded()))% · Optimizing for \(PackageExportHelper.formattedSizeString(targetSize))")
+                            .font(Theme.Typography.bodyRegular)
+                            .monospacedDigit()
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                        ProgressView(value: progress)
+                            .tint(Theme.Colors.accent)
+                            .padding(.top, 4)
+                    } else {
+                        Text("Original: \(PackageExportHelper.formattedSizeString(originalSizeMB)) → Target: ~\(PackageExportHelper.formattedSizeString(targetSize))")
+                            .font(Theme.Typography.bodyRegular)
+                            .monospacedDigit()
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                        Text("Reduces file size so your \(clipLabel.lowercased()) fits within the \(Int(audition.validationRules.maxPerClipSizeMB)) MB limit.")
+                            .font(Theme.Typography.captionBadge)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                            .multilineTextAlignment(.center)
+                    }
+
                     if let errorMessage {
                         Text(errorMessage)
                             .font(Theme.Typography.captionBadge)
@@ -946,35 +1116,40 @@ private struct VideoCompressorView: View {
                             .padding(.top, 4)
                     }
                 }
+
                 Spacer()
+
+                if !isCompressing {
+                    Button {
+                        if completed {
+                            dismiss()
+                        } else {
+                            compress()
+                        }
+                    } label: {
+                        Text(completed ? "Done" : "Compress \(clipLabel)")
+                            .primaryCapsuleButton()
+                    }
+                    .accessibilityLabel(completed ? "Done" : "Compress \(clipLabel)")
+                }
             }
             .padding(20)
-            .navigationTitle("Compress your \(clipLabel)").navigationBarTitleDisplayMode(.inline)
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
+            .navigationTitle("Compress your \(clipLabel)")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") {
-                        simulation?.invalidate()
-                        simulation = nil
+                    Button(completed ? "Done" : "Close") {
+                        cancelWork()
                         dismiss()
                     }
                 }
-
-                ToolbarItem(placement: .confirmationAction) {
-                    if isCompressing {
-                        ProgressView()
-                    } else {
-                        Button(completed ? "Save" : "Compress") {
-                            compress()
-                        }
-                        .font(Theme.Typography.cardTitle)
-                        .foregroundStyle(Theme.Colors.accent)
-                        .accessibilityLabel(completed ? "Save Compressed File" : "Compress \(clipLabel)")
-                    }
-                }
+            }
+            .task(id: take.filePath) {
+                await loadThumbnailIfAvailable()
             }
             .onDisappear {
-                simulation?.invalidate()
-                simulation = nil
+                cancelWork()
             }
             .alert("Compression Failed", isPresented: $showingErrorAlert) {
                 Button("OK", role: .cancel) {}
@@ -984,8 +1159,25 @@ private struct VideoCompressorView: View {
         }
     }
 
-    private var targetSize: Double {
-        min(take.fileSizeMB * 0.67, audition.validationRules.maxPerClipSizeMB * 0.85)
+    private func cancelWork() {
+        simulation?.invalidate()
+        simulation = nil
+        compressionTask?.cancel()
+        compressionTask = nil
+    }
+
+    private func loadThumbnailIfAvailable() async {
+        guard let url = MediaStorage.resolveURL(for: take.filePath),
+              FileManager.default.fileExists(atPath: url.path) else {
+            return
+        }
+        let asset = AVURLAsset(url: url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 640, height: 360)
+        if let cgImage = try? await generator.image(at: .zero).image {
+            thumbnailImage = UIImage(cgImage: cgImage)
+        }
     }
 
     private func compress() {
@@ -1014,27 +1206,54 @@ private struct VideoCompressorView: View {
         let destination = MediaStorage.documentsDirectory.appendingPathComponent(relDest)
         try? FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
 
-        Task {
+        let baselineSizeMB = originalSizeMB
+        compressionTask?.cancel()
+        compressionTask = Task {
+            let progressSyncTask = Task { @MainActor in
+                while !Task.isCancelled {
+                    progress = max(progress, min(0.99, VideoPostProcessingService.shared.exportProgress))
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+            defer { progressSyncTask.cancel() }
+
             do {
                 let outputURL = try await VideoPostProcessingService.shared.compressVideoToTargetSize(
                     sourceURL: source,
                     targetSizeMB: targetSize,
                     destinationURL: destination
                 )
-                let storedRel = MediaStorage.storedRelativePath(for: outputURL.path)
-                let diskSize = MediaStorage.fileSizeMB(at: storedRel)
-                let didProduceNewFile = outputURL.standardizedFileURL != source.standardizedFileURL
+                try Task.checkCancellation()
+
+                let candidateSizeMB = MediaStorage.fileSizeMB(at: MediaStorage.storedRelativePath(for: outputURL.path))
+                let didProduceSmallerNewFile = outputURL.standardizedFileURL != source.standardizedFileURL
                     && FileManager.default.fileExists(atPath: outputURL.path)
+                    && (candidateSizeMB > 0 && (baselineSizeMB <= 0 || candidateSizeMB <= baselineSizeMB))
+
+                let finalPath: String
+                let finalSizeMB: Double
+                if didProduceSmallerNewFile {
+                    finalPath = MediaStorage.storedRelativePath(for: outputURL.path)
+                    finalSizeMB = candidateSizeMB
+                    MediaStorage.removeFile(at: take.filePath)
+                } else {
+                    try? FileManager.default.removeItem(at: destination)
+                    finalPath = take.filePath
+                    finalSizeMB = baselineSizeMB
+                }
 
                 await MainActor.run {
-                    if didProduceNewFile {
-                        MediaStorage.removeFile(at: take.filePath)
-                    }
-                    finishCompression(path: storedRel, sizeMB: diskSize > 0 ? diskSize : take.fileSizeMB)
+                    finishCompression(path: finalPath, sizeMB: finalSizeMB)
+                }
+            } catch is CancellationError {
+                try? FileManager.default.removeItem(at: destination)
+                await MainActor.run {
+                    isCompressing = false
+                    progress = 0
                 }
             } catch {
+                try? FileManager.default.removeItem(at: destination)
                 await MainActor.run {
-                    try? FileManager.default.removeItem(at: destination)
                     isCompressing = false
                     progress = 0
                     errorMessage = "Compression failed: \(error.localizedDescription)"
@@ -1059,8 +1278,10 @@ private struct VideoCompressorView: View {
     private func finishCompression(path: String, sizeMB: Double) {
         simulation?.invalidate()
         simulation = nil
+        compressionTask = nil
         isCompressing = false
         completed = true
+        compressedSizeMB = sizeMB
         progress = 1
 
         if isSlate {
@@ -1074,7 +1295,8 @@ private struct VideoCompressorView: View {
                 audition.auditionTakes[index].fileSizeMB = sizeMB
             }
         }
-        onCompressed()
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        onCompressed(originalSizeMB, sizeMB)
     }
 }
 

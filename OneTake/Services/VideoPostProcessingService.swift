@@ -263,20 +263,80 @@ final class VideoPostProcessingService: NSObject, VideoPostProcessingServiceProt
         let currentSizeMB = MediaStorage.fileSizeMB(at: sourceURL.path)
         let preferredPreset = Self.selectCompressionPreset(currentSizeMB: currentSizeMB, targetSizeMB: targetSizeMB)
 
-        let exportSession: AVAssetExportSession
-        if let session = AVAssetExportSession(asset: asset, presetName: preferredPreset) {
-            exportSession = session
-        } else if let fallback = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetMediumQuality)
-            ?? AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) {
-            exportSession = fallback
-        } else {
-            throw VideoPostProcessingError.exportSessionCreationFailed("Compression preset unavailable.")
+        let exportSession = try makeExportSession(asset: asset, preferredPreset: preferredPreset)
+        try await exportSessionResult(exportSession, sourceURL: sourceURL, destinationURL: destinationURL)
+
+        if currentSizeMB > targetSizeMB {
+            try await stepDownExportIfNeeded(
+                asset: asset,
+                sourceURL: sourceURL,
+                destinationURL: destinationURL,
+                initialPreset: exportSession.presetName,
+                currentSizeMB: currentSizeMB,
+                targetSizeMB: targetSizeMB
+            )
         }
 
-        exportSession.shouldOptimizeForNetworkUse = true
-        try await exportSessionResult(exportSession, sourceURL: sourceURL, destinationURL: destinationURL)
         exportProgress = 1.0
         return destinationURL
+    }
+
+    private func makeExportSession(asset: AVAsset, preferredPreset: String) throws -> AVAssetExportSession {
+        if let session = AVAssetExportSession(asset: asset, presetName: preferredPreset) {
+            session.shouldOptimizeForNetworkUse = true
+            return session
+        }
+        if let fallback = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetMediumQuality)
+            ?? AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) {
+            fallback.shouldOptimizeForNetworkUse = true
+            return fallback
+        }
+        throw VideoPostProcessingError.exportSessionCreationFailed("Compression preset unavailable.")
+    }
+
+    private func stepDownExportIfNeeded(
+        asset: AVAsset,
+        sourceURL: URL,
+        destinationURL: URL,
+        initialPreset: String,
+        currentSizeMB: Double,
+        targetSizeMB: Double
+    ) async throws {
+        var bestSizeMB = MediaStorage.fileSizeMB(at: destinationURL.path)
+        guard bestSizeMB > targetSizeMB || bestSizeMB >= currentSizeMB else { return }
+
+        let fallbackPresets = [AVAssetExportPresetMediumQuality, AVAssetExportPresetLowQuality]
+            .filter { $0 != initialPreset }
+
+        let fm = FileManager.default
+        for preset in fallbackPresets {
+            try Task.checkCancellation()
+            guard let candidateSession = AVAssetExportSession(asset: asset, presetName: preset) else {
+                continue
+            }
+            candidateSession.shouldOptimizeForNetworkUse = true
+
+            let tempURL = fm.temporaryDirectory
+                .appendingPathComponent("onetake_compress_\(UUID().uuidString).mp4")
+            defer { try? fm.removeItem(at: tempURL) }
+
+            do {
+                try await exportSessionResult(candidateSession, sourceURL: sourceURL, destinationURL: tempURL)
+                let candidateSizeMB = MediaStorage.fileSizeMB(at: tempURL.path)
+                if candidateSizeMB > 0, candidateSizeMB < bestSizeMB {
+                    try? fm.removeItem(at: destinationURL)
+                    try fm.moveItem(at: tempURL, to: destinationURL)
+                    bestSizeMB = candidateSizeMB
+                }
+                if bestSizeMB <= targetSizeMB {
+                    break
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                continue
+            }
+        }
     }
 
     // MARK: - Track Metadata Inspection

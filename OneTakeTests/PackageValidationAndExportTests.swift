@@ -230,6 +230,9 @@ final class PackageValidationAndExportTests: XCTestCase {
 
         XCTAssertFalse(PackageExportHelper.canSimulateCompression(isDemoMode: false))
         XCTAssertTrue(PackageExportHelper.canSimulateCompression(isDemoMode: true))
+        XCTAssertEqual(PackageExportHelper.formattedSizeString(-1.2), "0.0 MB")
+        XCTAssertEqual(PackageExportHelper.formattedSizeString(4.36), "4.4 MB")
+        XCTAssertEqual(PackageExportHelper.formattedSizeString(124.7), "125 MB")
 
         let dir = try makeTempDirectory(prefix: "OneTakeMailLimit")
         defer { try? FileManager.default.removeItem(at: dir) }
