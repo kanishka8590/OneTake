@@ -14,6 +14,7 @@ struct TakeReviewView: View {
     let qualityMetrics: PreTakeQualityMetrics
     var usedFrontCamera: Bool = true
     var autoTrimSilence: Bool = false
+    var initialNoiseCleaned: Bool? = nil
     let onTakeApproved: (VideoTake) -> Void
     let onRetake: () -> Void
 
@@ -199,13 +200,13 @@ struct TakeReviewView: View {
                 Text(exportErrorMessage ?? "Could not export this take. Please try again.")
             }
             .onAppear {
-                isNoiseCleaned = appState.settings.noiseReductionDefault
+                isNoiseCleaned = initialNoiseCleaned ?? appState.settings.noiseReductionDefault
                 setupPlayer()
             }
             .task {
                 await applyAutoTrimSuggestionIfEnabled()
                 filmstrip = await Self.generateFilmstrip(for: rawVideoURL, duration: safeDuration, count: 8)
-                if isNoiseCleaned {
+                if isNoiseCleaned && initialNoiseCleaned != true {
                     await switchPlaybackAudio(cleaned: true)
                 }
             }
@@ -475,6 +476,8 @@ struct TakeReviewView: View {
             player.pause()
             isPlaying = false
         } else {
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+            try? AVAudioSession.sharedInstance().setActive(true)
             if playheadSeconds >= trimEnd - 0.05 || playheadSeconds < trimStart {
                 playheadSeconds = trimStart
                 seekPlayer(to: trimStart)
@@ -492,8 +495,9 @@ struct TakeReviewView: View {
                 targetURL = cached
             } else {
                 isPreparingCleanPreview = true
+                let previewExt = rawVideoURL.pathExtension.lowercased() == "mov" ? "mov" : "mp4"
                 let previewURL = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("onetake_preview_clean_\(UUID().uuidString).mp4")
+                    .appendingPathComponent("onetake_preview_clean_\(UUID().uuidString).\(previewExt)")
                 do {
                     let generated = try await postProcessor.prepareCleanedPreview(
                         sourceURL: rawVideoURL,
@@ -511,6 +515,7 @@ struct TakeReviewView: View {
             targetURL = rawVideoURL
         }
 
+        guard isNoiseCleaned == cleaned else { return }
         let currentTime = player.currentTime()
         let wasPlaying = (player.timeControlStatus == .playing)
         player.pause()

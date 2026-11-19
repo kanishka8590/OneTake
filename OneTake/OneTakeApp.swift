@@ -8,10 +8,24 @@
 
 import SwiftUI
 import SwiftData
+import UIKit
 import UserNotifications
+
+final class PortraitAppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        supportedInterfaceOrientationsFor window: UIWindow?
+    ) -> UIInterfaceOrientationMask {
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            return .portrait
+        }
+        return .all
+    }
+}
 
 @main
 struct OneTakeApp: App {
+    @UIApplicationDelegateAdaptor(PortraitAppDelegate.self) private var appDelegate
     @State private var appState = AppState()
     @State private var showSplash = true
 

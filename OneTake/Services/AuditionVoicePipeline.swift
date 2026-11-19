@@ -223,6 +223,22 @@ final class ScriptSyncedCuePlaybackCoordinator {
         currentCueIndex += 1
     }
 
+    /// Triggers a cue directly from `VoiceTeleprompterTracker` when the actor reaches
+    /// the cue boundary, fast-syncing `currentCueIndex` if needed.
+    @discardableResult
+    func requestTeleprompterSyncedCue(at index: Int) -> Bool {
+        guard !isPlayingCue, index >= currentCueIndex, index < cues.count else { return false }
+        currentCueIndex = index
+        isPlayingCue = true
+        let cueIndex = index
+        let promptDelay = min(0.25, max(0.0, responseDelay))
+        schedule(promptDelay) { [weak self] in
+            guard let self, self.isPlayingCue, self.currentCueIndex == cueIndex else { return }
+            self.onCueReady(cueIndex)
+        }
+        return true
+    }
+
     @discardableResult
     func requestManualCue() -> Int? {
         guard !isPlayingCue, currentCueIndex < cues.count else { return nil }

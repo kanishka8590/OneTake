@@ -575,180 +575,91 @@ final class VideoPostProcessingService: NSObject, VideoPostProcessingServiceProt
             return
         }
 
+        let outExt = destinationURL.pathExtension.lowercased() == "mov" ? "mov" : "mp4"
+        let outFileType: AVFileType = (outExt == "mov") ? .mov : .mp4
         let stagedURL = sameLocation
-            ? fm.temporaryDirectory.appendingPathComponent("onetake_clean_\(UUID().uuidString).mp4")
+            ? fm.temporaryDirectory.appendingPathComponent("onetake_clean_\(UUID().uuidString).\(outExt)")
             : destinationURL
         try? fm.removeItem(at: stagedURL)
 
-        let (noiseFloor, speechPeak, detectedSampleRate, detectedChannels) = try await scanAudioStats(
-            asset: asset,
-            audioTracks: audioTracks
-        )
+        let cleanedAudioURL = fm.temporaryDirectory
+            .appendingPathComponent("onetake_clean_aac_\(UUID().uuidString).m4a")
+        defer { try? fm.removeItem(at: cleanedAudioURL) }
 
-        guard let reader = try? AVAssetReader(asset: asset) else {
-            throw VideoPostProcessingError.exportSessionCreationFailed("Could not initialize AVAssetReader.")
-        }
-        guard let writer = try? AVAssetWriter(outputURL: stagedURL, fileType: .mp4) else {
-            throw VideoPostProcessingError.exportSessionCreationFailed("Could not initialize AVAssetWriter.")
+        let didRenderAudio = try await renderCleanedAudioM4A(from: sourceURL, to: cleanedAudioURL)
+        guard didRenderAudio else {
+            if !sameLocation {
+                try? fm.removeItem(at: destinationURL)
+                try fm.copyItem(at: sourceURL, to: destinationURL)
+            }
+            return
         }
 
-        var videoReaderOutput: AVAssetReaderTrackOutput?
-        var videoWriterInput: AVAssetWriterInput?
-        if let videoTrack = videoTracks.first {
-            let preferredTransform = try await videoTrack.load(.preferredTransform)
-            let vOut = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: nil)
-            vOut.alwaysCopiesSampleData = false
-            let vIn = AVAssetWriterInput(mediaType: .video, outputSettings: nil)
-            vIn.expectsMediaDataInRealTime = false
-            vIn.transform = preferredTransform
-            if reader.canAdd(vOut), writer.canAdd(vIn) {
-                reader.add(vOut)
-                writer.add(vIn)
-                videoReaderOutput = vOut
-                videoWriterInput = vIn
+        let composition = AVMutableComposition()
+        let totalDuration = try await asset.load(.duration)
+
+        if let sourceVideoTrack = videoTracks.first,
+           let compVideoTrack = composition.addMutableTrack(
+               withMediaType: .video,
+               preferredTrackID: kCMPersistentTrackID_Invalid
+           ) {
+            let videoRange = try? await sourceVideoTrack.load(.timeRange)
+            let videoDuration = videoRange?.duration ?? totalDuration
+            try compVideoTrack.insertTimeRange(
+                CMTimeRange(start: .zero, duration: videoDuration),
+                of: sourceVideoTrack,
+                at: .zero
+            )
+            if let preferredTransform = try? await sourceVideoTrack.load(.preferredTransform) {
+                compVideoTrack.preferredTransform = preferredTransform
             }
         }
 
-        let pcmOutputSettings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVLinearPCMBitDepthKey: 32,
-            AVLinearPCMIsFloatKey: true,
-            AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsNonInterleaved: false
-        ]
-        let audioReaderOutput = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: pcmOutputSettings)
-        audioReaderOutput.alwaysCopiesSampleData = false
-
-        let outRate = detectedSampleRate > 1000 ? detectedSampleRate : 44100.0
-        let outChannels = max(1, min(2, detectedChannels))
-        let aacSettings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: outRate,
-            AVNumberOfChannelsKey: outChannels,
-            AVEncoderBitRateKey: outChannels > 1 ? 192_000 : 128_000
-        ]
-        let audioWriterInput = AVAssetWriterInput(mediaType: .audio, outputSettings: aacSettings)
-        audioWriterInput.expectsMediaDataInRealTime = false
-
-        guard reader.canAdd(audioReaderOutput), writer.canAdd(audioWriterInput) else {
-            throw VideoPostProcessingError.exportSessionCreationFailed("Audio cleanup pipeline incompatible with track format.")
+        let cleanedAudioAsset = AVURLAsset(url: cleanedAudioURL)
+        if let cleanAudioTrack = try await cleanedAudioAsset.loadTracks(withMediaType: .audio).first,
+           let compAudioTrack = composition.addMutableTrack(
+               withMediaType: .audio,
+               preferredTrackID: kCMPersistentTrackID_Invalid
+           ) {
+            let cleanDuration = (try? await cleanedAudioAsset.load(.duration)) ?? totalDuration
+            let insertDuration = totalDuration.seconds.isFinite && totalDuration.seconds > 0
+                ? CMTimeMinimum(totalDuration, cleanDuration)
+                : cleanDuration
+            try compAudioTrack.insertTimeRange(
+                CMTimeRange(start: .zero, duration: insertDuration),
+                of: cleanAudioTrack,
+                at: .zero
+            )
         }
-        reader.add(audioReaderOutput)
-        writer.add(audioWriterInput)
 
-        guard reader.startReading() else {
-            throw VideoPostProcessingError.exportSessionCreationFailed(reader.error?.localizedDescription ?? "Reader failed to start.")
-        }
-        guard writer.startWriting() else {
-            throw VideoPostProcessingError.exportSessionCreationFailed(writer.error?.localizedDescription ?? "Writer failed to start.")
-        }
-        writer.startSession(atSourceTime: .zero)
-
-        let writerBox = UncheckedBox(value: writer)
-        let videoOutBox = videoReaderOutput.map { UncheckedBox(value: $0) }
-        let videoInBox = videoWriterInput.map { UncheckedBox(value: $0) }
-        let audioOutBox = UncheckedBox(value: audioReaderOutput)
-        let audioInBox = UncheckedBox(value: audioWriterInput)
-
-        let copyResult = await withCheckedContinuation { (continuation: CheckedContinuation<Error?, Never>) in
-            let group = DispatchGroup()
-            var firstError: Error?
-            let errLock = NSLock()
-
-            if let vOutBox = videoOutBox, let vInBox = videoInBox {
-                group.enter()
-                let vQueue = DispatchQueue(label: "com.onetake.post.video")
-                vInBox.value.requestMediaDataWhenReady(on: vQueue) {
-                    let vIn = vInBox.value
-                    let vOut = vOutBox.value
-                    while vIn.isReadyForMoreMediaData {
-                        if let sample = vOut.copyNextSampleBuffer() {
-                            if !vIn.append(sample) {
-                                errLock.lock()
-                                if firstError == nil { firstError = writerBox.value.error }
-                                errLock.unlock()
-                                vIn.markAsFinished()
-                                group.leave()
-                                return
-                            }
-                        } else {
-                            vIn.markAsFinished()
-                            group.leave()
-                            return
-                        }
-                    }
+        // Try fast passthrough video remux first; fall back to highest quality transcode if container rejects passthrough.
+        var exported = false
+        for preset in [AVAssetExportPresetPassthrough, AVAssetExportPresetHighestQuality] {
+            try? fm.removeItem(at: stagedURL)
+            if let session = AVAssetExportSession(asset: composition, presetName: preset) {
+                session.shouldOptimizeForNetworkUse = true
+                do {
+                    try await session.export(to: stagedURL, as: outFileType)
+                    exported = true
+                    break
+                } catch {
+                    continue
                 }
             }
+        }
 
-            group.enter()
-            let aQueue = DispatchQueue(label: "com.onetake.post.audio")
-            var hpf = BiquadFilterState.highPass(cutoffHz: 85.0, q: 0.707, sampleRate: outRate, channels: outChannels)
-            var deMud = BiquadFilterState.peaking(centerHz: 280.0, q: 1.0, gainDB: -2.2, sampleRate: outRate, channels: outChannels)
-            var presence = BiquadFilterState.peaking(centerHz: 2800.0, q: 1.1, gainDB: 2.5, sampleRate: outRate, channels: outChannels)
-            let expanderParams = ExpanderParameters(noiseFloor: noiseFloor, speechPeak: speechPeak, sampleRate: outRate)
-            var envSq: Float = noiseFloor * noiseFloor
-            var gain: Float = expanderParams.floorGain
+        guard exported else {
+            throw VideoPostProcessingError.exportSessionCreationFailed("Failed to export video with cleaned audio.")
+        }
 
-            audioInBox.value.requestMediaDataWhenReady(on: aQueue) {
-                let aIn = audioInBox.value
-                let aOut = audioOutBox.value
-                while aIn.isReadyForMoreMediaData {
-                    if let sample = aOut.copyNextSampleBuffer() {
-                        let pts = CMSampleBufferGetPresentationTimeStamp(sample)
-                        if let cleanedSample = Self.processPCMBuffer(
-                            sample,
-                            channels: outChannels,
-                            pts: pts,
-                            hpf: &hpf,
-                            deMud: &deMud,
-                            presence: &presence,
-                            params: expanderParams,
-                            envSq: &envSq,
-                            gain: &gain
-                        ) {
-                            if !aIn.append(cleanedSample) {
-                                errLock.lock()
-                                if firstError == nil { firstError = writerBox.value.error }
-                                errLock.unlock()
-                                aIn.markAsFinished()
-                                group.leave()
-                                return
-                            }
-                        } else if !aIn.append(sample) {
-                            aIn.markAsFinished()
-                            group.leave()
-                            return
-                        }
-                    } else {
-                        aIn.markAsFinished()
-                        group.leave()
-                        return
-                    }
-                }
+        // Safety invariant: never emit an audio-only file when the source contained video.
+        if !videoTracks.isEmpty {
+            let verifyAsset = AVURLAsset(url: stagedURL)
+            let verifyVideoTracks = try await verifyAsset.loadTracks(withMediaType: .video)
+            guard !verifyVideoTracks.isEmpty else {
+                try? fm.removeItem(at: stagedURL)
+                throw VideoPostProcessingError.exportSessionCreationFailed("Exported output lost its video track.")
             }
-
-            group.notify(queue: DispatchQueue.global(qos: .userInitiated)) {
-                continuation.resume(returning: firstError)
-            }
-        }
-
-        if let copyResult {
-            reader.cancelReading()
-            writer.cancelWriting()
-            try? fm.removeItem(at: stagedURL)
-            throw copyResult
-        }
-
-        if reader.status == .failed {
-            writer.cancelWriting()
-            try? fm.removeItem(at: stagedURL)
-            throw reader.error ?? VideoPostProcessingError.exportSessionCreationFailed("Reader failed.")
-        }
-
-        await writer.finishWriting()
-        if writer.status != .completed {
-            try? fm.removeItem(at: stagedURL)
-            throw writer.error ?? VideoPostProcessingError.exportSessionCreationFailed("Writer did not complete.")
         }
 
         if sameLocation {
@@ -757,60 +668,84 @@ final class VideoPostProcessingService: NSObject, VideoPostProcessingServiceProt
         }
     }
 
-    nonisolated private static func scanAudioStats(
-        asset: AVAsset,
-        audioTracks: [AVAssetTrack]
-    ) async throws -> (noiseFloor: Float, speechPeak: Float, sampleRate: Double, channels: Int) {
+    nonisolated private static func renderCleanedAudioM4A(
+        from sourceURL: URL,
+        to m4aURL: URL
+    ) async throws -> Bool {
+        let asset = AVURLAsset(url: sourceURL)
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        guard !audioTracks.isEmpty else { return false }
+
+        let targetSampleRate: Double = 44_100.0
         let reader = try AVAssetReader(asset: asset)
         let pcmSettings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: targetSampleRate,
+            AVNumberOfChannelsKey: 1,
             AVLinearPCMBitDepthKey: 32,
             AVLinearPCMIsFloatKey: true,
             AVLinearPCMIsBigEndianKey: false,
             AVLinearPCMIsNonInterleaved: false
         ]
         let output = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: pcmSettings)
+        output.alwaysCopiesSampleData = false
+        guard reader.canAdd(output) else { return false }
         reader.add(output)
-        guard reader.startReading() else {
-            return (0.002, 0.25, 44100.0, 1)
-        }
+        guard reader.startReading() else { return false }
 
-        var sampleRate: Double = 44100.0
-        var channels: Int = 1
-        var frameRMSValues: [Float] = []
-
-        while let sample = output.copyNextSampleBuffer() {
-            if let desc = CMSampleBufferGetFormatDescription(sample),
-               let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(desc)?.pointee {
-                if asbd.mSampleRate > 1000 { sampleRate = asbd.mSampleRate }
-                if asbd.mChannelsPerFrame > 0 { channels = Int(asbd.mChannelsPerFrame) }
-            }
-            if let data = extractFloatSamples(from: sample) {
-                let frameCount = data.count / max(1, channels)
-                let statsWindow = max(64, Int((0.020 * sampleRate).rounded()))
-                var idx = 0
-                while idx < frameCount {
-                    let end = min(frameCount, idx + statsWindow)
-                    let span = (end - idx) * max(1, channels)
-                    if span > 0 {
-                        var sumSq: Float = 0
-                        data.withUnsafeBufferPointer { buf in
-                            if let ptr = buf.baseAddress?.advanced(by: idx * max(1, channels)) {
-                                vDSP_svesq(ptr, 1, &sumSq, vDSP_Length(span))
-                            }
-                        }
-                        frameRMSValues.append(sqrt(sumSq / Float(span)))
-                    }
-                    idx = end
-                }
+        var samples: [Float] = []
+        samples.reserveCapacity(Int(targetSampleRate * 15))
+        while let buffer = output.copyNextSampleBuffer() {
+            if let chunk = extractFloatSamples(from: buffer) {
+                samples.append(contentsOf: chunk)
             }
         }
+        guard !samples.isEmpty else { return false }
 
-        guard !frameRMSValues.isEmpty else { return (0.002, 0.25, sampleRate, channels) }
-        let sorted = frameRMSValues.sorted()
-        let lowIdx = min(sorted.count - 1, max(0, Int(Double(sorted.count) * 0.15)))
-        let highIdx = min(sorted.count - 1, max(0, Int(Double(sorted.count) * 0.92)))
-        return (max(0.0005, sorted[lowIdx]), max(0.01, sorted[highIdx]), sampleRate, channels)
+        cleanAudioSamples(&samples, sampleRate: targetSampleRate, channels: 1)
+
+        try? FileManager.default.removeItem(at: m4aURL)
+        return try writeCleanedAACFile(samples: samples, sampleRate: targetSampleRate, to: m4aURL)
+    }
+
+    nonisolated private static func writeCleanedAACFile(
+        samples: [Float],
+        sampleRate: Double,
+        to m4aURL: URL
+    ) throws -> Bool {
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sampleRate,
+            channels: 1,
+            interleaved: false
+        ),
+              let pcmBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
+              let chPtr = pcmBuffer.floatChannelData?[0] else {
+            return false
+        }
+        pcmBuffer.frameLength = AVAudioFrameCount(samples.count)
+        samples.withUnsafeBufferPointer { src in
+            if let base = src.baseAddress {
+                chPtr.update(from: base, count: samples.count)
+            }
+        }
+
+        let aacSettings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 128_000
+        ]
+        do {
+            let aacFile = try AVAudioFile(
+                forWriting: m4aURL,
+                settings: aacSettings,
+                commonFormat: .pcmFormatFloat32,
+                interleaved: false
+            )
+            try aacFile.write(from: pcmBuffer)
+        }
+        return FileManager.default.fileExists(atPath: m4aURL.path)
     }
 
     nonisolated private static func extractFloatSamples(from sampleBuffer: CMSampleBuffer) -> [Float]? {
@@ -829,94 +764,6 @@ final class VideoPostProcessingService: NSObject, VideoPostProcessingServiceProt
         return pointer.withMemoryRebound(to: Float.self, capacity: count) { floatPtr in
             Array(UnsafeBufferPointer(start: floatPtr, count: count))
         }
-    }
-
-    nonisolated private static func processPCMBuffer(
-        _ sampleBuffer: CMSampleBuffer,
-        channels: Int,
-        pts: CMTime,
-        hpf: inout BiquadFilterState,
-        deMud: inout BiquadFilterState,
-        presence: inout BiquadFilterState,
-        params: ExpanderParameters,
-        envSq: inout Float,
-        gain: inout Float
-    ) -> CMSampleBuffer? {
-        guard var samples = extractFloatSamples(from: sampleBuffer) else { return nil }
-        let ch = max(1, channels)
-        let frameCount = samples.count / ch
-        guard frameCount > 0 else { return nil }
-
-        let sampleRate = CMSampleBufferGetFormatDescription(sampleBuffer)
-            .flatMap { CMAudioFormatDescriptionGetStreamBasicDescription($0)?.pointee.mSampleRate }
-            .flatMap { $0 > 1000 ? $0 : nil } ?? 44100.0
-
-        hpf.processInterleaved(&samples, frameCount: frameCount, channels: ch)
-        deMud.processInterleaved(&samples, frameCount: frameCount, channels: ch)
-        presence.processInterleaved(&samples, frameCount: frameCount, channels: ch)
-        applyExpanderAndLimiter(&samples, frameCount: frameCount, channels: ch, params: params, envSq: &envSq, gain: &gain)
-
-        var asbd = AudioStreamBasicDescription(
-            mSampleRate: sampleRate,
-            mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
-            mBytesPerPacket: UInt32(ch * MemoryLayout<Float>.size),
-            mFramesPerPacket: 1,
-            mBytesPerFrame: UInt32(ch * MemoryLayout<Float>.size),
-            mChannelsPerFrame: UInt32(ch),
-            mBitsPerChannel: 32,
-            mReserved: 0
-        )
-        var formatDesc: CMAudioFormatDescription?
-        guard CMAudioFormatDescriptionCreate(
-            allocator: kCFAllocatorDefault,
-            asbd: &asbd,
-            layoutSize: 0,
-            layout: nil,
-            magicCookieSize: 0,
-            magicCookie: nil,
-            extensions: nil,
-            formatDescriptionOut: &formatDesc
-        ) == noErr, let formatDesc else { return nil }
-
-        let byteCount = samples.count * MemoryLayout<Float>.size
-        var blockBuffer: CMBlockBuffer?
-        guard CMBlockBufferCreateWithMemoryBlock(
-            allocator: kCFAllocatorDefault,
-            memoryBlock: nil,
-            blockLength: byteCount,
-            blockAllocator: kCFAllocatorDefault,
-            customBlockSource: nil,
-            offsetToData: 0,
-            dataLength: byteCount,
-            flags: 0,
-            blockBufferOut: &blockBuffer
-        ) == kCMBlockBufferNoErr, let blockBuffer else { return nil }
-
-        guard CMBlockBufferAssureBlockMemory(blockBuffer) == kCMBlockBufferNoErr else { return nil }
-        let replaceStatus = samples.withUnsafeBytes { raw -> OSStatus in
-            guard let base = raw.baseAddress else { return -1 }
-            return CMBlockBufferReplaceDataBytes(
-                with: base,
-                blockBuffer: blockBuffer,
-                offsetIntoDestination: 0,
-                dataLength: byteCount
-            )
-        }
-        guard replaceStatus == kCMBlockBufferNoErr else { return nil }
-
-        var outBuffer: CMSampleBuffer?
-        guard CMAudioSampleBufferCreateReadyWithPacketDescriptions(
-            allocator: kCFAllocatorDefault,
-            dataBuffer: blockBuffer,
-            formatDescription: formatDesc,
-            sampleCount: CMItemCount(frameCount),
-            presentationTimeStamp: pts,
-            packetDescriptions: nil,
-            sampleBufferOut: &outBuffer
-        ) == noErr else { return nil }
-
-        return outBuffer
     }
 
     private nonisolated struct BiquadFilterState {

@@ -93,6 +93,8 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
     // Shared state
     @ObservationIgnored private var activeCues: [CueLine] = []
     @ObservationIgnored private var cueTriggerCallback: ((Int) -> Void)?
+    @ObservationIgnored var onCueStarted: ((Int) -> Void)?
+    @ObservationIgnored var onCueFinished: ((Int) -> Void)?
     @ObservationIgnored private var pendingPlaybackCompletion: (() -> Void)?
     @ObservationIgnored private var pendingManualCueIndex: Int?
     @ObservationIgnored private var ignoreMicUntil: Date = .distantPast
@@ -387,6 +389,20 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
         pendingManualCueIndex = index
     }
 
+    func triggerCueFromTeleprompter(at index: Int) {
+        guard isListening, !isCuePlaying,
+              let coordinator = scriptCueCoordinator else { return }
+        let prevIndex = currentCueIndex
+        pendingManualCueIndex = index
+        currentCueIndex = index
+        if coordinator.requestTeleprompterSyncedCue(at: index) {
+            isCuePlaying = true
+        } else {
+            pendingManualCueIndex = nil
+            currentCueIndex = prevIndex
+        }
+    }
+
     /// Exposes coordinator lock state for diagnostics and unit tests.
     var isCoordinatorPlayingCue: Bool {
         scriptCueCoordinator?.isPlayingCue ?? false
@@ -416,6 +432,7 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
         isCuePlaying = true
         ignoreMicUntil = .distantFuture
         cueTriggerCallback?(index)
+        onCueStarted?(index)
 
         let generation = playbackGeneration
         let onDone: () -> Void = { [weak self] in
@@ -429,6 +446,7 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
             if self.currentCueIndex >= self.activeCues.count {
                 self.isListening = false
             }
+            self.onCueFinished?(index)
         }
 
         if let audioURL = MediaStorage.resolveURL(for: cueToPlay.audioFilePath),

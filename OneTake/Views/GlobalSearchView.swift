@@ -79,6 +79,7 @@ struct GlobalSearchSections: View {
                     ForEach(results.scripts) { script in
                         NavigationLink {
                             MemoriseView(script: script, appState: appState)
+                                .toolbar(.hidden, for: .tabBar)
                         } label: {
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {

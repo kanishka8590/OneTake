@@ -267,7 +267,8 @@ struct AuditionPackageHubView: View {
                     rawVideoURL: resolvedURL,
                     totalDurationSeconds: take.durationSeconds,
                     isSlate: true,
-                    qualityMetrics: PreTakeQualityMetrics()
+                    qualityMetrics: PreTakeQualityMetrics(),
+                    initialNoiseCleaned: take.noiseCleaned
                 ) { approvedTake in
                     applyApprovedTake(approvedTake, replacing: take, isSlate: true)
                     activeReviewTarget = nil
@@ -283,7 +284,8 @@ struct AuditionPackageHubView: View {
                     rawVideoURL: resolvedURL,
                     totalDurationSeconds: take.durationSeconds,
                     isSlate: false,
-                    qualityMetrics: PreTakeQualityMetrics()
+                    qualityMetrics: PreTakeQualityMetrics(),
+                    initialNoiseCleaned: take.noiseCleaned
                 ) { approvedTake in
                     applyApprovedTake(approvedTake, replacing: take, isSlate: false)
                     activeReviewTarget = nil

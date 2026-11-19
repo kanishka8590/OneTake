@@ -353,15 +353,22 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     // MARK: - Motion Monitoring
 
     private func setupMotion() {
-        guard motionManager.isDeviceMotionAvailable else { return }
+        guard motionManager.isDeviceMotionAvailable, !motionManager.isDeviceMotionActive else { return }
         motionManager.deviceMotionUpdateInterval = 0.25
         motionManager.startDeviceMotionUpdates(to: .main) { [weak self] motion, _ in
             guard let self = self, let motion = motion else { return }
             let pitchDeg = motion.attitude.pitch * 180.0 / .pi
-            let isVertical = abs(abs(pitchDeg) - 90.0) < 14.0 || abs(pitchDeg) < 14.0
+            // Strictly advisory eye-level indicator; tilting must never stop recording.
+            let isVertical = abs(abs(pitchDeg) - 90.0) < 16.0
             self.qualityMetrics.isPhoneHeightPassed = isVertical
             self.qualityMetrics.phoneHeightStatus = isVertical ? "Eye Level" : "Tilt Adjust"
             self.qualityMetrics.isPhoneHeightEvaluated = true
+        }
+    }
+
+    private func stopMotion() {
+        if motionManager.isDeviceMotionActive {
+            motionManager.stopDeviceMotionUpdates()
         }
     }
 
@@ -387,6 +394,7 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         isSessionRunning = true
         stateBox.isSessionRunning = true
         cameraErrorMessage = nil
+        setupMotion()
 
         #if targetEnvironment(simulator)
         applySimulatorMetrics()
@@ -414,6 +422,7 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     func stopSession() {
         isSessionRunning = false
         stateBox.isSessionRunning = false
+        stopMotion()
         cancelCountdown()
         stopVoiceCommands()
         stopRecordingTimer()

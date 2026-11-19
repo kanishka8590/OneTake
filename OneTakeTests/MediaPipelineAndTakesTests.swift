@@ -510,4 +510,107 @@ final class MediaPipelineAndTakesTests: XCTestCase {
         let exporter = try XCTUnwrap(AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A))
         try await exporter.export(to: destinationURL, as: .m4a)
     }
+
+    func testPrepareCleanedPreviewPreservesVideoTrackAndSuppressesNoiseInRenderedOutput() async throws {
+        let dir = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Build a real video + noisy audio .mov input (noise 0..1s, tone 1..2s)
+        let silentVideoURL = dir.appendingPathComponent("video_only.mp4")
+        let ok = await DemoMediaGenerator.writeQuickSimulatedClip(
+            to: silentVideoURL,
+            title: "Room Noise",
+            subtitle: "A/B Preview",
+            durationSeconds: 2.0
+        )
+        XCTAssertTrue(ok)
+
+        let rawWavURL = dir.appendingPathComponent("noisy.wav")
+        let rawAudioURL = dir.appendingPathComponent("noisy.m4a")
+        let sampleRate = 44_100.0
+        try writeNoisySpeechWav(to: rawWavURL, duration: 2.0, sampleRate: sampleRate)
+        try await convertWavToM4A(from: rawWavURL, to: rawAudioURL)
+
+        let comp = AVMutableComposition()
+        let vAsset = AVURLAsset(url: silentVideoURL)
+        let aAsset = AVURLAsset(url: rawAudioURL)
+        let vLoadedTracks = try await vAsset.loadTracks(withMediaType: .video)
+        let aLoadedTracks = try await aAsset.loadTracks(withMediaType: .audio)
+        let vTrack = try XCTUnwrap(vLoadedTracks.first)
+        let aTrack = try XCTUnwrap(aLoadedTracks.first)
+        let compV = try XCTUnwrap(comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid))
+        let compA = try XCTUnwrap(comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid))
+        try compV.insertTimeRange(CMTimeRange(start: .zero, duration: CMTime(seconds: 2.0, preferredTimescale: 600)), of: vTrack, at: .zero)
+        try compA.insertTimeRange(CMTimeRange(start: .zero, duration: CMTime(seconds: 2.0, preferredTimescale: 600)), of: aTrack, at: .zero)
+
+        let combinedMOV = dir.appendingPathComponent("combined.mov")
+        let preExporter = try XCTUnwrap(AVAssetExportSession(asset: comp, presetName: AVAssetExportPresetHighestQuality))
+        try await preExporter.export(to: combinedMOV, as: .mov)
+
+        let cleanedPreviewURL = dir.appendingPathComponent("cleaned_preview.mov")
+        let outURL = try await VideoPostProcessingService.shared.prepareCleanedPreview(
+            sourceURL: combinedMOV,
+            destinationURL: cleanedPreviewURL
+        )
+
+        let outAsset = AVURLAsset(url: outURL)
+        let outVideoTracks = try await outAsset.loadTracks(withMediaType: .video)
+        let outAudioTracks = try await outAsset.loadTracks(withMediaType: .audio)
+        XCTAssertEqual(outVideoTracks.count, 1, "Cleaned video must always retain its video track (no QuickTime audio-only 'Q' logo)")
+        XCTAssertEqual(outAudioTracks.count, 1, "Cleaned video must retain an audio track")
+
+        // Verify exported audio track actually suppressed the 0..1s room noise floor
+        let outSamples = try await readMonoSamples(from: outURL)
+        let outNoiseRMS = rms(of: outSamples, range: Int(0.2 * sampleRate)..<min(outSamples.count, Int(0.9 * sampleRate)))
+        let outSpeechRMS = rms(of: outSamples, range: Int(1.2 * sampleRate)..<min(outSamples.count, Int(1.7 * sampleRate)))
+        XCTAssertLessThan(outNoiseRMS, outSpeechRMS * 0.15, "Exported video audio must preserve cleaned dialogue-to-noise ratio")
+    }
+
+    private func readMonoSamples(from url: URL) async throws -> [Float] {
+        let asset = AVURLAsset(url: url)
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        let reader = try AVAssetReader(asset: asset)
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 44_100.0,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ]
+        let output = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: settings)
+        reader.add(output)
+        XCTAssertTrue(reader.startReading())
+        var result: [Float] = []
+        while let buf = output.copyNextSampleBuffer(),
+              let block = CMSampleBufferGetDataBuffer(buf) {
+            var length = 0
+            var ptr: UnsafeMutablePointer<Int8>?
+            if CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &ptr) == kCMBlockBufferNoErr,
+               let ptr, length >= 4 {
+                let count = length / 4
+                ptr.withMemoryRebound(to: Float.self, capacity: count) { fPtr in
+                    result.append(contentsOf: UnsafeBufferPointer(start: fPtr, count: count))
+                }
+            }
+        }
+        return result
+    }
+
+    private func writeNoisySpeechWav(to url: URL, duration: Double, sampleRate: Double) throws {
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
+        let totalFrames = AVAudioFrameCount(duration * sampleRate)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: totalFrames))
+        buffer.frameLength = totalFrames
+        let ptr = try XCTUnwrap(buffer.floatChannelData?[0])
+        for i in 0..<Int(totalFrames) {
+            let t = Double(i) / sampleRate
+            let noise = 0.04 * sin(2.0 * .pi * 55.0 * t) + 0.015 * sin(2.0 * .pi * 6500.0 * t)
+            let speech = (t >= 1.1 && t <= 1.8) ? 0.30 * sin(2.0 * .pi * 1000.0 * t) : 0.0
+            ptr[i] = Float(noise + speech)
+        }
+        let wavFile = try AVAudioFile(forWriting: url, settings: format.settings)
+        try wavFile.write(from: buffer)
+    }
 }

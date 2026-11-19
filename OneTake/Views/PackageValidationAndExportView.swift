@@ -404,86 +404,95 @@ struct PackageValidationAndExportView: View {
 
     private var shareChoices: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("Send it your way").font(Theme.Typography.screenTitle)
-                Text("Use whatever the casting notice asked for.").font(Theme.Typography.bodyRegular).foregroundStyle(Theme.Colors.textSecondary)
-
-                if PackageExportHelper.canCreateSimulatedPrivateLink(isDemoMode: appState.isDemoMode) {
-                    Button { createPrivateLink() } label: {
-                        Label("Demo Preview Link (local only)", systemImage: "link")
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
-                    }
-                    Text("Unlisted simulated link, works locally for 30 days (Demo Mode)")
-                        .font(Theme.Typography.captionBadge)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("Use whatever the casting notice asked for.")
+                        .font(Theme.Typography.bodyRegular)
                         .foregroundStyle(Theme.Colors.textSecondary)
-                        .padding(.top, -12)
-                } else {
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "icloud.slash")
-                            .foregroundStyle(Theme.Colors.textSecondary)
-                        Text("Private cloud links aren't available in offline mode. Use Share Package or Email below to send your real files.")
+
+                    if PackageExportHelper.canCreateSimulatedPrivateLink(isDemoMode: appState.isDemoMode) {
+                        Button { createPrivateLink() } label: {
+                            Label("Demo Preview Link (local only)", systemImage: "link")
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
+                        }
+                        Text("Unlisted simulated link, works locally for 30 days (Demo Mode)")
                             .font(Theme.Typography.captionBadge)
                             .foregroundStyle(Theme.Colors.textSecondary)
+                            .padding(.top, -12)
+                    } else {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "icloud.slash")
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                            Text("Private cloud links aren't available in offline mode. Use Share Package or Email below to send your real files.")
+                                .font(Theme.Typography.captionBadge)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                        .background(Theme.Colors.lavenderSurface)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
-                    .background(Theme.Colors.lavenderSurface)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
 
-                Button { sharePackageFiles() } label: {
-                    Label("More ways to share", systemImage: "square.and.arrow.up")
-                        .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
-                }
-                .disabled(preparingShareStatus != nil)
-                Text("AirDrop, Messages, or Save to Files").font(Theme.Typography.captionBadge).foregroundStyle(Theme.Colors.textSecondary).padding(.top, -12)
-
-                Button { sharePackageAsZip() } label: {
-                    Label("Share as ZIP archive", systemImage: "doc.zipper")
-                        .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
-                }
-                .disabled(preparingShareStatus != nil)
-
-                HStack(spacing: 8) {
-                    Image(systemName: "pencil")
-                        .font(.caption)
-                        .foregroundStyle(Theme.Colors.textSecondary)
-                    TextField("ZIP archive name", text: $zipFileName)
-                        .textInputAutocapitalization(.words)
-                        .autocorrectionDisabled()
-                        .font(Theme.Typography.bodyRegular)
-                        .disabled(preparingShareStatus != nil)
-                    Text(".zip")
-                        .font(Theme.Typography.captionBadge)
-                        .foregroundStyle(Theme.Colors.textSecondary)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .cardStyle()
-
-                Text("Bundles all ready files into \(effectiveZipArchiveName).zip").font(Theme.Typography.captionBadge).foregroundStyle(Theme.Colors.textSecondary).padding(.top, -10)
-
-                if let email = appState.resolvedRecipientEmail(for: audition), MFMailComposeViewController.canSendMail() {
-                    Button { emailPackageFiles() } label: {
-                        Label("Email \(email)", systemImage: "envelope")
+                    Button { sharePackageFiles() } label: {
+                        Label("More ways to share", systemImage: "square.and.arrow.up")
                             .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
                     }
                     .disabled(preparingShareStatus != nil)
-                }
+                    Text("AirDrop, Messages, or Save to Files").font(Theme.Typography.captionBadge).foregroundStyle(Theme.Colors.textSecondary).padding(.top, -12)
 
-                if let status = preparingShareStatus {
-                    HStack(spacing: 10) {
-                        ProgressView()
-                        Text(status)
+                    Button { sharePackageAsZip() } label: {
+                        Label("Share as ZIP archive", systemImage: "doc.zipper")
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
+                    }
+                    .disabled(preparingShareStatus != nil)
+
+                    HStack(spacing: 8) {
+                        Image(systemName: "pencil")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                        TextField("ZIP archive name", text: $zipFileName)
+                            .textInputAutocapitalization(.words)
+                            .autocorrectionDisabled()
+                            .font(Theme.Typography.bodyRegular)
+                            .disabled(preparingShareStatus != nil)
+                        Text(".zip")
                             .font(Theme.Typography.captionBadge)
                             .foregroundStyle(Theme.Colors.textSecondary)
                     }
-                    .padding(.top, 4)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .cardStyle()
+
+                    Text("Bundles all ready files into \(effectiveZipArchiveName).zip").font(Theme.Typography.captionBadge).foregroundStyle(Theme.Colors.textSecondary).padding(.top, -10)
+
+                    if let email = appState.resolvedRecipientEmail(for: audition), MFMailComposeViewController.canSendMail() {
+                        Button { emailPackageFiles() } label: {
+                            Label("Email \(email)", systemImage: "envelope")
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
+                        }
+                        .disabled(preparingShareStatus != nil)
+                    }
+
+                    if let status = preparingShareStatus {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text(status)
+                                .font(Theme.Typography.captionBadge)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                        }
+                        .padding(.top, 4)
+                    }
                 }
-                Spacer()
+                .padding(20)
             }
-            .padding(20)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { showingShareChoices = false } } }
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
+            .navigationTitle("Send it your way")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") { showingShareChoices = false }
+                }
+            }
             .alert(
                 "Export Unavailable",
                 isPresented: Binding(
@@ -799,7 +808,14 @@ struct PackageValidationAndExportView: View {
     @ViewBuilder
     private func reviewView(take: VideoTake, isSlate: Bool) -> some View {
         let resolvedURL = MediaStorage.resolveURL(for: take.filePath) ?? URL(fileURLWithPath: take.filePath)
-        TakeReviewView(audition: audition, rawVideoURL: resolvedURL, totalDurationSeconds: take.durationSeconds, isSlate: isSlate, qualityMetrics: PreTakeQualityMetrics()) { approved in
+        TakeReviewView(
+            audition: audition,
+            rawVideoURL: resolvedURL,
+            totalDurationSeconds: take.durationSeconds,
+            isSlate: isSlate,
+            qualityMetrics: PreTakeQualityMetrics(),
+            initialNoiseCleaned: take.noiseCleaned
+        ) { approved in
             var updatedTake = approved
             updatedTake.filePath = MediaStorage.storedRelativePath(for: approved.filePath)
             let oldPath = take.filePath

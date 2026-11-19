@@ -190,8 +190,21 @@ struct TeleprompterRecorderView: View {
                 cueEngine.cueVolume = Float(appState.settings.cueVolume)
 
                 let cueSpeakerSet = Set(audition.cueLines.map(\.speaker))
-                voiceTracker.configure(scriptLines: effectiveScriptLines, cueSpeakers: cueSpeakerSet)
+                voiceTracker.configure(
+                    scriptLines: effectiveScriptLines,
+                    cueSpeakers: cueSpeakerSet,
+                    cueLines: audition.cueLines
+                )
                 recorderService.scriptContextualStrings = voiceTracker.contextualStrings
+
+                cueEngine.onCueStarted = { cueOrder in
+                    voiceTracker.activateCue(orderIndex: cueOrder)
+                    syncScrollOffsetToVoiceTracker()
+                }
+                cueEngine.onCueFinished = { cueOrder in
+                    voiceTracker.completeCue(orderIndex: cueOrder)
+                    syncScrollOffsetToVoiceTracker()
+                }
 
                 recorderService.onVoiceActionTriggered = {
                     startCountdownAndRecord()
@@ -213,13 +226,21 @@ struct TeleprompterRecorderView: View {
                 recorderService.startSession()
             }
             .onDisappear {
+                cueEngine.onCueStarted = nil
+                cueEngine.onCueFinished = nil
                 recorderService.onVoiceActionTriggered = nil
                 recorderService.onLiveMicData = nil
                 recorderService.shouldIgnoreRecognizedTranscript = nil
                 stopAllOperations()
             }
+            .onChange(of: voiceTracker.activeCueOrderIndex) { _, activeCueOrder in
+                guard let activeCueOrder, recorderService.isRecording, !isSlate else { return }
+                cueEngine.triggerCueFromTeleprompter(at: activeCueOrder)
+            }
             .onChange(of: recorderService.isRecording) { _, isRecording in
                 if isRecording {
+                    voiceTracker.reset()
+                    scrollOffset = 0.0
                     lastProcessedTranscript = ""
                     lastProcessedIsFinal = false
                     if !followVoice && !effectiveScriptLines.isEmpty {

@@ -751,6 +751,7 @@ struct MemoriseView: View {
         .background(Theme.Colors.canvasBackground)
         .navigationTitle(script.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -1020,6 +1021,7 @@ struct TestYourselfView: View {
             if enteredRun { SayItAloudView(script: script, appState: appState, help: help) }
             else { VStack(spacing: 22) { Text("Test Yourself!").font(Theme.Typography.screenTitle); Text("Choose how much help you want before you start.").foregroundStyle(Theme.Colors.textSecondary); Picker("Show", selection: $help) { ForEach(HelpLevel.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.inline); Button { enteredRun = true } label: { Text("Continue").primaryCapsuleButton() } }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.Colors.canvasBackground) }
         }.navigationTitle(enteredRun ? "Say It Aloud!" : "Test Yourself!").navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .tabBar)
     }
 }
 
@@ -1128,6 +1130,7 @@ struct SayItAloudView: View {
         }
         .padding(16)
         .background(Theme.Colors.canvasBackground)
+        .toolbar(.hidden, for: .tabBar)
         .onChange(of: recorder.recognizedWords) { _, segments in
             clueTracker.processRecognizedSpeech(segments: segments)
         }
@@ -1342,6 +1345,7 @@ struct PracticeReviewView: View {
         .background(Theme.Colors.canvasBackground)
         .navigationTitle("Your delivery")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         .onAppear { playback.load(url: MediaStorage.resolveURL(for: session.audioFilePath)) }
         .onDisappear { playback.stop() }
         .alert("Practice saved", isPresented: $saveConfirmation) {

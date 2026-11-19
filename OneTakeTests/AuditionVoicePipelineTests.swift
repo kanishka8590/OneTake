@@ -316,4 +316,57 @@ final class AuditionVoicePipelineTests: XCTestCase {
         service.gesturesEnabled = true
         XCTAssertTrue(service.gesturesEnabled)
     }
+
+    @MainActor
+    func testVoiceTeleprompterTrackerPausesAtCueBoundaryAndResumesAfterCueCompletion() {
+        let cues = [
+            CueLine(orderIndex: 0, speaker: "READER", cueText: "Did you lock the back door?", precedingActorLine: "I waited for your call.")
+        ]
+        let tracker = VoiceTeleprompterTracker(
+            scriptLines: [
+                "HEER: I waited for your call.",
+                "[READER]: Did you lock the back door?",
+                "HEER: Yes I locked it before midnight."
+            ],
+            cueSpeakers: ["READER"],
+            cueLines: cues
+        )
+
+        XCTAssertEqual(tracker.activeLineIndex, 0)
+        XCTAssertNil(tracker.activeCueOrderIndex)
+
+        tracker.ingestTranscript("I waited for your call", isFinal: false)
+        XCTAssertEqual(tracker.activeLineIndex, 1, "Should stop right on the cue line after preceding actor words finish")
+        XCTAssertEqual(tracker.activeCueOrderIndex, 0)
+
+        tracker.activateCue(orderIndex: 0)
+        XCTAssertEqual(tracker.activeLineIndex, 1)
+
+        tracker.completeCue(orderIndex: 0)
+        XCTAssertNil(tracker.activeCueOrderIndex)
+        XCTAssertEqual(tracker.activeLineIndex, 2, "Must resume highlighting the next actor line automatically after cue completes")
+
+        tracker.ingestTranscript("Yes I locked it before midnight", isFinal: true)
+        XCTAssertTrue(tracker.isComplete)
+    }
+
+    @MainActor
+    func testScriptSyncedCoordinatorFastSyncsFromTeleprompterBoundary() {
+        let cues = [
+            CueLine(orderIndex: 0, speaker: "READER", cueText: "Line 0", precedingActorLine: "First"),
+            CueLine(orderIndex: 1, speaker: "READER", cueText: "Line 1", precedingActorLine: "Second")
+        ]
+        var triggeredIndices: [Int] = []
+        let coordinator = ScriptSyncedCuePlaybackCoordinator(
+            cues: cues,
+            responseDelay: 1.5,
+            schedule: { _, work in work() },
+            onCueReady: { triggeredIndices.append($0) }
+        )
+
+        XCTAssertTrue(coordinator.requestTeleprompterSyncedCue(at: 1))
+        XCTAssertEqual(triggeredIndices, [1])
+        coordinator.cuePlaybackDidFinish()
+        XCTAssertEqual(coordinator.currentCueIndex, 2)
+    }
 }

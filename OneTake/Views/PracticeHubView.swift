@@ -41,6 +41,7 @@ struct PracticeHubView: View {
                 ForEach(appState.practiceScripts) { script in
                     NavigationLink {
                         MemoriseView(script: script, appState: appState)
+                            .toolbar(.hidden, for: .tabBar)
                     } label: {
                         PracticeScriptRow(script: script)
                     }
@@ -155,12 +156,15 @@ struct PracticeHubView: View {
             }
             .navigationDestination(item: $scriptToOpen) { script in
                 MemoriseView(script: script, appState: appState)
+                    .toolbar(.hidden, for: .tabBar)
             }
             .navigationDestination(item: $scriptToRunAgain) { script in
                 SayItAloudView(script: script, appState: appState, help: .nothing)
+                    .toolbar(.hidden, for: .tabBar)
             }
             .navigationDestination(item: $reviewTarget) { target in
                 PracticeReviewView(script: target.script, session: target.session, appState: appState, isSavedReview: true)
+                    .toolbar(.hidden, for: .tabBar)
             }
             .sheet(isPresented: $showingHistory) { PracticeHistoryView(scripts: appState.practiceScripts, appState: appState) }
             .confirmationDialog(
