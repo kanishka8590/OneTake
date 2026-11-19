@@ -141,14 +141,27 @@ enum Haptics {
     }
 }
 
+nonisolated enum ScrollActivityPhase: Sendable {
+    case idle
+    case interacting
+    case decelerating
+}
+
 /// Tracks active user scroll position relative to top/bottom bounds so `.rich`
-/// edge haptics fire cleanly once per boundary reach or overscroll pull.
+/// edge haptics fire cleanly once per boundary reach or pull, including rapid
+/// re-pulls caught mid-bounce before the scroll view settles back to rest.
 nonisolated struct ScrollEdgeTracker: Sendable {
     private let edgeTolerance: Double = 1.5
     private let rearmDistance: Double = 16.0
-    private let overscrollThreshold: Double = 10.0
-    private let cooldownSeconds: TimeInterval = 0.20
+    private let overscrollThreshold: Double = 8.0
+    private let deepRePullDelta: Double = 6.0
+    private let cooldownSeconds: TimeInterval = 0.08
 
+    private var previousPhase: ScrollActivityPhase = .idle
+    private var lastObservedRelTop: Double = 0.0
+    private var lastObservedRelBottom: Double = 0.0
+    private var touchStartRelTop: Double?
+    private var touchStartRelBottom: Double?
     private var isTopReachArmed = false
     private var isBottomReachArmed = false
     private var isTopBounceLatched = false
@@ -159,36 +172,61 @@ nonisolated struct ScrollEdgeTracker: Sendable {
         offsetY: Double,
         topEdge: Double,
         bottomEdge: Double,
-        isActiveScroll: Bool,
+        phase: ScrollActivityPhase,
         now: Date = .now
     ) -> Bool {
-        let hasScrollableRange = (bottomEdge - topEdge) > 1.0
+        let range = max(0.0, bottomEdge - topEdge)
+        let hasScrollableRange = range > 1.0
+        let relTop = offsetY - topEdge
+        let relBottom = bottomEdge - offsetY
+        defer {
+            lastObservedRelTop = relTop
+            lastObservedRelBottom = relBottom
+        }
 
-        guard isActiveScroll else {
+        guard phase != .idle else {
+            previousPhase = .idle
+            touchStartRelTop = nil
+            touchStartRelBottom = nil
             isTopBounceLatched = false
             isBottomBounceLatched = false
-            isTopReachArmed = offsetY > topEdge + rearmDistance
-            isBottomReachArmed = hasScrollableRange && offsetY < bottomEdge - rearmDistance
+            isTopReachArmed = relTop > rearmDistance
+            isBottomReachArmed = hasScrollableRange && relBottom > rearmDistance
             return false
         }
 
-        if offsetY > topEdge + rearmDistance {
+        if phase == .interacting && previousPhase != .interacting {
+            isTopBounceLatched = false
+            isBottomBounceLatched = false
+            if previousPhase == .decelerating {
+                touchStartRelTop = max(lastObservedRelTop, relTop)
+                touchStartRelBottom = max(lastObservedRelBottom, relBottom)
+            } else {
+                touchStartRelTop = nil
+                touchStartRelBottom = nil
+            }
+        }
+        previousPhase = phase
+
+        if relTop > rearmDistance {
             isTopReachArmed = true
         }
-        if hasScrollableRange, offsetY < bottomEdge - rearmDistance {
+        if hasScrollableRange, relBottom > rearmDistance {
             isBottomReachArmed = true
         }
-        if offsetY > topEdge - 2.0 {
+        if relTop > -4.0 {
             isTopBounceLatched = false
         }
-        if offsetY < bottomEdge + 2.0 {
+        if relBottom > -4.0 {
             isBottomBounceLatched = false
         }
 
         let canFire = now.timeIntervalSince(lastFireTime) >= cooldownSeconds
 
-        let hitTop = isTopReachArmed && offsetY <= topEdge + edgeTolerance
-        let bouncedTop = !isTopBounceLatched && offsetY <= topEdge - overscrollThreshold
+        let hitTop = isTopReachArmed && relTop <= edgeTolerance
+        let topStart = touchStartRelTop ?? 0.0
+        let topPullThreshold = topStart < -overscrollThreshold ? (topStart - deepRePullDelta) : -overscrollThreshold
+        let bouncedTop = phase == .interacting && !isTopBounceLatched && relTop <= topPullThreshold
         if hitTop || bouncedTop {
             isTopReachArmed = false
             isTopBounceLatched = true
@@ -198,8 +236,10 @@ nonisolated struct ScrollEdgeTracker: Sendable {
             }
         }
 
-        let hitBottom = hasScrollableRange && isBottomReachArmed && offsetY >= bottomEdge - edgeTolerance
-        let bouncedBottom = !isBottomBounceLatched && offsetY >= bottomEdge + overscrollThreshold
+        let hitBottom = hasScrollableRange && isBottomReachArmed && relBottom <= edgeTolerance
+        let bottomStart = touchStartRelBottom ?? 0.0
+        let bottomPullThreshold = bottomStart < -overscrollThreshold ? (bottomStart - deepRePullDelta) : -overscrollThreshold
+        let bouncedBottom = phase == .interacting && !isBottomBounceLatched && relBottom <= bottomPullThreshold
         if hitBottom || bouncedBottom {
             isBottomReachArmed = false
             isBottomBounceLatched = true
@@ -220,13 +260,34 @@ private struct ScrollEdgeHapticsModifier: ViewModifier {
         let bottomEdge: Double
     }
 
-    @State private var isUserScrolling = false
+    @State private var scrollPhase: ScrollActivityPhase = .idle
+    @State private var lastSnapshot: GeometrySnapshot?
     @State private var tracker = ScrollEdgeTracker()
 
     func body(content: Content) -> some View {
         content
             .onScrollPhaseChange { _, newPhase in
-                isUserScrolling = (newPhase == .interacting || newPhase == .decelerating)
+                let mapped: ScrollActivityPhase
+                switch newPhase {
+                case .interacting, .tracking:
+                    mapped = .interacting
+                case .decelerating, .animating:
+                    mapped = .decelerating
+                case .idle:
+                    mapped = .idle
+                @unknown default:
+                    mapped = .idle
+                }
+                scrollPhase = mapped
+                if let snapshot = lastSnapshot,
+                   tracker.update(
+                       offsetY: snapshot.offsetY,
+                       topEdge: snapshot.topEdge,
+                       bottomEdge: snapshot.bottomEdge,
+                       phase: mapped
+                   ) {
+                    Haptics.scrollEdge()
+                }
             }
             .onScrollGeometryChange(for: GeometrySnapshot.self) { geo in
                 let topEdge = -geo.contentInsets.top
@@ -237,11 +298,12 @@ private struct ScrollEdgeHapticsModifier: ViewModifier {
                     bottomEdge: max(topEdge, rawBottom)
                 )
             } action: { _, snapshot in
+                lastSnapshot = snapshot
                 if tracker.update(
                     offsetY: snapshot.offsetY,
                     topEdge: snapshot.topEdge,
                     bottomEdge: snapshot.bottomEdge,
-                    isActiveScroll: isUserScrolling
+                    phase: scrollPhase
                 ) {
                     Haptics.scrollEdge()
                 }

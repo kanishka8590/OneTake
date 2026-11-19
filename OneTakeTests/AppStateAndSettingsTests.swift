@@ -475,29 +475,33 @@ final class AppStateAndSettingsTests: XCTestCase {
         let t0 = Date(timeIntervalSince1970: 1_000)
 
         // Initial idle layout at top never triggers.
-        XCTAssertFalse(tracker.update(offsetY: 0, topEdge: 0, bottomEdge: 400, isActiveScroll: false, now: t0))
+        XCTAssertFalse(tracker.update(offsetY: 0, topEdge: 0, bottomEdge: 400, phase: .idle, now: t0))
 
         // Scroll down past top rearm distance, then reach bottom -> fires once.
-        XCTAssertFalse(tracker.update(offsetY: 120, topEdge: 0, bottomEdge: 400, isActiveScroll: true, now: t0.addingTimeInterval(0.3)))
-        XCTAssertTrue(tracker.update(offsetY: 400, topEdge: 0, bottomEdge: 400, isActiveScroll: true, now: t0.addingTimeInterval(0.6)))
-        // Continuing past bottom immediately (fling bounce) stays latched.
-        XCTAssertFalse(tracker.update(offsetY: 416, topEdge: 0, bottomEdge: 400, isActiveScroll: true, now: t0.addingTimeInterval(0.9)))
+        XCTAssertFalse(tracker.update(offsetY: 120, topEdge: 0, bottomEdge: 400, phase: .interacting, now: t0.addingTimeInterval(0.3)))
+        XCTAssertTrue(tracker.update(offsetY: 400, topEdge: 0, bottomEdge: 400, phase: .decelerating, now: t0.addingTimeInterval(0.6)))
+        // Continuing past bottom immediately on the same fling stays latched.
+        XCTAssertFalse(tracker.update(offsetY: 416, topEdge: 0, bottomEdge: 400, phase: .decelerating, now: t0.addingTimeInterval(0.8)))
 
         // Scroll back up into middle, then hit top -> fires once.
-        XCTAssertFalse(tracker.update(offsetY: 200, topEdge: 0, bottomEdge: 400, isActiveScroll: true, now: t0.addingTimeInterval(1.2)))
-        XCTAssertTrue(tracker.update(offsetY: 0, topEdge: 0, bottomEdge: 400, isActiveScroll: true, now: t0.addingTimeInterval(1.5)))
-        XCTAssertFalse(tracker.update(offsetY: -14, topEdge: 0, bottomEdge: 400, isActiveScroll: true, now: t0.addingTimeInterval(1.8)))
+        XCTAssertFalse(tracker.update(offsetY: 200, topEdge: 0, bottomEdge: 400, phase: .interacting, now: t0.addingTimeInterval(1.1)))
+        XCTAssertTrue(tracker.update(offsetY: 0, topEdge: 0, bottomEdge: 400, phase: .decelerating, now: t0.addingTimeInterval(1.4)))
+        XCTAssertFalse(tracker.update(offsetY: -14, topEdge: 0, bottomEdge: 400, phase: .decelerating, now: t0.addingTimeInterval(1.6)))
 
-        // Settle to idle, then pull down from rest at top -> rubber-band overscroll fires once.
-        XCTAssertFalse(tracker.update(offsetY: 0, topEdge: 0, bottomEdge: 400, isActiveScroll: false, now: t0.addingTimeInterval(2.1)))
-        XCTAssertTrue(tracker.update(offsetY: -12, topEdge: 0, bottomEdge: 400, isActiveScroll: true, now: t0.addingTimeInterval(2.4)))
-        XCTAssertFalse(tracker.update(offsetY: -20, topEdge: 0, bottomEdge: 400, isActiveScroll: true, now: t0.addingTimeInterval(2.7)))
+        // Catch bounce mid-flight BEFORE returning to 0 and immediately pull again -> fires right away!
+        XCTAssertFalse(tracker.update(offsetY: -12, topEdge: 0, bottomEdge: 400, phase: .interacting, now: t0.addingTimeInterval(1.8)))
+        XCTAssertTrue(tracker.update(offsetY: -18, topEdge: 0, bottomEdge: 400, phase: .interacting, now: t0.addingTimeInterval(2.0)))
 
-        // Non-scrollable short screen fires only when pulled past top/bottom overscroll threshold.
+        // Settle to idle, then pull down from rest at top -> fires once per pull.
+        XCTAssertFalse(tracker.update(offsetY: 0, topEdge: 0, bottomEdge: 400, phase: .idle, now: t0.addingTimeInterval(2.3)))
+        XCTAssertTrue(tracker.update(offsetY: -10, topEdge: 0, bottomEdge: 400, phase: .interacting, now: t0.addingTimeInterval(2.6)))
+        XCTAssertFalse(tracker.update(offsetY: -20, topEdge: 0, bottomEdge: 400, phase: .interacting, now: t0.addingTimeInterval(2.8)))
+
+        // Non-scrollable short screen fires when pulled past overscroll threshold.
         var shortTracker = ScrollEdgeTracker()
-        XCTAssertFalse(shortTracker.update(offsetY: 0, topEdge: 0, bottomEdge: 0, isActiveScroll: false, now: t0))
-        XCTAssertFalse(shortTracker.update(offsetY: -4, topEdge: 0, bottomEdge: 0, isActiveScroll: true, now: t0.addingTimeInterval(0.3)))
-        XCTAssertTrue(shortTracker.update(offsetY: -12, topEdge: 0, bottomEdge: 0, isActiveScroll: true, now: t0.addingTimeInterval(0.6)))
-        XCTAssertFalse(shortTracker.update(offsetY: -12, topEdge: 0, bottomEdge: 0, isActiveScroll: true, now: t0.addingTimeInterval(0.9)))
+        XCTAssertFalse(shortTracker.update(offsetY: 0, topEdge: 0, bottomEdge: 0, phase: .idle, now: t0))
+        XCTAssertFalse(shortTracker.update(offsetY: -4, topEdge: 0, bottomEdge: 0, phase: .interacting, now: t0.addingTimeInterval(0.3)))
+        XCTAssertTrue(shortTracker.update(offsetY: -10, topEdge: 0, bottomEdge: 0, phase: .interacting, now: t0.addingTimeInterval(0.6)))
+        XCTAssertFalse(shortTracker.update(offsetY: -12, topEdge: 0, bottomEdge: 0, phase: .interacting, now: t0.addingTimeInterval(0.8)))
     }
 }
