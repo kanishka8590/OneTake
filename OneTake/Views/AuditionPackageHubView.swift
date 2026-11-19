@@ -577,7 +577,7 @@ struct AuditionPackageHubView: View {
                 Button {
                     startImport(for: deliverable)
                 } label: {
-                    Text("Import from Photos")
+                    Text(focusSecondaryButtonTitle(deliverable))
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Theme.Colors.accent)
                         .padding(.vertical, 12)
@@ -615,6 +615,13 @@ struct AuditionPackageHubView: View {
         case .headshots: return "Capture Headshots"
         case .slate: return "Record your Slate"
         case .audition: return "Record your Audition"
+        }
+    }
+
+    private func focusSecondaryButtonTitle(_ deliverable: PackageDeliverable) -> String {
+        switch deliverable {
+        case .headshots: return "Import Photos"
+        case .slate, .audition: return "Import Video"
         }
     }
 
