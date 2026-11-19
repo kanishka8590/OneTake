@@ -75,6 +75,11 @@ struct AuditionPackageHubView: View {
     @State private var selectedAuditionVideoItem: PhotosPickerItem?
     @State private var showingAuditionVideoPicker = false
 
+    // Hero artwork picker
+    @State private var selectedHeroPhotoItem: PhotosPickerItem?
+    @State private var showingHeroPhotoPicker = false
+    @State private var customHeroImage: UIImage?
+
     // Imported photos review
     @State private var showingHeadshotImportReview = false
     @State private var importedHeadshotImages: [UIImage] = []
@@ -114,40 +119,43 @@ struct AuditionPackageHubView: View {
                 .ignoresSafeArea()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    // Header: Eyebrow + Project Title + Deadline
+                VStack(alignment: .leading, spacing: 0) {
+                    // Full-bleed Apple TV–style Hero (edge-to-edge top/left/right, blurred bottom dissolve)
                     headerSection
 
-                    // PACKAGE header + 3-segment progress bar with labeled items
-                    packageProgressSection
+                    VStack(alignment: .leading, spacing: 22) {
+                        // PACKAGE header + 3-segment progress bar with labeled items
+                        packageProgressSection
 
-                    // Deliverables Section
-                    deliverablesSection
+                        // Deliverables Section
+                        deliverablesSection
 
-                    // Export Package Button (Visible when at least 1 item ready)
-                    if audition.packageReadyCount > 0 {
-                        Button {
-                            showingPackageValidation = true
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "square.and.arrow.up")
-                                Text("Export Package")
+                        // Export Package Button (Visible when at least 1 item ready)
+                        if audition.packageReadyCount > 0 {
+                            Button {
+                                showingPackageValidation = true
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "square.and.arrow.up")
+                                    Text("Export Package")
+                                }
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Theme.Colors.onAction)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                                .background(Theme.Colors.primaryPlum)
+                                .clipShape(Capsule())
                             }
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Theme.Colors.onAction)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(Theme.Colors.primaryPlum)
-                            .clipShape(Capsule())
+                            .padding(.top, 4)
+                            .padding(.bottom, 36)
                         }
-                        .padding(.top, 4)
-                        .padding(.bottom, 36)
                     }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
             }
+            .ignoresSafeArea(edges: .top)
             .scrollEdgeHaptics()
 
             // Transient confirmation banner overlay
@@ -171,6 +179,7 @@ struct AuditionPackageHubView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -179,6 +188,12 @@ struct AuditionPackageHubView: View {
                         showingDetailsEditor = true
                     } label: {
                         Label("Edit Audition Details", systemImage: "pencil")
+                    }
+
+                    Menu {
+                        heroBackdropMenuItems()
+                    } label: {
+                        Label("Change Hero Image", systemImage: "photo.on.rectangle")
                     }
 
                     Button(role: .destructive) {
@@ -321,6 +336,19 @@ struct AuditionPackageHubView: View {
             selectedAuditionVideoItem = nil
             loadUpfrontAuditionVideo(item)
         }
+        .photosPicker(
+            isPresented: $showingHeroPhotoPicker,
+            selection: $selectedHeroPhotoItem,
+            matching: .images
+        )
+        .onChange(of: selectedHeroPhotoItem) { _, item in
+            guard let item else { return }
+            selectedHeroPhotoItem = nil
+            saveCustomHeroPhoto(item)
+        }
+        .task(id: audition.heroImagePath) {
+            loadCustomHeroImageFromDisk()
+        }
         .sheet(isPresented: $showingHeadshotImportReview) {
             if !importedHeadshotImages.isEmpty {
                 HeadshotReviewView(
@@ -340,68 +368,259 @@ struct AuditionPackageHubView: View {
     // MARK: - Header Section
 
     private var headerSection: some View {
-        ZStack(alignment: .bottomLeading) {
+        let baseHeight: CGFloat = 290
+
+        return GeometryReader { geo in
+            let minY = geo.frame(in: .scrollView(axis: .vertical)).minY
+            let stretch = max(0, minY)
+            let heroHeight = baseHeight + stretch
+
+            ZStack(alignment: .bottom) {
+                // Full-bleed edge-to-edge backdrop with progressive bottom blur & canvas dissolve
+                ZStack {
+                    heroBackdropView
+                        .frame(width: geo.size.width, height: heroHeight)
+                        .clipped()
+
+                    heroBackdropView
+                        .frame(width: geo.size.width, height: heroHeight)
+                        .clipped()
+                        .blur(radius: 22)
+                        .mask(
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .clear, location: 0.45),
+                                    .init(color: .black.opacity(0.75), location: 0.72),
+                                    .init(color: .black, location: 0.94)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+
+                    // Mid-hero legibility scrim + bottom dissolve into canvasBackground (#000000 in Dark Mode)
+                    LinearGradient(
+                        stops: [
+                            .init(color: Color.black.opacity(0.24), location: 0.0),
+                            .init(color: Color.black.opacity(0.08), location: 0.34),
+                            .init(color: Color.black.opacity(0.58), location: 0.68),
+                            .init(color: Theme.Colors.canvasBackground.opacity(0.85), location: 0.88),
+                            .init(color: Theme.Colors.canvasBackground, location: 1.0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
+                .frame(width: geo.size.width, height: heroHeight)
+                .clipped()
+
+                // Centered editorial typography anchored below the nav bar clearance
+                VStack(spacing: 8) {
+                    Text(cleanDeadlineString)
+                        .font(.system(size: 11, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.white.opacity(0.95))
+                        .lineLimit(1)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 4)
+                        .background(Color.black.opacity(0.52), in: Capsule())
+                        .overlay(Capsule().stroke(.white.opacity(0.22), lineWidth: 0.8))
+
+                    Text(audition.projectName)
+                        .font(.title2.bold())
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
+                        .padding(.horizontal, 16)
+
+                    Text(heroMetadataLine)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.88))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 22)
+            }
+            .frame(width: geo.size.width, height: heroHeight)
+            .offset(y: -stretch)
+        }
+        .frame(height: baseHeight)
+    }
+
+    @ViewBuilder
+    private var heroBackdropView: some View {
+        if let customHeroImage {
+            Image(uiImage: customHeroImage)
+                .resizable()
+                .scaledToFill()
+        } else {
             Image(headerArtwork)
                 .resizable()
                 .scaledToFill()
-                .frame(height: 178)
-                .overlay(LinearGradient(colors: [.clear, Theme.Colors.plumDark.opacity(0.92)], startPoint: .top, endPoint: .bottom))
-            VStack(alignment: .leading, spacing: 6) {
-            // Eyebrow: "\(productionType.uppercased()) • AUDITIONING FOR \(roleName.uppercased())"
-            Text("\(audition.production.rawValue.uppercased()) • AUDITIONING FOR \(audition.roleName.uppercased())")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white.opacity(0.82))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-
-            // Large bold project title
-            Text(audition.projectName)
-                .font(.title2.bold())
-                .foregroundStyle(.white)
-                .lineLimit(2)
-                .minimumScaleFactor(0.85)
-
-            // Clean deadline line: "18 h left • Due 21 Nov, 10:00 AM"
-            Text(cleanDeadlineString)
-                .font(.footnote)
-                .monospacedDigit()
-                .foregroundStyle(.white.opacity(0.78))
-            }
-            .padding(20)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.14), lineWidth: 1))
     }
 
-    private var headerArtwork: String { audition.production == .theater ? Theme.Artwork.dramaBanner : Theme.Artwork.auditionBanner }
+    @ViewBuilder
+    private func heroBackdropMenuItems() -> some View {
+        Button {
+            showingHeroPhotoPicker = true
+        } label: {
+            Label("Choose Photo from Library", systemImage: "photo.on.rectangle.angled")
+        }
+
+        Section("Studio Backdrops") {
+            Button {
+                selectBuiltInHeroArtwork(Theme.Artwork.auditionBanner)
+            } label: {
+                Label("Cinema Set", systemImage: "film")
+            }
+
+            Button {
+                selectBuiltInHeroArtwork(Theme.Artwork.dramaBanner)
+            } label: {
+                Label("Stage & Drama", systemImage: "theatermasks")
+            }
+
+            Button {
+                selectBuiltInHeroArtwork(Theme.Artwork.practiceBanner)
+            } label: {
+                Label("Rehearsal Studio", systemImage: "sparkles")
+            }
+        }
+
+        if audition.heroImagePath != nil || audition.heroArtworkName != nil {
+            Button(role: .destructive) {
+                resetHeroBackdropToDefault()
+            } label: {
+                Label("Reset to Default", systemImage: "arrow.counterclockwise")
+            }
+        }
+    }
+
+    private var defaultHeaderArtwork: String {
+        audition.production == .theater ? Theme.Artwork.dramaBanner : Theme.Artwork.auditionBanner
+    }
+
+    private var headerArtwork: String {
+        audition.heroArtworkName ?? defaultHeaderArtwork
+    }
+
+    private var heroMetadataLine: String {
+        let role = audition.roleName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if role.isEmpty {
+            return audition.production.rawValue
+        }
+        return "\(audition.production.rawValue) · \(role)"
+    }
+
+    private func selectBuiltInHeroArtwork(_ artworkName: String) {
+        Haptics.selectionTick()
+        if let oldPath = audition.heroImagePath {
+            MediaStorage.removeFile(at: oldPath)
+            audition.heroImagePath = nil
+        }
+        customHeroImage = nil
+        audition.heroArtworkName = artworkName
+        appState.saveChanges()
+    }
+
+    private func resetHeroBackdropToDefault() {
+        Haptics.selectionTick()
+        if let oldPath = audition.heroImagePath {
+            MediaStorage.removeFile(at: oldPath)
+            audition.heroImagePath = nil
+        }
+        customHeroImage = nil
+        audition.heroArtworkName = nil
+        appState.saveChanges()
+    }
+
+    private func loadCustomHeroImageFromDisk() {
+        guard let relPath = audition.heroImagePath,
+              let url = MediaStorage.resolveURL(for: relPath),
+              let image = UIImage(contentsOfFile: url.path) else {
+            customHeroImage = nil
+            return
+        }
+        customHeroImage = image
+    }
+
+    private func saveCustomHeroPhoto(_ item: PhotosPickerItem) {
+        Task {
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self),
+                      let decoded = UIImage(data: data) else {
+                    await MainActor.run {
+                        showBanner("Could not load selected photo.", isSuccess: false)
+                    }
+                    return
+                }
+                let prepared = Self.downscaledHeroImage(decoded, maxDimension: 1400)
+                guard let jpegData = prepared.jpegData(compressionQuality: 0.85) else {
+                    await MainActor.run {
+                        showBanner("Could not process selected photo.", isSuccess: false)
+                    }
+                    return
+                }
+                let relPath = "HeroBanners/hero_\(audition.id.uuidString).jpg"
+                let savedRelPath = try MediaStorage.saveData(jpegData, relativePath: relPath)
+                await MainActor.run {
+                    if let oldPath = audition.heroImagePath, oldPath != savedRelPath {
+                        MediaStorage.removeFile(at: oldPath)
+                    }
+                    audition.heroArtworkName = nil
+                    audition.heroImagePath = savedRelPath
+                    customHeroImage = prepared
+                    appState.saveChanges()
+                    Haptics.success()
+                }
+            } catch {
+                await MainActor.run {
+                    showBanner("Could not update hero image.", isSuccess: false)
+                }
+            }
+        }
+    }
+
+    nonisolated private static func downscaledHeroImage(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
+        let size = image.size
+        let longest = max(size.width, size.height)
+        guard longest > maxDimension, longest > 0 else { return image }
+        let scale = maxDimension / longest
+        let targetSize = CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
+        let renderer = UIGraphicsImageRenderer(size: targetSize)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+    }
 
     private var cleanDeadlineString: String {
         if audition.status == .sent {
-            return "Submitted • Complete"
+            return "Submitted"
         }
         if !audition.hasDeadline {
-            return "Deadline not specified"
+            return "No Deadline"
         }
         let diff = audition.deadline.timeIntervalSince(Date.now)
-        let timeRemaining: String
         if diff < 0 {
-            timeRemaining = "Overdue"
-        } else if diff < 3600 {
-            let mins = max(1, Int(diff / 60))
-            timeRemaining = "\(mins)m left"
-        } else if diff < 86400 {
-            let hours = max(1, Int(diff / 3600))
-            timeRemaining = "\(hours) h left"
-        } else {
-            let days = Int(diff / 86400)
-            timeRemaining = "\(days)d left"
+            return "Overdue"
         }
-
-        let formatter = DateFormatter()
-        formatter.dateFormat = "d MMM, h:mm a"
-        let dueStr = formatter.string(from: audition.deadline)
-        return "\(timeRemaining) • Due \(dueStr)"
+        if diff < 3600 {
+            let mins = max(1, Int(diff / 60))
+            return "Due in \(mins)m"
+        }
+        if diff < 86400 {
+            let hours = max(1, Int(diff / 3600))
+            return "Due in \(hours)h"
+        }
+        let days = max(1, Int(diff / 86400))
+        if Calendar.current.isDateInTomorrow(audition.deadline) || days == 1 {
+            return "Due Tomorrow"
+        }
+        return "\(days) Days Left"
     }
 
     // MARK: - PACKAGE Progress Bar Section

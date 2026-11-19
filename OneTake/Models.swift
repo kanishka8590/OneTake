@@ -579,6 +579,8 @@ final class Audition {
     var requirements: [SubmissionRequirement] = []
     var scriptText: String? = nil
     var scriptFileName: String? = nil
+    var heroArtworkName: String? = nil
+    var heroImagePath: String? = nil
 
     /// When audition.scriptText (trimmed) is empty, scriptLines is strictly empty ([]).
     /// No fallback to rawCastingCallText, casting call notes, or character descriptions.
@@ -686,7 +688,9 @@ final class Audition {
         validationRules: ValidationRules = ValidationRules(),
         privateShareLink: PrivateShareLink? = nil,
         sentDate: Date? = nil,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        heroArtworkName: String? = nil,
+        heroImagePath: String? = nil
     ) {
         self.id = id
         self.projectName = projectName
@@ -711,6 +715,8 @@ final class Audition {
         self.privateShareLink = privateShareLink
         self.sentDate = sentDate
         self.createdAt = createdAt
+        self.heroArtworkName = heroArtworkName
+        self.heroImagePath = heroImagePath
     }
 }
 

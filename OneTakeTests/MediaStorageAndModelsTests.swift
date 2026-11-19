@@ -306,4 +306,26 @@ final class MediaStorageAndModelsTests: XCTestCase {
         XCTAssertTrue(auditionMissingFiles.isSlateReady)
         XCTAssertTrue(auditionMissingFiles.isAuditionReady)
     }
+
+    func testAuditionCustomHeroImageCleanupAndMigration() throws {
+        let folder = "TestHero_\(UUID().uuidString)"
+        let folderURL = MediaStorage.documentsDirectory.appendingPathComponent(folder, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folderURL) }
+
+        let heroRelPath = try MediaStorage.saveData(Data([0xFF, 0xD8, 0xFF]), relativePath: "\(folder)/hero.jpg")
+        let absHeroPath = MediaStorage.documentsDirectory.appendingPathComponent(heroRelPath).path
+        let audition = Audition(
+            projectName: "Hero Project",
+            heroArtworkName: Theme.Artwork.dramaBanner,
+            heroImagePath: absHeroPath
+        )
+
+        XCTAssertTrue(MediaStorage.migratePathsIfNeeded(auditions: [audition], scripts: []))
+        XCTAssertEqual(audition.heroImagePath, heroRelPath)
+        XCTAssertEqual(audition.heroArtworkName, Theme.Artwork.dramaBanner)
+        XCTAssertTrue(MediaStorage.fileExists(at: audition.heroImagePath))
+
+        MediaStorage.cleanupFiles(for: audition)
+        XCTAssertFalse(MediaStorage.fileExists(at: heroRelPath))
+    }
 }
