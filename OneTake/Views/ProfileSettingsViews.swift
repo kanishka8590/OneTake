@@ -72,6 +72,7 @@ struct RecordingSettingsView: View {
             }
         }
         .navigationTitle("Recording settings")
+        .toolbar(.hidden, for: .tabBar)
     }
 }
 
@@ -104,6 +105,7 @@ struct NotificationPreferencesView: View {
             }
         }
         .navigationTitle("Notifications")
+        .toolbar(.hidden, for: .tabBar)
         .task {
             await requestAuthorizationIfNeeded()
         }
@@ -220,6 +222,7 @@ struct PrivacyAndDataView: View {
             }
         }
         .navigationTitle("Privacy & data")
+        .toolbar(.hidden, for: .tabBar)
         .task {
             await appState.refreshLocalStorageUsage()
         }
