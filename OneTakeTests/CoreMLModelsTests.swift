@@ -30,62 +30,78 @@ final class CoreMLModelsTests: XCTestCase {
     }
 
     func testBundledOneTakeParserANELoadsWithUpdatedAuthor() throws {
-        let compiledURL = Bundle.main.url(forResource: "OneTakeParserANE", withExtension: "mlmodelc")
-        XCTAssertNotNil(compiledURL, "OneTakeParserANE.mlmodelc should be compiled into OneTake.app bundle")
-        #if !targetEnvironment(simulator)
-        guard CoreMLParserRunner.supportsInProcessParserModel else {
-            return
-        }
-        #endif
+        let compiledURL = Bundle.main.url(forResource: "OneTakeParserEncoder", withExtension: "mlmodelc")
+            ?? Bundle.main.url(forResource: "OneTakeParserANE", withExtension: "mlmodelc")
+        XCTAssertNotNil(compiledURL, "Seq2Seq Core ML parser should be compiled into OneTake.app bundle")
 
         if let compiledURL {
+            let infoPlistURL = compiledURL.appendingPathComponent("metadata.json")
+            if let data = try? Data(contentsOf: infoPlistURL),
+               let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+               let author = arr.first?["metadataOutputVersion"] != nil ? (arr.first?["author"] as? String) : nil {
+                XCTAssertEqual(author, "Porage-Lover <jitund05@gmail.com>")
+                return
+            }
             let config = MLModelConfiguration()
-            #if targetEnvironment(simulator)
             config.computeUnits = .cpuOnly
-            #else
-            config.computeUnits = .all
-            #endif
-            config.allowLowPrecisionAccumulationOnGPU = true
             let model = try MLModel(contentsOf: compiledURL, configuration: config)
             XCTAssertEqual(model.modelDescription.metadata[.author] as? String, "Porage-Lover <jitund05@gmail.com>")
         }
     }
 
-    func testBPETokenizerLoadsFullVocabAndRoundTripsUTF8() {
-        let tokenizer = BPETokenizer.shared
-        XCTAssertTrue(tokenizer.hasFullVocab, "vocab.json and merges.txt must be bundled and loaded")
+    func testUnigramTokenizerLoadsFullVocabAndRoundTripsUTF8() throws {
+        let tokenizer = UnigramTokenizer.shared
+        XCTAssertTrue(tokenizer.hasFullVocab, "sp_vocab.json must be bundled and loaded")
 
-        let sample = "{\"project\": \"MCCC - KOSHISHE\", \"role_description\": \"20–25 years\\nHindi & English\"}"
-        let encoded = tokenizer.encode(text: sample)
-        XCTAssertFalse(encoded.isEmpty)
+        let sample = "PROJECT: MCCC - KOSHISHE\nROLE: Male Lead\nEMAIL: abhinav@mcc.in"
+        let encoded = tokenizer.encode(text: sample, appendEOS: true)
+        XCTAssertEqual(encoded.last, tokenizer.eosTokenID)
         XCTAssertEqual(tokenizer.decode(tokens: encoded), sample)
+        tokenizer.unload()
+    }
 
-        let templated = tokenizer.applyChatTemplate(
-            system: "You are OneTake's audition notice parser.",
-            user: "PHOTON — Casting Call"
-        )
-        XCTAssertEqual(templated.first, tokenizer.imStartTokenID)
-        XCTAssertEqual(templated.last, tokenizer.encode(text: "assistant\n").last)
+    func testUnigramTokenizerMatchesPythonGoldenParityVectors() throws {
+        let bundle = Bundle(for: CoreMLModelsTests.self)
+        guard let url = bundle.url(forResource: "golden_parity_vectors", withExtension: "json")
+            ?? bundle.url(forResource: "golden_parity_vectors", withExtension: "json", subdirectory: "TestFixtures") else {
+            // Fall back to source-relative TestFixtures path when running locally in Xcode
+            let fixtureURL = URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .appendingPathComponent("TestFixtures/golden_parity_vectors.json")
+            let data = try Data(contentsOf: fixtureURL)
+            try assertGoldenParity(data: data)
+            return
+        }
+        let data = try Data(contentsOf: url)
+        try assertGoldenParity(data: data)
+    }
+
+    private func assertGoldenParity(data: Data) throws {
+        struct Vector: Decodable {
+            let text: String
+            let ids: [Int]
+        }
+        let vectors = try JSONDecoder().decode([Vector].self, from: data)
+        XCTAssertEqual(vectors.count, 20)
+        let tokenizer = UnigramTokenizer.shared
+        for (idx, vec) in vectors.enumerated() {
+            let swiftIDs = tokenizer.encode(text: vec.text, appendEOS: true)
+            XCTAssertEqual(swiftIDs, vec.ids, "Parity mismatch at golden vector #\(idx)")
+        }
         tokenizer.unload()
     }
 
     func testCoreMLParserRunnerExtractsStructuredCastingJSON() async throws {
         let hasAsset = await CoreMLParserRunner.shared.hasBundledModelAsset
-        XCTAssertTrue(hasAsset, "CoreMLParserRunner should discover bundled OneTakeParserANE")
+        XCTAssertTrue(hasAsset, "CoreMLParserRunner should discover bundled Seq2Seq parser")
         #if !targetEnvironment(simulator)
         guard CoreMLParserRunner.supportsInProcessParserModel else {
             let available = await CoreMLParserRunner.shared.isAvailable
-            XCTAssertFalse(available, "Low-RAM devices (<=4 GB) must disable in-process 0.5B Core ML to avoid Jetsam OOM")
+            XCTAssertFalse(available)
             return
         }
         #endif
 
-        let system = """
-        You are OneTake's audition notice parser.
-        Extract the casting details from the provided text into JSON:
-        {"project": "Title", "role": "Target Character", "role_description": null, "due_date": null, "submission_email": null}
-        Output valid JSON only.
-        """
         let notice = """
         CASTING CALL
         MCCC - KOSHISHE
@@ -94,25 +110,132 @@ final class CoreMLModelsTests: XCTestCase {
         Email to Apply: abhinav@mcc.in
         """
 
+        let start = Date()
         let raw = await CoreMLParserRunner.shared.generate(
-            systemPrompt: system,
             userPrompt: notice,
-            maxNewTokens: 80,
-            grammarConstrained: true,
+            maxNewTokens: 96,
             allowSimulator: true
         )
+        let elapsed = Date().timeIntervalSince(start)
         await CoreMLParserRunner.shared.unloadModel()
 
-        let jsonString = try XCTUnwrap(raw, "CoreMLParserRunner should return JSON output")
-        let data = try XCTUnwrap(jsonString.data(using: .utf8))
-        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any], "Invalid JSON: \(jsonString)")
-        let project = try XCTUnwrap(json["project"] as? String, "Missing project in \(jsonString)")
+        let outputString = try XCTUnwrap(raw, "CoreMLParserRunner should return tagged output (elapsed \(String(format: "%.2f", elapsed))s)")
+        let fields = try XCTUnwrap(OnDeviceIntelligence.parseModelOutput(outputString, sourceText: notice), "Failed to parse: \(outputString)")
+        let project = try XCTUnwrap(fields.projectName, "Missing project in: \(outputString)")
         XCTAssertTrue(
             project.localizedCaseInsensitiveContains("MCCC") || project.localizedCaseInsensitiveContains("KOSHISHE"),
-            "Unexpected project in \(jsonString)"
+            "Unexpected project in: \(outputString)"
         )
-        XCTAssertEqual(json["role"] as? String, "Male Lead", "Unexpected role in \(jsonString)")
-        XCTAssertEqual(json["due_date"] as? String, "15 December, 2026", "Unexpected due_date in \(jsonString)")
-        XCTAssertEqual(json["submission_email"] as? String, "abhinav@mcc.in", "Unexpected email in \(jsonString)")
+        XCTAssertEqual(fields.roleName, "Male Lead", "Unexpected role in: \(outputString)")
+        XCTAssertNotNil(fields.deadline, "Missing deadline in: \(outputString)")
+        XCTAssertEqual(fields.recipientEmail, "abhinav@mcc.in", "Unexpected email in: \(outputString)")
+    }
+
+    // MARK: - Task 4: UnigramTokenizer Tests
+
+    func testUnigramTokenizerViterbiAndUTF8ByteFallback() {
+        var pieces: [(piece: String, score: Double)] = [
+            ("<pad>", 0.0),
+            ("</s>", 0.0),
+            ("<unk>", 0.0)
+        ]
+        for byte in 0...255 {
+            pieces.append((String(format: "<0x%02X>", byte), -20.0))
+        }
+        pieces.append(contentsOf: [
+            (piece: "\u{2581}", score: -2.5),
+            (piece: "\u{2581}PROJECT", score: -1.5),
+            (piece: ":", score: -1.0),
+            (piece: "\u{2581}Male", score: -1.8),
+            (piece: "\u{2581}Lead", score: -1.9)
+        ])
+
+        let tokenizer = UnigramTokenizer(pieces: pieces)
+        let sample = "PROJECT: Male Lead \u{2013} \u{20B9}5000 हिन्दी\nabhinav@mcc.in"
+        let encoded = tokenizer.encode(text: sample, appendEOS: true)
+        XCTAssertEqual(encoded.last, tokenizer.eosTokenID)
+        XCTAssertFalse(encoded.contains(tokenizer.unkTokenID), "Byte fallback should eliminate <unk> tokens")
+        XCTAssertEqual(tokenizer.decode(tokens: encoded), "PROJECT: Male Lead - Rs.5000 हिन्दी\nabhinav@mcc.in")
+    }
+
+    func testUnigramTokenizerUnloadResetsMemoryState() {
+        let tokenizer = UnigramTokenizer.shared
+        tokenizer.unload()
+        XCTAssertFalse(tokenizer.isLoadedInMemory)
+    }
+
+    // MARK: - Task 5: OnDeviceIntelligence 3-Tier & Tagged Line Tests
+
+    func testOnDeviceIntelligenceParsePlainLinesExtractsDescAndHandlesNoneAndColons() {
+        let source = """
+        CASTING CALL
+        MCCC - KOSHISHE
+        Role: Male Lead
+        Details: 20-25 yrs, Hindi & English: Lead
+        Email to Apply: abhinav@mcc.in
+        """
+        let output = """
+        PROJECT: MCCC - KOSHISHE
+        ROLE: Male Lead
+        DESC: 20-25 yrs, Hindi & English: Lead
+        DEADLINE: NONE
+        EMAIL: abhinav@mcc.in
+        """
+
+        let fields = OnDeviceIntelligence.parseModelOutput(output, sourceText: source)
+        XCTAssertEqual(fields?.projectName, "MCCC - KOSHISHE")
+        XCTAssertEqual(fields?.roleName, "Male Lead")
+        XCTAssertEqual(fields?.roleDescription, "20-25 yrs, Hindi & English: Lead")
+        XCTAssertNil(fields?.deadline)
+        XCTAssertEqual(fields?.recipientEmail, "abhinav@mcc.in")
+    }
+
+    func testOnDeviceIntelligenceApplyPreservesGroundedFieldsAndFillsOnlyMissingOnes() {
+        let source = """
+        PHOTON - A FEATURE FILM
+        Looking for Male Talent aged 22-25 years.
+        Deadline: 30 November 2026
+        Send to: casting@schoolofdrama.com
+        """
+        var initial = ParsedCastingCall()
+        initial.projectName = "PHOTON"
+        initial.roleName = "Lead Character" // default placeholder -> needs rescue
+        initial.recipientEmail = ""         // empty -> needs rescue
+
+        let tier1 = OnDeviceIntelligence.GroundedNoticeFields(
+            projectName: "SHOULD_NOT_OVERWRITE",
+            roleName: "Male Talent",
+            roleDescription: "aged 22-25 years",
+            recipientEmail: nil,
+            deadline: nil
+        )
+        let afterTier1 = OnDeviceIntelligence.apply(tier1, to: initial, sourceText: source)
+        XCTAssertEqual(afterTier1.projectName, "PHOTON")
+        XCTAssertEqual(afterTier1.roleName, "Male Talent")
+        XCTAssertEqual(afterTier1.roleDescription, "aged 22-25 years")
+        XCTAssertEqual(afterTier1.recipientEmail, "")
+        XCTAssertFalse(afterTier1.hasDetectedDeadline)
+
+        let tier2 = OnDeviceIntelligence.GroundedNoticeFields(
+            projectName: "Ignored Project",
+            roleName: "Ignored Role",
+            roleDescription: "Ignored Desc",
+            recipientEmail: "casting@schoolofdrama.com",
+            deadline: CastingCallParserService.shared.parseUserDeadlineInput("30 November 2026")
+        )
+        let afterTier2 = OnDeviceIntelligence.apply(tier2, to: afterTier1, sourceText: source)
+        XCTAssertEqual(afterTier2.projectName, "PHOTON")
+        XCTAssertEqual(afterTier2.roleName, "Male Talent")
+        XCTAssertEqual(afterTier2.roleDescription, "aged 22-25 years")
+        XCTAssertEqual(afterTier2.recipientEmail, "casting@schoolofdrama.com")
+        XCTAssertTrue(afterTier2.hasDetectedDeadline)
+    }
+
+    // MARK: - Task 6: CoreMLParserRunner Seq2Seq & RAM Gate Tests
+
+    func testCoreMLParserRunnerSeq2SeqMemoryFloorAndPromptFormatting() {
+        XCTAssertEqual(CoreMLParserRunner.minimumSeq2SeqPhysicalMemoryBytes, 2_500_000_000)
+        let formatted = CoreMLParserRunner.seq2SeqInputPrompt(for: "CASTING CALL\nPHOTON")
+        XCTAssertEqual(formatted, "parse audition notice:\nCASTING CALL\nPHOTON")
     }
 }

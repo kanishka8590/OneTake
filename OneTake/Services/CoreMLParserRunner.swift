@@ -1,26 +1,32 @@
 import CoreML
 import Foundation
 
-/// Native Swift Core ML Runner for on-device Apple Neural Engine (ANE) inference.
-/// Ported from OneTake-iOS-main; automatically picks up `OneTakeParser` / `OneTakeParserANE`
-/// / `needle3-onetake-cq2` `.mlmodelc` or `.mlpackage` if bundled in the app.
+/// Native Swift Core ML Runner for the compact Seq2Seq (`Flan-T5-Small` pruned) notice parser.
+///
+/// Loads `OneTakeParserEncoder` + `OneTakeParserDecoder` (or multi-function `OneTakeParserANE`)
+/// using `.all` compute units on iOS 18+ physical devices (`>= 2.5 GB` RAM) and `.cpuOnly` under Simulator.
 actor CoreMLParserRunner {
     static let shared = CoreMLParserRunner()
 
-    private var model: MLModel?
-    private let tokenizer = BPETokenizer.shared
-    private let modelResourceNames = ["OneTakeParserANE", "OneTakeParser", "needle3-onetake-cq2"]
-    private let maxContextTokens = 512
+    nonisolated static let minimumSeq2SeqPhysicalMemoryBytes: UInt64 = 2_500_000_000
 
-    /// Devices with <= 4 GB RAM (e.g., iPhone 11) hit iOS Jetsam limits (~1.4 GB) when compiling
-    /// or holding the 0.5B Core ML transformer alongside active camera/UI memory.
-    /// On iOS Simulator (which lacks Neural Engine / MPSGraph), default notice parsing skips
-    /// CPU-only 0.5B generation unless explicitly requested by `CoreMLModelsTests`.
+    private var encoderModel: MLModel?
+    private var decoderModel: MLModel?
+    private(set) var lastDiagnostic: String?
+
+    private let unigramTokenizer = UnigramTokenizer.shared
+    private let maxEncoderContextTokens = 512
+
+    nonisolated static func seq2SeqInputPrompt(for userPrompt: String) -> String {
+        "parse audition notice:\n\(userPrompt)"
+    }
+
+    /// Seq2Seq ~34.4 MB models stay well under Jetsam ceilings on all 4 GB+ RAM iPhones (iPhone 11+).
     nonisolated static var supportsInProcessParserModel: Bool {
         #if targetEnvironment(simulator)
         return false
         #else
-        return ProcessInfo.processInfo.physicalMemory >= 5_000_000_000
+        return ProcessInfo.processInfo.physicalMemory >= minimumSeq2SeqPhysicalMemoryBytes
         #endif
     }
 
@@ -30,11 +36,10 @@ actor CoreMLParserRunner {
     }
 
     var hasBundledModelAsset: Bool {
-        for name in modelResourceNames {
-            if Bundle.main.url(forResource: name, withExtension: "mlmodelc") != nil {
-                return true
-            }
-            if Bundle.main.url(forResource: name, withExtension: "mlpackage") != nil {
+        let names = ["OneTakeParserEncoder", "OneTakeParserANE"]
+        for name in names {
+            if Bundle.main.url(forResource: name, withExtension: "mlmodelc") != nil
+                || Bundle.main.url(forResource: name, withExtension: "mlpackage") != nil {
                 return true
             }
         }
@@ -51,25 +56,34 @@ actor CoreMLParserRunner {
             throw NSError(
                 domain: "CoreMLParserRunner",
                 code: 412,
-                userInfo: [NSLocalizedDescriptionKey: "In-process Core ML parser skipped on <=4 GB RAM device to prevent memory termination."]
+                userInfo: [NSLocalizedDescriptionKey: "In-process Core ML parser skipped on low-RAM device to avoid memory termination."]
             )
         }
-        guard model == nil else { return }
+        guard encoderModel == nil || decoderModel == nil else { return }
 
-        var targetURL: URL? = nil
-        for name in modelResourceNames {
-            if let url = Bundle.main.url(forResource: name, withExtension: "mlmodelc") {
-                targetURL = url
-                break
-            }
-            if let packageURL = Bundle.main.url(forResource: name, withExtension: "mlpackage"),
-               let compiled = try? MLModel.compileModel(at: packageURL) {
-                targetURL = compiled
-                break
-            }
+        let baseConfig = { (functionName: String?) -> MLModelConfiguration in
+            let config = MLModelConfiguration()
+            #if targetEnvironment(simulator)
+            config.computeUnits = .cpuOnly
+            #else
+            config.computeUnits = .all
+            #endif
+            config.allowLowPrecisionAccumulationOnGPU = true
+            config.functionName = functionName
+            return config
         }
 
-        guard let modelURL = targetURL else {
+        // 1. Dedicated Encoder + Decoder packages
+        if let encURL = resolveModelURL(named: "OneTakeParserEncoder"),
+           let decURL = resolveModelURL(named: "OneTakeParserDecoder") {
+            let cfg = baseConfig(nil)
+            self.encoderModel = try MLModel(contentsOf: encURL, configuration: cfg)
+            self.decoderModel = try MLModel(contentsOf: decURL, configuration: cfg)
+            return
+        }
+
+        // 2. Multi-Function package ("encode" + "decode")
+        guard let aneURL = resolveModelURL(named: "OneTakeParserANE") else {
             throw NSError(
                 domain: "CoreMLParserRunner",
                 code: 404,
@@ -77,171 +91,193 @@ actor CoreMLParserRunner {
             )
         }
 
-        let config = MLModelConfiguration()
-        #if targetEnvironment(simulator)
-        config.computeUnits = .cpuOnly
-        #else
-        config.computeUnits = .all
-        #endif
-        config.allowLowPrecisionAccumulationOnGPU = true
-
-        self.model = try MLModel(contentsOf: modelURL, configuration: config)
+        self.encoderModel = try MLModel(contentsOf: aneURL, configuration: baseConfig("encode"))
+        self.decoderModel = try MLModel(contentsOf: aneURL, configuration: baseConfig("decode"))
     }
 
     func generate(
-        systemPrompt: String = "You are OneTake's audition notice parser. Output valid JSON only.",
+        systemPrompt: String = "You are OneTake's audition notice parser.",
         userPrompt: String,
-        maxNewTokens: Int = 192,
+        maxNewTokens: Int = 96,
         grammarConstrained: Bool = true,
         allowSimulator: Bool = false
     ) async -> String? {
+        _ = systemPrompt
+        _ = grammarConstrained
+        lastDiagnostic = nil
         do {
             try loadModelIfNeeded(allowSimulator: allowSimulator)
         } catch {
+            lastDiagnostic = "loadModelIfNeeded failed: \(error)"
             return nil
         }
 
-        guard let model = self.model else { return nil }
-        let inputNames = Set(model.modelDescription.inputDescriptionsByName.keys)
-        let usesExplicitMaskAndPos = inputNames.contains("causal_mask") && inputNames.contains("position_ids")
-
-        let reservedOutputTokens = min(maxNewTokens, 160)
-        let maxPromptTokens = max(128, maxContextTokens - reservedOutputTokens)
-        var boundedUserPrompt = userPrompt
-        var tokenIDs = tokenizer.applyChatTemplate(system: systemPrompt, user: boundedUserPrompt)
-        while tokenIDs.count > maxPromptTokens && boundedUserPrompt.count > 120 {
-            let keepCount = max(100, (boundedUserPrompt.count * 3) / 4)
-            boundedUserPrompt = String(boundedUserPrompt.prefix(keepCount))
-            tokenIDs = tokenizer.applyChatTemplate(system: systemPrompt, user: boundedUserPrompt)
+        guard let encoderModel, let decoderModel else {
+            lastDiagnostic = "Seq2Seq encoder/decoder not loaded."
+            return nil
         }
-        guard !tokenIDs.isEmpty else { return nil }
 
-        var generatedTokens: [Int] = []
-        var openBraceCount = 0
-        var hasStartedJSON = false
+        return await generateSeq2Seq(
+            encoder: encoderModel,
+            decoder: decoderModel,
+            userPrompt: userPrompt,
+            maxNewTokens: maxNewTokens
+        )
+    }
 
-        let effectiveMaxNew = min(maxNewTokens, max(0, maxContextTokens - tokenIDs.count))
-        for _ in 0..<effectiveMaxNew {
-            let currentSeqLen = tokenIDs.count
-            guard currentSeqLen > 0, currentSeqLen <= maxContextTokens else { break }
+    // MARK: - Seq2Seq (Flan-T5 Pruned) Inference
 
-            let nextTokenID: Int
-            if generatedTokens.isEmpty && grammarConstrained {
-                nextTokenID = 90 // "{"
-            } else {
-                guard let inputFeature = makeInputFeatures(
-                    tokenIDs: tokenIDs,
-                    usesExplicitMaskAndPos: usesExplicitMaskAndPos
-                ),
-                let output = try? await model.prediction(from: inputFeature),
-                let logits = output.featureValue(for: "logits")?.multiArrayValue else {
-                    break
-                }
-                nextTokenID = selectNextToken(
-                    from: logits,
-                    seqLen: currentSeqLen,
-                    isFirstToken: false
-                )
-            }
+    private func generateSeq2Seq(
+        encoder: MLModel,
+        decoder: MLModel,
+        userPrompt: String,
+        maxNewTokens: Int
+    ) async -> String? {
+        var encoded = unigramTokenizer.encode(
+            text: Self.seq2SeqInputPrompt(for: userPrompt),
+            appendEOS: true
+        )
+        if encoded.count > maxEncoderContextTokens {
+            encoded = Array(encoded.prefix(maxEncoderContextTokens - 1)) + [unigramTokenizer.eosTokenID]
+        }
+        guard !encoded.isEmpty else { return nil }
 
-            if nextTokenID == tokenizer.eosTokenID || nextTokenID == tokenizer.imEndTokenID {
+        let seqLen = encoded.count
+        guard let encIDs = makeInt32Array(values: encoded, shape: [1, NSNumber(value: seqLen)]),
+              let encMask = makeMaskArray(
+                  length: seqLen,
+                  dataType: encoder.modelDescription.inputDescriptionsByName["attention_mask"]?.multiArrayConstraint?.dataType ?? .int32
+              ) else {
+            lastDiagnostic = "Failed to allocate encoder input tensors."
+            return nil
+        }
+
+        let encInput = DictionaryFeatureProvider(values: [
+            "input_ids": MLFeatureValue(multiArray: encIDs),
+            "attention_mask": MLFeatureValue(multiArray: encMask)
+        ])
+
+        let encOutput: MLFeatureProvider
+        do {
+            encOutput = try await encoder.prediction(from: encInput)
+        } catch {
+            lastDiagnostic = "encoder prediction failed: \(error)"
+            return nil
+        }
+        guard let hiddenStates = encOutput.featureValue(for: "encoder_hidden_states")?.multiArrayValue else {
+            lastDiagnostic = "missing encoder_hidden_states output"
+            return nil
+        }
+
+        let decMaskType = decoder.modelDescription.inputDescriptionsByName["encoder_attention_mask"]?.multiArrayConstraint?.dataType ?? .int32
+        let decEncMask = (decMaskType == encMask.dataType) ? encMask : makeMaskArray(length: seqLen, dataType: decMaskType)
+        guard let decEncMask else {
+            lastDiagnostic = "Failed to allocate decoder attention mask."
+            return nil
+        }
+
+        var decoderTokens: [Int] = [unigramTokenizer.padTokenID] // T5 decoder_start_token_id = 0
+        let stepLimit = min(max(1, maxNewTokens), 96)
+
+        for step in 0..<stepLimit {
+            guard let decIDs = makeInt32Array(
+                values: decoderTokens,
+                shape: [1, NSNumber(value: decoderTokens.count)]
+            ) else {
                 break
             }
 
-            generatedTokens.append(nextTokenID)
-            tokenIDs.append(nextTokenID)
+            let decInput = DictionaryFeatureProvider(values: [
+                "decoder_input_ids": MLFeatureValue(multiArray: decIDs),
+                "encoder_hidden_states": MLFeatureValue(multiArray: hiddenStates),
+                "encoder_attention_mask": MLFeatureValue(multiArray: decEncMask)
+            ])
 
-            if grammarConstrained {
-                let tokenStr = tokenizer.decode(tokens: [nextTokenID])
-                for char in tokenStr {
-                    if char == "{" || char == "[" {
-                        openBraceCount += 1
-                        hasStartedJSON = true
-                    } else if char == "}" || char == "]" {
-                        openBraceCount -= 1
-                    }
-                }
-
-                if hasStartedJSON && openBraceCount <= 0 {
-                    break
-                }
+            let decOutput: MLFeatureProvider
+            do {
+                decOutput = try await decoder.prediction(from: decInput)
+            } catch {
+                lastDiagnostic = "decoder prediction failed at step \(step): \(error)"
+                break
             }
+            guard let logits = decOutput.featureValue(for: "logits")?.multiArrayValue else {
+                lastDiagnostic = "missing logits output"
+                break
+            }
+
+            let nextToken = selectNextToken(from: logits)
+            if nextToken == unigramTokenizer.eosTokenID || nextToken == unigramTokenizer.padTokenID {
+                break
+            }
+            decoderTokens.append(nextToken)
         }
 
-        let result = tokenizer.decode(tokens: generatedTokens).trimmingCharacters(in: .whitespacesAndNewlines)
-        return result.isEmpty ? nil : result
-    }
-
-    private func makeInputFeatures(tokenIDs: [Int], usesExplicitMaskAndPos: Bool) -> MLFeatureProvider? {
-        let s = tokenIDs.count
-        guard let inputArray = try? MLMultiArray(shape: [1, NSNumber(value: s)], dataType: .int32) else {
+        let generated = Array(decoderTokens.dropFirst())
+        guard !generated.isEmpty else {
+            if lastDiagnostic == nil { lastDiagnostic = "empty sequence generated" }
             return nil
         }
-        let idStride = inputArray.strides.last?.intValue ?? 1
-        let idsPtr = inputArray.dataPointer.bindMemory(to: Int32.self, capacity: inputArray.count)
-        for i in 0..<s {
-            idsPtr[i * idStride] = Int32(tokenIDs[i])
-        }
-
-        guard usesExplicitMaskAndPos else {
-            return DictionaryFeatureProvider(values: ["input_ids": MLFeatureValue(multiArray: inputArray)])
-        }
-
-        guard let maskArray = try? MLMultiArray(
-            shape: [1, 1, NSNumber(value: s), NSNumber(value: s)],
-            dataType: .float16
-        ),
-        let posArray = try? MLMultiArray(
-            shape: [1, NSNumber(value: s)],
-            dataType: .float16
-        ) else {
-            return nil
-        }
-
-        let maskRowStride = maskArray.strides.count >= 3 ? maskArray.strides[2].intValue : s
-        let maskColStride = maskArray.strides.last?.intValue ?? 1
-        let maskPtr = maskArray.dataPointer.bindMemory(to: Float16.self, capacity: maskArray.count)
-        let negInf = Float16(-10000.0)
-        let zero = Float16(0.0)
-        for r in 0..<s {
-            let rowBase = r * maskRowStride
-            for c in 0..<s {
-                maskPtr[rowBase + c * maskColStride] = c <= r ? zero : negInf
-            }
-        }
-
-        let posStride = posArray.strides.last?.intValue ?? 1
-        let posPtr = posArray.dataPointer.bindMemory(to: Float16.self, capacity: posArray.count)
-        for i in 0..<s {
-            posPtr[i * posStride] = Float16(i)
-        }
-
-        return DictionaryFeatureProvider(values: [
-            "input_ids": MLFeatureValue(multiArray: inputArray),
-            "causal_mask": MLFeatureValue(multiArray: maskArray),
-            "position_ids": MLFeatureValue(multiArray: posArray)
-        ])
+        let decoded = unigramTokenizer.decode(tokens: generated, skipSpecialTokens: true)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return decoded.isEmpty ? nil : decoded
     }
 
-    private func selectNextToken(from logits: MLMultiArray, seqLen: Int, isFirstToken: Bool) -> Int {
-        if isFirstToken {
-            return 90
-        }
+    // MARK: - Shared Helpers
 
+    private func resolveModelURL(named name: String) -> URL? {
+        if let url = Bundle.main.url(forResource: name, withExtension: "mlmodelc") {
+            return url
+        }
+        if let packageURL = Bundle.main.url(forResource: name, withExtension: "mlpackage"),
+           let compiled = try? MLModel.compileModel(at: packageURL) {
+            return compiled
+        }
+        return nil
+    }
+
+    private func makeInt32Array(values: [Int], shape: [NSNumber]) -> MLMultiArray? {
+        guard let array = try? MLMultiArray(shape: shape, dataType: .int32) else { return nil }
+        let stride = array.strides.last?.intValue ?? 1
+        let ptr = array.dataPointer.bindMemory(to: Int32.self, capacity: array.count)
+        for i in 0..<values.count {
+            ptr[i * stride] = Int32(values[i])
+        }
+        return array
+    }
+
+    private func makeMaskArray(length: Int, dataType: MLMultiArrayDataType) -> MLMultiArray? {
+        guard let array = try? MLMultiArray(shape: [1, NSNumber(value: length)], dataType: dataType) else {
+            return nil
+        }
+        let stride = array.strides.last?.intValue ?? 1
+        if dataType == .float16 {
+            let ptr = array.dataPointer.bindMemory(to: Float16.self, capacity: array.count)
+            for i in 0..<length { ptr[i * stride] = 1.0 }
+        } else if dataType == .float32 {
+            let ptr = array.dataPointer.bindMemory(to: Float.self, capacity: array.count)
+            for i in 0..<length { ptr[i * stride] = 1.0 }
+        } else {
+            let ptr = array.dataPointer.bindMemory(to: Int32.self, capacity: array.count)
+            for i in 0..<length { ptr[i * stride] = 1 }
+        }
+        return array
+    }
+
+    private func selectNextToken(from logits: MLMultiArray) -> Int {
         var maxIndex = 0
         var maxVal = -Float.greatestFiniteMagnitude
 
-        let vocabSize = logits.shape.last?.intValue ?? 151646
+        let vocabSize = logits.shape.last?.intValue ?? 8192
         let outputSeqLen = logits.shape.count >= 2 ? logits.shape[1].intValue : 1
         let seqStride = logits.strides.count >= 2 ? logits.strides[logits.strides.count - 2].intValue : vocabSize
+        let colStride = logits.strides.last?.intValue ?? 1
         let baseOffset = max(0, outputSeqLen - 1) * seqStride
-        let inspectLimit = min(vocabSize, 151646)
 
         if logits.dataType == .float16 {
             let ptr = logits.dataPointer.bindMemory(to: Float16.self, capacity: logits.count)
             let offsetPtr = ptr.advanced(by: baseOffset)
-            for i in 0..<inspectLimit {
-                let val = Float(offsetPtr[i])
+            for i in 0..<vocabSize {
+                let val = Float(offsetPtr[i * colStride])
                 if val > maxVal {
                     maxVal = val
                     maxIndex = i
@@ -251,8 +287,8 @@ actor CoreMLParserRunner {
         } else if logits.dataType == .float32 {
             let ptr = logits.dataPointer.bindMemory(to: Float.self, capacity: logits.count)
             let offsetPtr = ptr.advanced(by: baseOffset)
-            for i in 0..<inspectLimit {
-                let val = offsetPtr[i]
+            for i in 0..<vocabSize {
+                let val = offsetPtr[i * colStride]
                 if val > maxVal {
                     maxVal = val
                     maxIndex = i
@@ -261,20 +297,22 @@ actor CoreMLParserRunner {
             return maxIndex
         }
 
-        for i in 0..<inspectLimit {
-            let score = logits[baseOffset + i].floatValue
+        for i in 0..<vocabSize {
+            let score = logits[baseOffset + i * colStride].floatValue
             if score > maxVal {
                 maxVal = score
                 maxIndex = i
             }
         }
-
         return maxIndex
     }
 
     func unloadModel() {
-        self.model = nil
-        self.tokenizer.unload()
+        self.encoderModel = nil
+        self.decoderModel = nil
+        if !Self.supportsInProcessParserModel {
+            self.unigramTokenizer.unload()
+        }
     }
 }
 
