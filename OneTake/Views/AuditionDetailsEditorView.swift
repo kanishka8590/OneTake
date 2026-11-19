@@ -326,12 +326,34 @@ struct AuditionDetailsEditorView: View {
                                 Spacer()
 
                                 if !scriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                    Button {
-                                        openSheet(.attachSides)
-                                    } label: {
-                                        Text("Change Sides")
-                                            .font(Theme.Typography.captionBadge)
-                                            .foregroundStyle(Theme.Colors.accent)
+                                    HStack(spacing: 12) {
+                                        Button {
+                                            openScriptTextEditor()
+                                        } label: {
+                                            Text("Edit")
+                                                .font(Theme.Typography.captionBadge)
+                                                .foregroundStyle(Theme.Colors.accent)
+                                        }
+
+                                        Button {
+                                            openSheet(.attachSides)
+                                        } label: {
+                                            Text("Change")
+                                                .font(Theme.Typography.captionBadge)
+                                                .foregroundStyle(Theme.Colors.accent)
+                                        }
+
+                                        Button(role: .destructive) {
+                                            withAnimation {
+                                                scriptText = ""
+                                                scriptFileName = nil
+                                                cueLines = []
+                                            }
+                                        } label: {
+                                            Text("Remove")
+                                                .font(Theme.Typography.captionBadge)
+                                                .foregroundStyle(Theme.Colors.errorCrimson)
+                                        }
                                     }
                                 }
                             }
@@ -558,9 +580,13 @@ struct AuditionDetailsEditorView: View {
         case .file:
             showingFileImporter = true
         case .paste:
-            pastedScriptBuffer = scriptText
-            showingPasteEditor = true
+            openScriptTextEditor()
         }
+    }
+
+    private func openScriptTextEditor() {
+        pastedScriptBuffer = scriptText
+        showingPasteEditor = true
     }
 
     // MARK: - Header Card
@@ -688,32 +714,6 @@ struct AuditionDetailsEditorView: View {
                 .font(Theme.Typography.bodyRegular)
                 .foregroundStyle(Theme.Colors.textSecondary)
                 .lineLimit(4)
-
-            Divider()
-
-            HStack {
-                Button {
-                    openSheet(.attachSides)
-                } label: {
-                    Label("Change Sides", systemImage: "arrow.triangle.2.circlepath")
-                        .font(Theme.Typography.captionBadge)
-                        .foregroundStyle(Theme.Colors.accent)
-                }
-
-                Spacer()
-
-                Button(role: .destructive) {
-                    withAnimation {
-                        scriptText = ""
-                        scriptFileName = nil
-                        cueLines = []
-                    }
-                } label: {
-                    Label("Remove", systemImage: "trash")
-                        .font(Theme.Typography.captionBadge)
-                        .foregroundStyle(Theme.Colors.errorCrimson)
-                }
-            }
         }
         .padding(16)
         .cardStyle()
@@ -1450,14 +1450,14 @@ struct AuditionDetailsEditorView: View {
             }
             .padding()
             .background(Theme.Colors.canvasBackground)
-            .navigationTitle("Type or Paste Sides")
+            .navigationTitle(scriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Type or Paste Sides" : "Edit Script Sides")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { showingPasteEditor = false }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Use Text") {
+                    Button(scriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Use Text" : "Save") {
                         let txt = pastedScriptBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !txt.isEmpty else { return }
                         let parsed = CastingCallParserService.shared.parseSidesText(
@@ -1470,7 +1470,9 @@ struct AuditionDetailsEditorView: View {
                             return
                         }
                         self.scriptText = parsed.scriptText
-                        self.scriptFileName = "Pasted Sides.txt"
+                        if self.scriptFileName == nil {
+                            self.scriptFileName = "Pasted Sides.txt"
+                        }
                         self.cueLines = parsed.cueLines
                     }
                     .disabled(pastedScriptBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
