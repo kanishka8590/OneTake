@@ -30,8 +30,6 @@ struct DocumentScannerRepresentable: UIViewControllerRepresentable {
         }
 
         let controller = VNDocumentCameraViewController()
-        controller.modalPresentationStyle = .fullScreen
-        controller.view.backgroundColor = .black
         controller.delegate = context.coordinator
         return controller
     }

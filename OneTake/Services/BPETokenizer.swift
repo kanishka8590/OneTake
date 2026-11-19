@@ -12,7 +12,6 @@ nonisolated final class BPETokenizer: @unchecked Sendable {
     private let bytesToUnicode: [UInt8: Character]
     private let unicodeToBytes: [Character: UInt8]
 
-    private let lock = NSLock()
     private var vocab: [String: Int] = [:]
     private var idToToken: [Int: String] = [:]
     private var bpeRanks: [String: Int] = [:]
@@ -73,7 +72,7 @@ nonisolated final class BPETokenizer: @unchecked Sendable {
         }
     }
 
-    private func ensureLoadedLocked() {
+    private func ensureLoaded() {
         guard usesBundledAssets, !isLoaded else { return }
         autoreleasepool {
             loadBundledVocab()
@@ -83,8 +82,6 @@ nonisolated final class BPETokenizer: @unchecked Sendable {
     }
 
     func unload() {
-        lock.lock()
-        defer { lock.unlock() }
         guard usesBundledAssets, isLoaded else { return }
         vocab.removeAll(keepingCapacity: false)
         idToToken.removeAll(keepingCapacity: false)
@@ -93,9 +90,7 @@ nonisolated final class BPETokenizer: @unchecked Sendable {
     }
 
     var hasFullVocab: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        ensureLoadedLocked()
+        ensureLoaded()
         return !bpeRanks.isEmpty && vocab.count > 1000
     }
 
@@ -241,9 +236,7 @@ nonisolated final class BPETokenizer: @unchecked Sendable {
     }
 
     func decode(tokens: [Int]) -> String {
-        lock.lock()
-        defer { lock.unlock() }
-        ensureLoadedLocked()
+        ensureLoaded()
         var bytes: [UInt8] = []
         bytes.reserveCapacity(tokens.count * 4)
 
@@ -272,9 +265,7 @@ nonisolated final class BPETokenizer: @unchecked Sendable {
     }
 
     func encode(text: String) -> [Int] {
-        lock.lock()
-        defer { lock.unlock() }
-        ensureLoadedLocked()
+        ensureLoaded()
         if !bpeRanks.isEmpty {
             var tokenIDs: [Int] = []
             let pattern = #"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"#

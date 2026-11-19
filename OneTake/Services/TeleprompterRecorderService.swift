@@ -9,7 +9,6 @@ import Speech
 
 nonisolated struct PreTakeQualityMetrics: Sendable {
     var lightStatus: String = "Not checked"
-    var lightScore: Int = 0
     var isLightPassed: Bool = false
     var isLightingEvaluated: Bool = false
     var backgroundStatus: String = "Not checked"
@@ -76,8 +75,6 @@ nonisolated private final class RecorderStateBox: @unchecked Sendable {
     private var _isAudioTapInstalled = false
     private var _isAnalyzingFrame = false
     private var _cameraPosition: AVCaptureDevice.Position = .front
-    private var _captureRotationAngle: CGFloat = 270
-    private var _videoBufferIsUpright = true
     private var _mirrorFrontCamera = true
     private var _preferredVideoQuality: VideoQuality = .p1080
     private var _preferredFrameRate: Int = 30
@@ -145,16 +142,6 @@ nonisolated private final class RecorderStateBox: @unchecked Sendable {
         set { withLock { $0._cameraPosition = newValue } }
     }
 
-    var captureRotationAngle: CGFloat {
-        get { withLock { $0._captureRotationAngle } }
-        set { withLock { $0._captureRotationAngle = newValue } }
-    }
-
-    var videoBufferIsUpright: Bool {
-        get { withLock { $0._videoBufferIsUpright } }
-        set { withLock { $0._videoBufferIsUpright = newValue } }
-    }
-
     var mirrorFrontCamera: Bool {
         get { withLock { $0._mirrorFrontCamera } }
         set { withLock { $0._mirrorFrontCamera = newValue } }
@@ -183,10 +170,15 @@ nonisolated private final class RecorderStateBox: @unchecked Sendable {
     func tryBeginFrameAnalysis() -> (allowed: Bool, gestureOnly: Bool) {
         lock.lock()
         defer { lock.unlock() }
-        guard _isSessionRunning, !_isAnalyzingFrame else { return (false, false) }
-        let now = CFAbsoluteTimeGetCurrent()
-        guard now - _lastGestureAnalysisTime >= 0.15 else { return (false, false) }
-        _lastGestureAnalysisTime = now
+        guard !_isAnalyzingFrame else { return (false, false) }
+        if _isRecording {
+            guard _wantsHandGesture else { return (false, false) }
+            let now = CFAbsoluteTimeGetCurrent()
+            guard now - _lastGestureAnalysisTime >= 0.14 else { return (false, false) }
+            _lastGestureAnalysisTime = now
+            _isAnalyzingFrame = true
+            return (true, true)
+        }
         _isAnalyzingFrame = true
         return (true, false)
     }
@@ -315,11 +307,6 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     @ObservationIgnored nonisolated(unsafe) private var sessionMovieFileOutput: AVCaptureMovieFileOutput?
     @ObservationIgnored nonisolated(unsafe) private var sessionVideoDataOutput: AVCaptureVideoDataOutput?
     @ObservationIgnored private weak var previewLayer: AVCaptureVideoPreviewLayer?
-    @ObservationIgnored private var mainVideoDevice: AVCaptureDevice?
-    @ObservationIgnored private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
-    @ObservationIgnored private var previewRotationObservation: NSKeyValueObservation?
-    @ObservationIgnored private var captureRotationObservation: NSKeyValueObservation?
-    @ObservationIgnored private var coordinatorHasWindow: Bool = false
     @ObservationIgnored private var outputFileURL: URL?
 
     // Subsystems
@@ -381,87 +368,18 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     // MARK: - Session Setup
 
     func attachPreviewLayer(_ layer: AVCaptureVideoPreviewLayer) {
-        let layerChanged = (self.previewLayer !== layer)
-        let hasWindow = (layer.delegate as? UIView)?.window != nil
-        let windowChanged = (hasWindow != self.coordinatorHasWindow)
         self.previewLayer = layer
-        if layerChanged || windowChanged || self.rotationCoordinator == nil {
-            self.coordinatorHasWindow = hasWindow
-            updateRotationCoordinator(for: stateBox.cameraPosition)
-        } else {
-            applyPreviewLayerConfiguration(for: stateBox.cameraPosition)
-        }
-    }
-
-    private func updateRotationCoordinator(for position: AVCaptureDevice.Position) {
-        previewRotationObservation = nil
-        captureRotationObservation = nil
-        guard let device = mainVideoDevice ?? sessionVideoDevice else {
-            rotationCoordinator = nil
-            applyPreviewLayerConfiguration(for: position)
-            return
-        }
-        let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: previewLayer)
-        rotationCoordinator = coordinator
-        applyPreviewLayerConfiguration(for: position)
-        applyCaptureOutputsRotation(coordinator.videoRotationAngleForHorizonLevelCapture, position: position)
-
-        previewRotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelPreview, options: [.new]) { [weak self] coord, _ in
-            let previewAngle = coord.videoRotationAngleForHorizonLevelPreview
-            let captureAngle = coord.videoRotationAngleForHorizonLevelCapture
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                let pos = self.stateBox.cameraPosition
-                self.applyPreviewRotation(previewAngle, position: pos)
-                self.applyCaptureOutputsRotation(captureAngle, position: pos)
-            }
-        }
-        captureRotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelCapture, options: [.new]) { [weak self] coord, _ in
-            let captureAngle = coord.videoRotationAngleForHorizonLevelCapture
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                let pos = self.stateBox.cameraPosition
-                self.applyCaptureOutputsRotation(captureAngle, position: pos)
-            }
-        }
+        applyPreviewLayerConfiguration(for: stateBox.cameraPosition)
     }
 
     private func applyPreviewLayerConfiguration(for position: AVCaptureDevice.Position) {
-        applyPreviewRotation(rotationCoordinator?.videoRotationAngleForHorizonLevelPreview, position: position)
-    }
-
-    private func applyPreviewRotation(_ angle: CGFloat?, position: AVCaptureDevice.Position) {
         guard let conn = previewLayer?.connection else { return }
-        if let angle, conn.isVideoRotationAngleSupported(angle) {
-            conn.videoRotationAngle = angle
+        if conn.isVideoRotationAngleSupported(90) {
+            conn.videoRotationAngle = 90
         }
         if conn.isVideoMirroringSupported {
             conn.automaticallyAdjustsVideoMirroring = false
             conn.isVideoMirrored = (position == .front)
-        }
-    }
-
-    private func applyCaptureOutputsRotation(_ angle: CGFloat, position: AVCaptureDevice.Position) {
-        stateBox.captureRotationAngle = angle
-        let mirrorFront = mirrorFrontCamera
-        sessionQueue.async { [weak self] in
-            guard let self else { return }
-            let isActivelyRecording = (self.sessionMovieFileOutput?.isRecording ?? false)
-                || self.stateBox.isRecording
-                || self.stateBox.isCountingDown
-            guard !isActivelyRecording else { return }
-            self.configureVideoConnection(
-                self.sessionMovieFileOutput?.connection(with: .video),
-                position: position,
-                mirrorFront: mirrorFront,
-                rotationAngle: angle
-            )
-            self.configureVideoConnection(
-                self.sessionVideoDataOutput?.connection(with: .video),
-                position: position,
-                mirrorFront: mirrorFront,
-                rotationAngle: angle
-            )
         }
     }
 
@@ -483,7 +401,6 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         qualityMetrics.isAlignmentPassed = simulatedCentered
         qualityMetrics.isLightPassed = simulatedLighting
         qualityMetrics.lightStatus = simulatedLighting ? "Good" : "Too Dark"
-        qualityMetrics.lightScore = simulatedLighting ? 65 : 12
         qualityMetrics.isPhoneHeightPassed = simulatedEyeLevel
         qualityMetrics.phoneHeightStatus = simulatedEyeLevel ? "Eye Level" : "Tilt Adjust"
         qualityMetrics.isBackgroundPassed = simulatedPlainBackground
@@ -658,14 +575,12 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
                 if !existing.isRunning, self.stateBox.isSessionRunning {
                     existing.startRunning()
                 }
-                let activeDevice = self.sessionVideoDevice
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    self.mainVideoDevice = activeDevice
                     if self.captureSession !== existing {
                         self.captureSession = existing
                     }
-                    self.updateRotationCoordinator(for: self.stateBox.cameraPosition)
+                    self.applyPreviewLayerConfiguration(for: self.stateBox.cameraPosition)
                 }
                 return
             }
@@ -692,8 +607,6 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
             let initialPosition: AVCaptureDevice.Position = (camera.position == .back) ? .back : .front
             self.stateBox.cameraPosition = initialPosition
             self.sessionVideoDevice = camera
-            let tempCoord = AVCaptureDevice.RotationCoordinator(device: camera, previewLayer: nil)
-            self.stateBox.captureRotationAngle = tempCoord.videoRotationAngleForHorizonLevelCapture
 
             do {
                 let videoInput = try AVCaptureDeviceInput(device: camera)
@@ -723,9 +636,6 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
 
                 let videoDataOut = AVCaptureVideoDataOutput()
                 videoDataOut.alwaysDiscardsLateVideoFrames = true
-                videoDataOut.videoSettings = [
-                    kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
-                ]
                 videoDataOut.setSampleBufferDelegate(self, queue: self.visionQueue)
                 if session.canAddOutput(videoDataOut) {
                     session.addOutput(videoDataOut)
@@ -752,11 +662,10 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
 
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    self.mainVideoDevice = camera
                     self.captureSession = session
                     self.isUsingFrontCamera = (initialPosition == .front)
                     self.currentZoomFactor = 1.0
-                    self.updateRotationCoordinator(for: initialPosition)
+                    self.applyPreviewLayerConfiguration(for: initialPosition)
                 }
             } catch {
                 session.commitConfiguration()
@@ -770,21 +679,11 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     nonisolated private func configureVideoConnection(
         _ connection: AVCaptureConnection?,
         position: AVCaptureDevice.Position,
-        mirrorFront: Bool,
-        rotationAngle: CGFloat? = nil
+        mirrorFront: Bool
     ) {
         guard let connection else { return }
-        let defaultAngle: CGFloat = (position == .front) ? 270 : 90
-        let targetAngle = rotationAngle ?? stateBox.captureRotationAngle
-        if connection.isVideoRotationAngleSupported(targetAngle) {
-            connection.videoRotationAngle = targetAngle
-            stateBox.videoBufferIsUpright = true
-        } else if connection.isVideoRotationAngleSupported(defaultAngle) {
-            connection.videoRotationAngle = defaultAngle
-            stateBox.videoBufferIsUpright = true
-        } else if connection.isVideoRotationAngleSupported(90) {
+        if connection.isVideoRotationAngleSupported(90) {
             connection.videoRotationAngle = 90
-            stateBox.videoBufferIsUpright = true
         }
         if connection.isVideoMirroringSupported {
             connection.automaticallyAdjustsVideoMirroring = false
@@ -830,8 +729,6 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
                 self.sessionVideoDevice = newDevice
                 activePosition = newPosition
                 self.stateBox.cameraPosition = newPosition
-                let tempCoord = AVCaptureDevice.RotationCoordinator(device: newDevice, previewLayer: nil)
-                self.stateBox.captureRotationAngle = tempCoord.videoRotationAngleForHorizonLevelCapture
 
                 self.configureVideoConnection(
                     self.sessionMovieFileOutput?.connection(with: .video),
@@ -865,13 +762,11 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
             session.commitConfiguration()
 
             let finalPosition = activePosition
-            let activeDevice = self.sessionVideoDevice
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.mainVideoDevice = activeDevice
                 self.currentZoomFactor = 1.0
                 self.isUsingFrontCamera = (finalPosition == .front)
-                self.updateRotationCoordinator(for: finalPosition)
+                self.applyPreviewLayerConfiguration(for: finalPosition)
             }
         }
     }
@@ -1032,7 +927,7 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
             let dispatchDecision = box.processAudioTapBuffer(readOnlyBuffer, rms: rms)
             if dispatchDecision.shouldDispatch {
                 Task { @MainActor [weak self] in
-                    self?.onLiveMicData?(rms, "", false)
+                    self?.onLiveMicData?(rms, dispatchDecision.transcript, false)
                 }
             }
         }
@@ -1162,18 +1057,6 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     }
 
     // MARK: - Single Transcript Entry Point
-
-    var currentTranscript: String {
-        stateBox.latestTranscript
-    }
-
-    func resetTranscriptForPrompter() {
-        stateBox.latestTranscript = ""
-        voiceCommandController.resetTranscriptCursor()
-        if isSessionRunning && isVoiceListening {
-            startRecognitionTask()
-        }
-    }
 
     /// `SFSpeechRecognizer` partial and final results, Simulator injections, and
     /// XCTest all reach commands and cue ingestion through this one method.
@@ -1457,7 +1340,7 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         #if targetEnvironment(simulator)
         let shouldSimulate = true
         #else
-        let shouldSimulate = isDemoMode && (!isSessionRunning || !stateBox.hasMovieFileOutput)
+        let shouldSimulate = isDemoMode && !stateBox.hasMovieFileOutput
         #endif
 
         if shouldSimulate {
@@ -1513,20 +1396,15 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
             }
         }
 
-        // Clear pre-roll transcript ("Action", etc.) and ensure voice recognition stays active throughout recording.
-        stateBox.latestTranscript = ""
-        voiceCommandController.resetTranscriptCursor()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+        // Ensure voice recognition stays active throughout recording for "Cut", Voice Sync & cues.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             guard let self = self,
                   self.isSessionRunning,
                   VoiceAuthorizationService.shared.isAuthorized else { return }
             if !self.isVoiceListening {
                 self.startVoiceListening()
-            } else {
-                if !self.speechAudioEngine.isRunning {
-                    try? self.speechAudioEngine.start()
-                }
-                self.startRecognitionTask()
+            } else if !self.speechAudioEngine.isRunning {
+                try? self.speechAudioEngine.start()
             }
         }
     }
@@ -1656,7 +1534,7 @@ extension TeleprompterRecorderService: AVCaptureVideoDataOutputSampleBufferDeleg
 
         let isFront = (stateBox.cameraPosition == .front)
         let orientation: CGImagePropertyOrientation
-        if stateBox.videoBufferIsUpright {
+        if connection.isVideoRotationAngleSupported(90) && connection.videoRotationAngle == 90 {
             orientation = isFront ? (connection.isVideoMirrored ? .up : .upMirrored) : .up
         } else {
             orientation = isFront ? .leftMirrored : .right
@@ -1681,20 +1559,41 @@ extension TeleprompterRecorderService: AVCaptureVideoDataOutputSampleBufferDeleg
             return
         }
 
-        let faceRequest = VNDetectFaceRectanglesRequest()
-        faceRequest.revision = VNDetectFaceRectanglesRequestRevision3
+        let lumStatus = Self.evaluateLuminance(of: pixelBuffer)
+        let isLightOk = (lumStatus == "Good")
 
-        let runSegmentation = !stateBox.isRecording
-        let segRequest: VNGeneratePersonSegmentationRequest? = runSegmentation ? {
-            let req = VNGeneratePersonSegmentationRequest()
-            req.qualityLevel = .fast
-            return req
-        }() : nil
-
-        var requests: [VNRequest] = [faceRequest]
-        if let segRequest {
-            requests.append(segRequest)
+        let faceRequest = VNDetectFaceLandmarksRequest { [weak self] req, _ in
+            guard let self else { return }
+            let centered: Bool
+            if let results = req.results as? [VNFaceObservation], let face = results.first {
+                let box = face.boundingBox
+                centered = (box.midX >= 0.30 && box.midX <= 0.70) && (box.midY >= 0.25 && box.midY <= 0.75)
+            } else {
+                centered = false
+            }
+            Task { @MainActor [weak self] in
+                self?.qualityMetrics.isAlignmentPassed = centered
+                self?.qualityMetrics.isFramingEvaluated = true
+            }
         }
+
+        let segRequest = VNGeneratePersonSegmentationRequest { [weak self] req, _ in
+            guard let self,
+                  let result = req.results?.first as? VNPixelBufferObservation else { return }
+            let isPlain = Self.evaluateBackgroundClutter(maskBuffer: result.pixelBuffer, frameBuffer: pixelBuffer)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.qualityMetrics.isBackgroundPassed = isPlain
+                self.qualityMetrics.backgroundStatus = isPlain ? "Clean" : "Cluttered"
+                self.qualityMetrics.isBackgroundEvaluated = true
+                self.qualityMetrics.isLightPassed = isLightOk
+                self.qualityMetrics.lightStatus = lumStatus
+                self.qualityMetrics.isLightingEvaluated = true
+            }
+        }
+        segRequest.qualityLevel = .fast
+
+        var requests: [VNRequest] = [faceRequest, segRequest]
         if let handRequest {
             requests.append(handRequest)
         }
@@ -1702,44 +1601,9 @@ extension TeleprompterRecorderService: AVCaptureVideoDataOutputSampleBufferDeleg
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         try? handler.perform(requests)
 
-        let face = (faceRequest.results ?? []).max(by: {
-            ($0.boundingBox.width * $0.boundingBox.height) < ($1.boundingBox.width * $1.boundingBox.height)
-        })
-        let centered: Bool
-        if let face {
-            let box = face.boundingBox
-            centered = (box.midX >= 0.28 && box.midX <= 0.72) && (box.midY >= 0.20 && box.midY <= 0.78) && (box.height >= 0.14)
-        } else {
-            centered = false
-        }
-
-        let lighting = HeadshotGuidanceService.evaluatePixelBufferLuminanceWithScore(
-            pixelBuffer,
-            faceBoundingBox: face?.boundingBox,
-            allowUnevenShadow: false
-        )
-        let lumStatus = lighting.status.rawValue
-        let lumScore = lighting.score
-        let isLightOk = (lighting.status == .good)
-
-        let isPlain: Bool? = segRequest?.results?.first.map { obs in
-            Self.evaluateBackgroundClutter(maskBuffer: obs.pixelBuffer, frameBuffer: pixelBuffer)
-        }
         let openPalm = handRequest?.results?.contains(where: Self.isOpenPalm) ?? false
-
         Task { @MainActor [weak self] in
             guard let self, self.isSessionRunning else { return }
-            self.qualityMetrics.isLightPassed = isLightOk
-            self.qualityMetrics.lightStatus = lumStatus
-            self.qualityMetrics.lightScore = lumScore
-            self.qualityMetrics.isLightingEvaluated = true
-            self.qualityMetrics.isAlignmentPassed = centered
-            self.qualityMetrics.isFramingEvaluated = true
-            if let isPlain {
-                self.qualityMetrics.isBackgroundPassed = isPlain
-                self.qualityMetrics.backgroundStatus = isPlain ? "Clean" : "Cluttered"
-                self.qualityMetrics.isBackgroundEvaluated = true
-            }
             self.openPalmDetected = self.gesturesEnabled && openPalm
         }
     }

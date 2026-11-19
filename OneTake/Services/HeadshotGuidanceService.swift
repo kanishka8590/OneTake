@@ -116,8 +116,6 @@ nonisolated private final class GuidanceStateBox: @unchecked Sendable {
     private var _targetAngle: HeadshotAngle = .front
     private var _isFrontCamera = true
     private var _cameraPosition: AVCaptureDevice.Position = .front
-    private var _captureRotationAngle: CGFloat = 270
-    private var _videoBufferIsUpright = true
     private var _isDemoMode = false
     private var _wantsHandGesture = true
     private var _activeRecognitionTaskID: UUID?
@@ -168,16 +166,6 @@ nonisolated private final class GuidanceStateBox: @unchecked Sendable {
     var cameraPosition: AVCaptureDevice.Position {
         get { withLock { $0._cameraPosition } }
         set { withLock { $0._cameraPosition = newValue } }
-    }
-
-    var captureRotationAngle: CGFloat {
-        get { withLock { $0._captureRotationAngle } }
-        set { withLock { $0._captureRotationAngle = newValue } }
-    }
-
-    var videoBufferIsUpright: Bool {
-        get { withLock { $0._videoBufferIsUpright } }
-        set { withLock { $0._videoBufferIsUpright = newValue } }
     }
 
     var isDemoMode: Bool {
@@ -363,11 +351,6 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     @ObservationIgnored nonisolated(unsafe) private var sessionPhotoOutput: AVCapturePhotoOutput?
     @ObservationIgnored nonisolated(unsafe) private var sessionVideoDataOutput: AVCaptureVideoDataOutput?
     @ObservationIgnored private weak var previewLayer: AVCaptureVideoPreviewLayer?
-    @ObservationIgnored private var mainVideoDevice: AVCaptureDevice?
-    @ObservationIgnored private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
-    @ObservationIgnored private var previewRotationObservation: NSKeyValueObservation?
-    @ObservationIgnored private var captureRotationObservation: NSKeyValueObservation?
-    @ObservationIgnored private var coordinatorHasWindow: Bool = false
 
     // Subsystems
     @ObservationIgnored private let motionManager = CMMotionManager()
@@ -723,72 +706,18 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     // MARK: - Session Lifecycle
 
     func attachPreviewLayer(_ layer: AVCaptureVideoPreviewLayer) {
-        let layerChanged = (self.previewLayer !== layer)
-        let hasWindow = (layer.delegate as? UIView)?.window != nil
-        let windowChanged = (hasWindow != self.coordinatorHasWindow)
         self.previewLayer = layer
-        if layerChanged || windowChanged || self.rotationCoordinator == nil {
-            self.coordinatorHasWindow = hasWindow
-            updateRotationCoordinator(for: stateBox.cameraPosition)
-        } else {
-            applyPreviewLayerConfiguration(for: stateBox.cameraPosition)
-        }
-    }
-
-    private func updateRotationCoordinator(for position: AVCaptureDevice.Position) {
-        previewRotationObservation = nil
-        captureRotationObservation = nil
-        guard let device = mainVideoDevice ?? sessionVideoDevice else {
-            rotationCoordinator = nil
-            applyPreviewLayerConfiguration(for: position)
-            return
-        }
-        let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: previewLayer)
-        rotationCoordinator = coordinator
-        applyPreviewLayerConfiguration(for: position)
-        applyCaptureOutputsRotation(coordinator.videoRotationAngleForHorizonLevelCapture, position: position)
-
-        previewRotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelPreview, options: [.new]) { [weak self] coord, _ in
-            let previewAngle = coord.videoRotationAngleForHorizonLevelPreview
-            let captureAngle = coord.videoRotationAngleForHorizonLevelCapture
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                let pos = self.stateBox.cameraPosition
-                self.applyPreviewRotation(previewAngle, position: pos)
-                self.applyCaptureOutputsRotation(captureAngle, position: pos)
-            }
-        }
-        captureRotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelCapture, options: [.new]) { [weak self] coord, _ in
-            let captureAngle = coord.videoRotationAngleForHorizonLevelCapture
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                let pos = self.stateBox.cameraPosition
-                self.applyCaptureOutputsRotation(captureAngle, position: pos)
-            }
-        }
+        applyPreviewLayerConfiguration(for: stateBox.cameraPosition)
     }
 
     private func applyPreviewLayerConfiguration(for position: AVCaptureDevice.Position) {
-        applyPreviewRotation(rotationCoordinator?.videoRotationAngleForHorizonLevelPreview, position: position)
-    }
-
-    private func applyPreviewRotation(_ angle: CGFloat?, position: AVCaptureDevice.Position) {
         guard let conn = previewLayer?.connection else { return }
-        if let angle, conn.isVideoRotationAngleSupported(angle) {
-            conn.videoRotationAngle = angle
+        if conn.isVideoRotationAngleSupported(90) {
+            conn.videoRotationAngle = 90
         }
         if conn.isVideoMirroringSupported {
             conn.automaticallyAdjustsVideoMirroring = false
             conn.isVideoMirrored = (position == .front)
-        }
-    }
-
-    private func applyCaptureOutputsRotation(_ angle: CGFloat, position: AVCaptureDevice.Position) {
-        stateBox.captureRotationAngle = angle
-        sessionQueue.async { [weak self] in
-            guard let self else { return }
-            self.configureVideoConnection(self.sessionVideoDataOutput?.connection(with: .video), position: position, rotationAngle: angle)
-            self.configureVideoConnection(self.sessionPhotoOutput?.connection(with: .video), position: position, rotationAngle: angle)
         }
     }
 
@@ -942,22 +871,16 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
             self.stateBox.cameraPosition = activePosition
             self.stateBox.isFrontCamera = (activePosition == .front)
-            if let activeDevice = self.sessionVideoDevice {
-                let tempCoord = AVCaptureDevice.RotationCoordinator(device: activeDevice, previewLayer: nil)
-                self.stateBox.captureRotationAngle = tempCoord.videoRotationAngleForHorizonLevelCapture
-            }
             self.configureVideoConnection(self.sessionVideoDataOutput?.connection(with: .video), position: activePosition)
             self.configureVideoConnection(self.sessionPhotoOutput?.connection(with: .video), position: activePosition)
             session.commitConfiguration()
 
             let resolvedPosition = activePosition
-            let activeDevice = self.sessionVideoDevice
             let isFront = (resolvedPosition == .front)
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.mainVideoDevice = activeDevice
                 self.isFrontCamera = isFront
-                self.updateRotationCoordinator(for: resolvedPosition)
+                self.applyPreviewLayerConfiguration(for: resolvedPosition)
             }
         }
     }
@@ -1128,7 +1051,6 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
                 return
             }
 
-            self.configureVideoConnection(photoOutput.connection(with: .video), position: self.stateBox.cameraPosition)
             let settings = AVCapturePhotoSettings()
             photoOutput.capturePhoto(with: settings, delegate: self)
         }
@@ -1192,15 +1114,13 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
                     existing.startRunning()
                 }
                 let position = self.stateBox.cameraPosition
-                let activeDevice = self.sessionVideoDevice
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    self.mainVideoDevice = activeDevice
                     if self.captureSession !== existing {
                         self.captureSession = existing
                     }
                     self.isFrontCamera = (position == .front)
-                    self.updateRotationCoordinator(for: position)
+                    self.applyPreviewLayerConfiguration(for: position)
                 }
                 return
             }
@@ -1223,8 +1143,6 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
             self.sessionVideoDevice = camera
             self.stateBox.cameraPosition = initialPosition
             self.stateBox.isFrontCamera = (initialPosition == .front)
-            let tempCoord = AVCaptureDevice.RotationCoordinator(device: camera, previewLayer: nil)
-            self.stateBox.captureRotationAngle = tempCoord.videoRotationAngleForHorizonLevelCapture
 
             do {
                 let input = try AVCaptureDeviceInput(device: camera)
@@ -1261,10 +1179,9 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    self.mainVideoDevice = camera
                     self.captureSession = session
                     self.isFrontCamera = (initialPosition == .front)
-                    self.updateRotationCoordinator(for: initialPosition)
+                    self.applyPreviewLayerConfiguration(for: initialPosition)
                 }
             } catch {
                 session.commitConfiguration()
@@ -1295,23 +1212,10 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         device.unlockForConfiguration()
     }
 
-    nonisolated private func configureVideoConnection(
-        _ connection: AVCaptureConnection?,
-        position: AVCaptureDevice.Position,
-        rotationAngle: CGFloat? = nil
-    ) {
+    nonisolated private func configureVideoConnection(_ connection: AVCaptureConnection?, position: AVCaptureDevice.Position) {
         guard let connection else { return }
-        let defaultAngle: CGFloat = (position == .front) ? 270 : 90
-        let targetAngle = rotationAngle ?? stateBox.captureRotationAngle
-        if connection.isVideoRotationAngleSupported(targetAngle) {
-            connection.videoRotationAngle = targetAngle
-            stateBox.videoBufferIsUpright = true
-        } else if connection.isVideoRotationAngleSupported(defaultAngle) {
-            connection.videoRotationAngle = defaultAngle
-            stateBox.videoBufferIsUpright = true
-        } else if connection.isVideoRotationAngleSupported(90) {
+        if connection.isVideoRotationAngleSupported(90) {
             connection.videoRotationAngle = 90
-            stateBox.videoBufferIsUpright = true
         }
         if connection.isVideoMirroringSupported {
             connection.automaticallyAdjustsVideoMirroring = false
@@ -1916,18 +1820,6 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         faceBoundingBox: CGRect? = nil,
         allowUnevenShadow: Bool = false
     ) -> LightingStatus {
-        evaluatePixelBufferLuminanceWithScore(
-            pixelBuffer,
-            faceBoundingBox: faceBoundingBox,
-            allowUnevenShadow: allowUnevenShadow
-        ).status
-    }
-
-    nonisolated static func evaluatePixelBufferLuminanceWithScore(
-        _ pixelBuffer: CVPixelBuffer,
-        faceBoundingBox: CGRect? = nil,
-        allowUnevenShadow: Bool = false
-    ) -> (status: LightingStatus, score: Int) {
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
 
@@ -1939,31 +1831,31 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
                   pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
                   pixelFormat == kCVPixelFormatType_420YpCbCr8Planar,
                   let yBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) else {
-                return (.good, 50)
+                return .good
             }
             let width = CVPixelBufferGetWidthOfPlane(pixelBuffer, 0)
             let height = CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
             let bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
-            guard width > 0, height > 0, bytesPerRow >= width else { return (.good, 50) }
+            guard width > 0, height > 0, bytesPerRow >= width else { return .good }
 
             let ptr = yBase.assumingMemoryBound(to: UInt8.self)
             let region = clampedPixelRegion(for: faceBoundingBox, width: width, height: height)
-            return computeLightingStatusWithScore(width: width, height: height, region: region, allowUnevenShadow: allowUnevenShadow) { x, y in
+            return computeLightingStatus(width: width, height: height, region: region, allowUnevenShadow: allowUnevenShadow) { x, y in
                 Double(ptr[y * bytesPerRow + x]) / 255.0
             }
         } else {
             guard pixelFormat == kCVPixelFormatType_32BGRA,
                   let base = CVPixelBufferGetBaseAddress(pixelBuffer) else {
-                return (.good, 50)
+                return .good
             }
             let width = CVPixelBufferGetWidth(pixelBuffer)
             let height = CVPixelBufferGetHeight(pixelBuffer)
             let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-            guard width > 0, height > 0, bytesPerRow >= width * 4 else { return (.good, 50) }
+            guard width > 0, height > 0, bytesPerRow >= width * 4 else { return .good }
 
             let ptr = base.assumingMemoryBound(to: UInt8.self)
             let region = clampedPixelRegion(for: faceBoundingBox, width: width, height: height)
-            return computeLightingStatusWithScore(width: width, height: height, region: region, allowUnevenShadow: allowUnevenShadow) { x, y in
+            return computeLightingStatus(width: width, height: height, region: region, allowUnevenShadow: allowUnevenShadow) { x, y in
                 let offset = y * bytesPerRow + x * 4
                 let b = Double(ptr[offset]) / 255.0
                 let g = Double(ptr[offset + 1]) / 255.0
@@ -2005,22 +1897,6 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         allowUnevenShadow: Bool = false,
         luminanceAt: (_ x: Int, _ y: Int) -> Double
     ) -> LightingStatus {
-        computeLightingStatusWithScore(
-            width: width,
-            height: height,
-            region: region,
-            allowUnevenShadow: allowUnevenShadow,
-            luminanceAt: luminanceAt
-        ).status
-    }
-
-    nonisolated private static func computeLightingStatusWithScore(
-        width: Int,
-        height: Int,
-        region: (minX: Int, maxX: Int, minY: Int, maxY: Int),
-        allowUnevenShadow: Bool = false,
-        luminanceAt: (_ x: Int, _ y: Int) -> Double
-    ) -> (status: LightingStatus, score: Int) {
         let regionWidth = region.maxX - region.minX
         let step = max(1, regionWidth / 24)
         let midX = (region.minX + region.maxX) / 2
@@ -2047,17 +1923,16 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
             }
         }
 
-        guard sampled > 0 else { return (.good, 50) }
+        guard sampled > 0 else { return .good }
         let avg = totalLum / Double(sampled)
-        let score = max(0, min(100, Int((avg * 100).rounded())))
         let avgLeft = leftSampled > 0 ? leftLum / Double(leftSampled) : avg
         let avgRight = rightSampled > 0 ? rightLum / Double(rightSampled) : avg
 
-        if avg < 0.18 { return (.tooDark, score) }
-        if avg > 0.88 { return (.tooBright, score) }
+        if avg < 0.18 { return .tooDark }
+        if avg > 0.88 { return .tooBright }
         let unevenLimit = allowUnevenShadow ? 0.48 : unevenLightingThreshold
-        if abs(avgLeft - avgRight) > unevenLimit { return (.uneven, score) }
-        return (.good, score)
+        if abs(avgLeft - avgRight) > unevenLimit { return .uneven }
+        return .good
     }
 
     nonisolated static func evaluateBackgroundClutter(
@@ -2279,7 +2154,7 @@ extension HeadshotGuidanceService: AVCaptureVideoDataOutputSampleBufferDelegate 
 
         let isFront = stateBox.isFrontCamera
         let orientation: CGImagePropertyOrientation
-        if stateBox.videoBufferIsUpright {
+        if connection.isVideoRotationAngleSupported(90) && connection.videoRotationAngle == 90 {
             orientation = isFront ? (connection.isVideoMirrored ? .up : .upMirrored) : .up
         } else {
             orientation = isFront ? .leftMirrored : .right

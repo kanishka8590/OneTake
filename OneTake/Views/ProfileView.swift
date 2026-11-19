@@ -57,9 +57,9 @@ struct ProfileView: View {
 
                     // Profile & App Settings
                     Section("Profile & settings") {
-                        NavigationLink("Recording settings") { RecordingSettingsView(appState: appState).hideTabBarPastRoot() }
-                        NavigationLink("Notification Preferences") { NotificationPreferencesView(appState: appState).hideTabBarPastRoot() }
-                        NavigationLink("Privacy & data") { PrivacyAndDataView(appState: appState).hideTabBarPastRoot() }
+                        NavigationLink("Recording settings") { RecordingSettingsView(appState: appState) }
+                        NavigationLink("Notification Preferences") { NotificationPreferencesView(appState: appState) }
+                        NavigationLink("Privacy & data") { PrivacyAndDataView(appState: appState) }
                     }
 
                     // Demo Mode
@@ -159,7 +159,6 @@ struct ProfileView: View {
                 .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.large)
-            .showTabBarOnRoot()
             .task {
                 await appState.refreshLocalStorageUsage()
             }

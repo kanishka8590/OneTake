@@ -170,7 +170,7 @@ struct AuditionPackageHubView: View {
             }
         }
         .navigationBarBackButtonHidden(true)
-        .hideTabBarPastRoot()
+        .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {
@@ -226,12 +226,12 @@ struct AuditionPackageHubView: View {
                 showBanner("Headshots saved successfully!")
             })
         }
-        .fullScreenCover(isPresented: $showingSlateSetup) {
+        .sheet(isPresented: $showingSlateSetup) {
             SlateProfileSetupView(audition: audition) {
                 showBanner("Slate saved successfully!")
             }
         }
-        .fullScreenCover(isPresented: $showingAuditionMode) {
+        .sheet(isPresented: $showingAuditionMode) {
             AuditionModeAndCuesView(audition: audition) {
                 showBanner("Audition take saved successfully!")
             }
@@ -243,7 +243,7 @@ struct AuditionPackageHubView: View {
             .presentationDragIndicator(.hidden)
             .presentationBackground(Theme.Colors.canvasBackground)
         }
-        .fullScreenCover(isPresented: $showingPackageValidation) {
+        .sheet(isPresented: $showingPackageValidation) {
             PackageValidationAndExportView(audition: audition)
         }
         // Issue 8: Direct Review FullScreenCover
@@ -267,8 +267,7 @@ struct AuditionPackageHubView: View {
                     rawVideoURL: resolvedURL,
                     totalDurationSeconds: take.durationSeconds,
                     isSlate: true,
-                    qualityMetrics: PreTakeQualityMetrics(),
-                    initialNoiseCleaned: take.noiseCleaned
+                    qualityMetrics: PreTakeQualityMetrics()
                 ) { approvedTake in
                     applyApprovedTake(approvedTake, replacing: take, isSlate: true)
                     activeReviewTarget = nil
@@ -284,8 +283,7 @@ struct AuditionPackageHubView: View {
                     rawVideoURL: resolvedURL,
                     totalDurationSeconds: take.durationSeconds,
                     isSlate: false,
-                    qualityMetrics: PreTakeQualityMetrics(),
-                    initialNoiseCleaned: take.noiseCleaned
+                    qualityMetrics: PreTakeQualityMetrics()
                 ) { approvedTake in
                     applyApprovedTake(approvedTake, replacing: take, isSlate: false)
                     activeReviewTarget = nil

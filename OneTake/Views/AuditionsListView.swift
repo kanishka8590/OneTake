@@ -79,7 +79,6 @@ struct AuditionsListView: View {
                 ForEach(filteredAuditions) { audition in
                     NavigationLink {
                         AuditionPackageHubView(audition: audition)
-                            .hideTabBarPastRoot()
                     } label: {
                         AuditionCardRow(audition: audition)
                     }
@@ -161,7 +160,6 @@ struct AuditionsListView: View {
             }
             .navigationTitle("Auditions")
             .navigationBarTitleDisplayMode(.large)
-            .showTabBarOnRoot()
             .toolbar {
                 if #available(iOS 26.0, *) {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -200,7 +198,7 @@ struct AuditionsListView: View {
                 loadSelectedPhotos(items)
             }
             // Document Camera Scanner
-            .fullScreenCover(isPresented: $showingDocumentScanner, onDismiss: processPendingScannedImages) {
+            .sheet(isPresented: $showingDocumentScanner, onDismiss: processPendingScannedImages) {
                 DocumentScannerRepresentable { scannedImages in
                     pendingScannedImages = scannedImages
                     showingDocumentScanner = false
@@ -212,7 +210,6 @@ struct AuditionsListView: View {
                     showingDocumentScanner = false
                     presentImportError(error.localizedDescription)
                 }
-                .ignoresSafeArea()
             }
             // Multi-File Importer
             .fileImporter(

@@ -23,6 +23,7 @@ struct PackageValidationAndExportView: View {
     @State private var exportErrorMessage: String?
     @State private var reviewRoute: ReviewRoute?
     @State private var cropRoute: CropRoute?
+    @State private var cropSourceImage: UIImage?
     @State private var isCyclingHeadshotCrops = false
     @State private var didApplyCropForCurrentAngle = false
     @State private var slateMetadata: VideoMetadata?
@@ -43,7 +44,6 @@ struct PackageValidationAndExportView: View {
     private struct CropRoute: Identifiable {
         let id = UUID()
         let angle: HeadshotAngle
-        let image: UIImage
     }
 
     private var rules: ValidationRules { audition.validationRules }
@@ -125,9 +125,11 @@ struct PackageValidationAndExportView: View {
                 case .audition(let take): reviewView(take: take, isSlate: false)
                 }
             }
-            .sheet(item: $cropRoute, onDismiss: { handleCropDismiss() }) { route in
-                HeadshotCropView(originalImage: route.image, defaultRatio: rules.requiredHeadshotRatio) { image, ratio, preset in
-                    saveCrop(image, ratio: ratio, preset: preset, angle: route.angle)
+            .fullScreenCover(item: $cropRoute, onDismiss: { handleCropDismiss() }) { route in
+                if let cropSourceImage {
+                    HeadshotCropView(originalImage: cropSourceImage, defaultRatio: rules.requiredHeadshotRatio) { image, ratio, preset in
+                        saveCrop(image, ratio: ratio, preset: preset, angle: route.angle)
+                    }
                 }
             }
             .sheet(isPresented: $showingShareChoices, onDismiss: {
@@ -178,68 +180,51 @@ struct PackageValidationAndExportView: View {
                     "Headshots \(rules.requiredHeadshotRatio.rawValue)",
                     detail: headshotValidationDetail,
                     passed: headshotsPass,
-                    action: hasMissingHeadshotFiles ? "Capture Headshots" : "Fix crops"
+                    action: hasMissingHeadshotFiles ? nil : "Fix crops"
                 ) {
-                    if hasMissingHeadshotFiles {
-                        dismiss()
-                    } else {
-                        presentHeadshotCrop()
-                    }
+                    presentHeadshotCrop()
                 }
                 validationCard(
                     "Slate under \(Int(rules.maxSlateSeconds))s",
                     detail: durationDetail(slate, metadata: slateMetadata, cap: rules.maxSlateSeconds),
                     passed: slateDurationPass,
-                    action: (slate != nil && MediaStorage.fileExists(at: slate?.filePath)) ? "Open Slate Trimmer" : "Record Slate"
+                    action: (slate != nil && MediaStorage.fileExists(at: slate?.filePath)) ? "Open Slate Trimmer" : nil
                 ) {
                     if let slate, MediaStorage.fileExists(at: slate.filePath) {
                         reviewRoute = .slate(slate)
-                    } else {
-                        dismiss()
                     }
                 }
                 validationCard(
                     clipDurationTitle,
                     detail: durationDetail(clip, metadata: clipMetadata, cap: rules.maxClipSeconds),
                     passed: clipDurationPass,
-                    action: (clip != nil && MediaStorage.fileExists(at: clip?.filePath)) ? "Open Audition Trimmer" : "Record Audition"
+                    action: (clip != nil && MediaStorage.fileExists(at: clip?.filePath)) ? "Open Audition Trimmer" : nil
                 ) {
                     if let clip, MediaStorage.fileExists(at: clip.filePath) {
                         reviewRoute = .audition(clip)
-                    } else {
-                        dismiss()
                     }
                 }
                 validationCard(
                     "Video orientation & ratio",
                     detail: "Consistent \(expectedOrientation) across both clips",
                     passed: orientationPass,
-                    action: orientationPass ? nil : "Review Orientation"
-                ) {
-                    if let s = slate, MediaStorage.fileExists(at: s.filePath), let reqPort = rules.requiredPortrait, (slateMetadata?.isPortrait ?? s.isPortrait) != reqPort {
-                        reviewRoute = .slate(s)
-                    } else if let c = clip, MediaStorage.fileExists(at: c.filePath) {
-                        reviewRoute = .audition(c)
-                    } else {
-                        dismiss()
-                    }
-                }
+                    action: nil,
+                    actionHandler: {}
+                )
                 validationCard(
                     "File Name",
                     detail: "Auto-formatted as \(formattedFilePrefix)",
                     passed: fileNamePass,
-                    action: fileNamePass ? nil : "Customize Names"
-                ) {
-                    stage = .ready
-                }
+                    action: nil,
+                    actionHandler: {}
+                )
                 validationCard(
                     "File Size",
                     detail: fileSizeValidationDetail,
                     passed: fileSizePass,
-                    action: fileSizePass ? nil : "Compress Videos"
-                ) {
-                    showingCompressor = true
-                }
+                    action: nil,
+                    actionHandler: {}
+                )
 
                 if let oversizedTake {
                     let sizeMB = actualSizeMB(for: oversizedTake, metadata: oversizedTake.id == slate?.id ? slateMetadata : clipMetadata)
@@ -283,17 +268,8 @@ struct PackageValidationAndExportView: View {
                 HStack {
                     Text(title).font(Theme.Typography.cardTitle)
                     Spacer()
-                    if passed {
-                        Text("PASS")
-                            .statusBadge(color: Theme.Colors.successGreen)
-                    } else {
-                        Button(action: actionHandler) {
-                            Text("REVIEW")
-                                .statusBadge(color: Theme.Colors.warningAmber)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Review requirement: \(title)")
-                    }
+                    Text(passed ? "PASS" : "REVIEW")
+                        .statusBadge(color: passed ? Theme.Colors.successGreen : Theme.Colors.warningAmber)
                 }
                 Text(detail).font(Theme.Typography.captionBadge).foregroundStyle(Theme.Colors.textSecondary)
                 if let action, !passed {
@@ -304,12 +280,6 @@ struct PackageValidationAndExportView: View {
             }
         }
         .padding(14).cardStyle()
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if !passed {
-                actionHandler()
-            }
-        }
         .accessibilityElement(children: .combine)
     }
 
@@ -434,91 +404,86 @@ struct PackageValidationAndExportView: View {
 
     private var shareChoices: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text("Use whatever the casting notice asked for.")
-                        .font(Theme.Typography.bodyRegular)
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Send it your way").font(Theme.Typography.screenTitle)
+                Text("Use whatever the casting notice asked for.").font(Theme.Typography.bodyRegular).foregroundStyle(Theme.Colors.textSecondary)
+
+                if PackageExportHelper.canCreateSimulatedPrivateLink(isDemoMode: appState.isDemoMode) {
+                    Button { createPrivateLink() } label: {
+                        Label("Demo Preview Link (local only)", systemImage: "link")
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
+                    }
+                    Text("Unlisted simulated link, works locally for 30 days (Demo Mode)")
+                        .font(Theme.Typography.captionBadge)
                         .foregroundStyle(Theme.Colors.textSecondary)
-
-                    if PackageExportHelper.canCreateSimulatedPrivateLink(isDemoMode: appState.isDemoMode) {
-                        Button { createPrivateLink() } label: {
-                            Label("Demo Preview Link (local only)", systemImage: "link")
-                                .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
-                        }
-                        Text("Unlisted simulated link, works locally for 30 days (Demo Mode)")
-                            .font(Theme.Typography.captionBadge)
+                        .padding(.top, -12)
+                } else {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "icloud.slash")
                             .foregroundStyle(Theme.Colors.textSecondary)
-                            .padding(.top, -12)
-                    } else {
-                        HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: "icloud.slash")
-                                .foregroundStyle(Theme.Colors.textSecondary)
-                            Text("Private cloud links aren't available in offline mode. Use Share Package or Email below to send your real files.")
-                                .font(Theme.Typography.captionBadge)
-                                .foregroundStyle(Theme.Colors.textSecondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(14)
-                        .background(Theme.Colors.lavenderSurface)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-
-                    Button { sharePackageFiles() } label: {
-                        Label("More ways to share", systemImage: "square.and.arrow.up")
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
-                    }
-                    .disabled(preparingShareStatus != nil)
-                    Text("AirDrop, Messages, or Save to Files").font(Theme.Typography.captionBadge).foregroundStyle(Theme.Colors.textSecondary).padding(.top, -12)
-
-                    Button { sharePackageAsZip() } label: {
-                        Label("Share as ZIP archive", systemImage: "doc.zipper")
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
-                    }
-                    .disabled(preparingShareStatus != nil)
-
-                    HStack(spacing: 8) {
-                        Image(systemName: "pencil")
-                            .font(.caption)
-                            .foregroundStyle(Theme.Colors.textSecondary)
-                        TextField("ZIP archive name", text: $zipFileName)
-                            .textInputAutocapitalization(.words)
-                            .autocorrectionDisabled()
-                            .font(Theme.Typography.bodyRegular)
-                            .disabled(preparingShareStatus != nil)
-                        Text(".zip")
+                        Text("Private cloud links aren't available in offline mode. Use Share Package or Email below to send your real files.")
                             .font(Theme.Typography.captionBadge)
                             .foregroundStyle(Theme.Colors.textSecondary)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .cardStyle()
-
-                    Text("Bundles all ready files into \(effectiveZipArchiveName).zip").font(Theme.Typography.captionBadge).foregroundStyle(Theme.Colors.textSecondary).padding(.top, -10)
-
-                    if let email = appState.resolvedRecipientEmail(for: audition), MFMailComposeViewController.canSendMail() {
-                        Button { emailPackageFiles() } label: {
-                            Label("Email \(email)", systemImage: "envelope")
-                                .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
-                        }
-                        .disabled(preparingShareStatus != nil)
-                    }
-
-                    if let status = preparingShareStatus {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                            Text(status)
-                                .font(Theme.Typography.captionBadge)
-                                .foregroundStyle(Theme.Colors.textSecondary)
-                        }
-                        .padding(.top, 4)
-                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(Theme.Colors.lavenderSurface)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                .padding(20)
+
+                Button { sharePackageFiles() } label: {
+                    Label("More ways to share", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
+                }
+                .disabled(preparingShareStatus != nil)
+                Text("AirDrop, Messages, or Save to Files").font(Theme.Typography.captionBadge).foregroundStyle(Theme.Colors.textSecondary).padding(.top, -12)
+
+                Button { sharePackageAsZip() } label: {
+                    Label("Share as ZIP archive", systemImage: "doc.zipper")
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
+                }
+                .disabled(preparingShareStatus != nil)
+
+                HStack(spacing: 8) {
+                    Image(systemName: "pencil")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                    TextField("ZIP archive name", text: $zipFileName)
+                        .textInputAutocapitalization(.words)
+                        .autocorrectionDisabled()
+                        .font(Theme.Typography.bodyRegular)
+                        .disabled(preparingShareStatus != nil)
+                    Text(".zip")
+                        .font(Theme.Typography.captionBadge)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .cardStyle()
+
+                Text("Bundles all ready files into \(effectiveZipArchiveName).zip").font(Theme.Typography.captionBadge).foregroundStyle(Theme.Colors.textSecondary).padding(.top, -10)
+
+                if let email = appState.resolvedRecipientEmail(for: audition), MFMailComposeViewController.canSendMail() {
+                    Button { emailPackageFiles() } label: {
+                        Label("Email \(email)", systemImage: "envelope")
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(16).cardStyle()
+                    }
+                    .disabled(preparingShareStatus != nil)
+                }
+
+                if let status = preparingShareStatus {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text(status)
+                            .font(Theme.Typography.captionBadge)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                    }
+                    .padding(.top, 4)
+                }
+                Spacer()
             }
-            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
-            .navigationTitle("Send it your way")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Close") { showingShareChoices = false } } }
+            .padding(20)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { showingShareChoices = false } } }
             .alert(
                 "Export Unavailable",
                 isPresented: Binding(
@@ -834,14 +799,7 @@ struct PackageValidationAndExportView: View {
     @ViewBuilder
     private func reviewView(take: VideoTake, isSlate: Bool) -> some View {
         let resolvedURL = MediaStorage.resolveURL(for: take.filePath) ?? URL(fileURLWithPath: take.filePath)
-        TakeReviewView(
-            audition: audition,
-            rawVideoURL: resolvedURL,
-            totalDurationSeconds: take.durationSeconds,
-            isSlate: isSlate,
-            qualityMetrics: PreTakeQualityMetrics(),
-            initialNoiseCleaned: take.noiseCleaned
-        ) { approved in
+        TakeReviewView(audition: audition, rawVideoURL: resolvedURL, totalDurationSeconds: take.durationSeconds, isSlate: isSlate, qualityMetrics: PreTakeQualityMetrics()) { approved in
             var updatedTake = approved
             updatedTake.filePath = MediaStorage.storedRelativePath(for: approved.filePath)
             let oldPath = take.filePath
@@ -877,52 +835,38 @@ struct PackageValidationAndExportView: View {
     }
 
     private func presentNextMismatchedHeadshotIfNeeded() {
-        let candidate = HeadshotAngle.allCases
+        guard let asset = HeadshotAngle.allCases
             .compactMap({ audition.headshot(for: $0) })
-            .first(where: { $0.aspectRatio != rules.requiredHeadshotRatio })
-            ?? HeadshotAngle.allCases.compactMap({ audition.headshot(for: $0) }).first
-        guard let asset = candidate,
+            .first(where: { $0.aspectRatio != rules.requiredHeadshotRatio }),
               let image = loadHeadshotImage(for: asset) else {
             isCyclingHeadshotCrops = false
             return
         }
-        cropRoute = CropRoute(angle: asset.angle, image: image)
+        cropSourceImage = image
+        cropRoute = CropRoute(angle: asset.angle)
     }
 
     private func loadHeadshotImage(for asset: HeadshotAsset) -> UIImage? {
         if let origURL = MediaStorage.resolveURL(for: asset.originalFilePath),
            let origImage = UIImage(contentsOfFile: origURL.path) {
-            return HeadshotCropMath.normalizedImage(origImage)
+            return origImage
         }
         if let cropURL = MediaStorage.resolveURL(for: asset.croppedFilePath),
            let cropImage = UIImage(contentsOfFile: cropURL.path) {
-            return HeadshotCropMath.normalizedImage(cropImage)
-        }
-        if appState.isDemoMode {
-            return DemoMediaGenerator.renderHeadshotImage(angle: asset.angle.rawValue)
+            return cropImage
         }
         return nil
     }
 
     private func handleCropDismiss() {
+        cropSourceImage = nil
         guard isCyclingHeadshotCrops, didApplyCropForCurrentAngle else {
             isCyclingHeadshotCrops = false
             didApplyCropForCurrentAngle = false
             return
         }
         didApplyCropForCurrentAngle = false
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(150))
-            guard isCyclingHeadshotCrops else { return }
-            let stillHasMismatch = HeadshotAngle.allCases
-                .compactMap({ audition.headshot(for: $0) })
-                .contains(where: { $0.aspectRatio != rules.requiredHeadshotRatio })
-            if stillHasMismatch {
-                presentNextMismatchedHeadshotIfNeeded()
-            } else {
-                isCyclingHeadshotCrops = false
-            }
-        }
+        presentNextMismatchedHeadshotIfNeeded()
     }
 
     private func saveCrop(_ image: UIImage, ratio: HeadshotAspectRatio, preset: HeadshotCropPreset, angle: HeadshotAngle) {

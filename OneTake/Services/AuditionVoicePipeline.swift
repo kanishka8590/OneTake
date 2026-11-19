@@ -204,31 +204,13 @@ final class ScriptSyncedCuePlaybackCoordinator {
             ? (tolerantMatch(expected, in: spoken, startingAt: start)
                 ?? (start > 0 ? tolerantMatch(expected, in: spoken, startingAt: 0) : nil))
             : nil
-        let tailEnd: Int? = (exactEnd == nil && tolerantEnd == nil && expected.count >= 6)
-            ? (tailClauseMatch(expected, in: spoken, startingAt: start)
-                ?? (start > 0 ? tailClauseMatch(expected, in: spoken, startingAt: 0) : nil))
-            : nil
 
-        guard let end = exactEnd ?? tolerantEnd ?? tailEnd else { return false }
+        guard let end = exactEnd ?? tolerantEnd else { return false }
 
         searchStart = end
         isPlayingCue = true // lock before the configured response delay begins
         let cueIndex = currentCueIndex
         schedule(responseDelay) { [weak self] in
-            guard let self, self.isPlayingCue, self.currentCueIndex == cueIndex else { return }
-            self.onCueReady(cueIndex)
-        }
-        return true
-    }
-
-    /// Synchronizes coordinator state when the teleprompter word tracker reaches the cue line directly.
-    @discardableResult
-    func requestTeleprompterSyncedCue(at index: Int) -> Bool {
-        guard !isPlayingCue, index == currentCueIndex, currentCueIndex < cues.count else { return false }
-        isPlayingCue = true
-        let cueIndex = currentCueIndex
-        let promptDelay = min(0.3, max(0.0, responseDelay))
-        schedule(promptDelay) { [weak self] in
             guard let self, self.isPlayingCue, self.currentCueIndex == cueIndex else { return }
             self.onCueReady(cueIndex)
         }
@@ -280,7 +262,7 @@ final class ScriptSyncedCuePlaybackCoordinator {
 
             let maxPrefix = min(remaining, m + 1)
             for sLen in (m - 1)...maxPrefix {
-                if sLen == m - 1, !tokensRoughlyEqual(expected[m - 1], spoken[candidate + sLen - 1]) {
+                if sLen == m - 1, expected[m - 1] != spoken[candidate + sLen - 1] {
                     continue
                 }
                 if editDistance(expected, Array(spoken[candidate..<(candidate + sLen)])) <= 1 {
@@ -289,44 +271,6 @@ final class ScriptSyncedCuePlaybackCoordinator {
             }
         }
         return nil
-    }
-
-    /// For multi-sentence actor turns (6+ words), triggers the cue when the actor speaks the
-    /// final 3–4 words of the line after speaking earlier words from the turn, so ASR variations
-    /// earlier in a long paragraph never prevent the scene partner cue from firing.
-    private func tailClauseMatch(_ expected: [String], in spoken: [String], startingAt start: Int) -> Int? {
-        let tailLen = min(4, expected.count)
-        guard expected.count >= 6, tailLen >= 3, spoken.count - start >= tailLen + 1 else { return nil }
-        let tail = Array(expected.suffix(tailLen))
-        let lastExpected = expected[expected.count - 1]
-
-        // Require at least 2 words from the earlier part of the line to have been spoken first.
-        let prefixWords = Set(expected.dropLast(tailLen))
-        let searchFloor = start + 1
-        guard searchFloor <= spoken.count - tailLen else { return nil }
-
-        for candidate in searchFloor...(spoken.count - tailLen) {
-            let priorSlice = spoken[start..<candidate]
-            let priorHits = priorSlice.filter { tok in
-                prefixWords.contains(where: { tokensRoughlyEqual($0, tok) })
-            }.count
-            guard priorHits >= min(2, max(1, prefixWords.count / 3)) else { continue }
-
-            let maxSpan = min(spoken.count - candidate, tailLen + 1)
-            for sLen in (tailLen - 1)...maxSpan where sLen >= 2 {
-                let candidateSlice = Array(spoken[candidate..<(candidate + sLen)])
-                guard let lastSpoken = candidateSlice.last,
-                      tokensRoughlyEqual(lastExpected, lastSpoken) else { continue }
-                if editDistance(tail, candidateSlice) <= 1 {
-                    return candidate + sLen
-                }
-            }
-        }
-        return nil
-    }
-
-    private func tokensRoughlyEqual(_ lhs: String, _ rhs: String) -> Bool {
-        VoiceTeleprompterTracker.tokensMatch(lhs, rhs)
     }
 
     private func editDistance(_ lhs: [String], _ rhs: [String]) -> Int {
@@ -339,7 +283,7 @@ final class ScriptSyncedCuePlaybackCoordinator {
             dp[0] = i
             for j in 1...n {
                 let temp = dp[j]
-                if tokensRoughlyEqual(lhs[i - 1], rhs[j - 1]) {
+                if lhs[i - 1] == rhs[j - 1] {
                     dp[j] = prev
                 } else {
                     dp[j] = 1 + min(prev, dp[j], dp[j - 1])

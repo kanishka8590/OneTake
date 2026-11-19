@@ -55,67 +55,65 @@ struct HeadshotReviewView: View {
                 Theme.Colors.canvasBackground
                     .ignoresSafeArea()
 
-                VStack(spacing: 12) {
-                    aspectRatioChipsBar
-                        .padding(.top, 6)
-                        .padding(.horizontal, 16)
+                ScrollView {
+                    VStack(spacing: 16) {
+                        aspectRatioChipsBar
+                            .padding(.top, 8)
+                            .padding(.horizontal, 16)
 
-                    cropFramingView
-                        .padding(.horizontal, 20)
+                        cropFramingView
+                            .padding(.horizontal, 20)
 
-                    zoomSliderRow
+                        HStack {
+                            if currentScale > 1.01 || currentOffsetRatio != .zero {
+                                Button {
+                                    resetFramingForCurrentAngle()
+                                } label: {
+                                    Label("Reset Framing", systemImage: "arrow.counterclockwise")
+                                        .font(Theme.Typography.captionBadge)
+                                        .foregroundStyle(Theme.Colors.textSecondary)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 7)
+                                        .background(Theme.Colors.surfaceElevated)
+                                        .clipShape(Capsule())
+                                }
+                            }
+
+                            Spacer()
+
+                            Menu {
+                                Button {
+                                    showingSingleRetakeCamera = true
+                                } label: {
+                                    Label("Take New Photo", systemImage: "camera")
+                                }
+
+                                Button {
+                                    showingSingleRetakePicker = true
+                                } label: {
+                                    Label("Choose from Photos", systemImage: "photo")
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                    Text("Retake \(selectedAngle.rawValue)")
+                                }
+                                .font(Theme.Typography.captionBadge)
+                                .foregroundStyle(Theme.Colors.accent)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Theme.Colors.lavenderSurface)
+                                .clipShape(Capsule())
+                            }
+                        }
                         .padding(.horizontal, 24)
 
-                    HStack {
-                        if currentScale > 1.01 || currentOffsetRatio != .zero {
-                            Button {
-                                resetFramingForCurrentAngle()
-                            } label: {
-                                Label("Reset Framing", systemImage: "arrow.counterclockwise")
-                                    .font(Theme.Typography.captionBadge)
-                                    .foregroundStyle(Theme.Colors.textSecondary)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 7)
-                                    .background(Theme.Colors.surfaceElevated)
-                                    .clipShape(Capsule())
-                            }
-                        }
-
-                        Spacer()
-
-                        Menu {
-                            Button {
-                                showingSingleRetakeCamera = true
-                            } label: {
-                                Label("Take New Photo", systemImage: "camera")
-                            }
-
-                            Button {
-                                showingSingleRetakePicker = true
-                            } label: {
-                                Label("Choose from Photos", systemImage: "photo")
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "arrow.triangle.2.circlepath")
-                                Text("Retake \(selectedAngle.rawValue)")
-                            }
-                            .font(Theme.Typography.captionBadge)
-                            .foregroundStyle(Theme.Colors.accent)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(Theme.Colors.lavenderSurface)
-                            .clipShape(Capsule())
-                        }
+                        threeAngleMiniBar
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 16)
                     }
-                    .padding(.horizontal, 24)
-
-                    Spacer(minLength: 0)
-
-                    threeAngleMiniBar
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 12)
                 }
+                .scrollDisabled(isInteractingWithCrop)
             }
             .navigationTitle("Review Headshots")
             .navigationBarTitleDisplayMode(.inline)
@@ -277,61 +275,7 @@ struct HeadshotReviewView: View {
         }
     }
 
-    private var zoomSliderRow: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "minus.magnifyingglass")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Theme.Colors.textSecondary)
-
-            Slider(
-                value: Binding(
-                    get: { Double(currentScale) },
-                    set: { newVal in
-                        let newScale = CGFloat(max(1.0, min(3.5, newVal)))
-                        setScaleForCurrentAngle(newScale)
-                        if let img = currentImage, cropContainerSize.width > 0, cropContainerSize.height > 0 {
-                            let pixelOffset = CGSize(
-                                width: currentOffsetRatio.width * cropContainerSize.width,
-                                height: currentOffsetRatio.height * cropContainerSize.height
-                            )
-                            let clamped = HeadshotCropMath.clampedOffset(
-                                pixelOffset,
-                                imageSize: img.size,
-                                containerSize: cropContainerSize,
-                                scale: newScale
-                            )
-                            setOffsetRatioForCurrentAngle(CGSize(
-                                width: clamped.width / cropContainerSize.width,
-                                height: clamped.height / cropContainerSize.height
-                            ))
-                        }
-                    }
-                ),
-                in: 1.0...3.0,
-                step: 0.02
-            )
-            .tint(Theme.Colors.accent)
-
-            Image(systemName: "plus.magnifyingglass")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Theme.Colors.textSecondary)
-
-            Text(String(format: "%.1f×", currentScale))
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundStyle(Theme.Colors.textSecondary)
-                .frame(width: 38, alignment: .trailing)
-        }
-    }
-
     // MARK: - Crop Framing View with Pinch & Drag
-
-    private func autoPromotedScaleForDrag(imageSize: CGSize, containerSize: CGSize, baseScale: CGFloat) -> CGFloat {
-        let baseLimit = HeadshotCropMath.maxOffset(imageSize: imageSize, containerSize: containerSize, scale: baseScale)
-        if baseLimit.width < 20 || baseLimit.height < 20 {
-            return max(baseScale, 1.24)
-        }
-        return baseScale
-    }
 
     private var cropFramingView: some View {
         ZStack {
@@ -341,11 +285,7 @@ struct HeadshotReviewView: View {
 
             if let img = currentImage {
                 GeometryReader { geo in
-                    let isDraggingNow = abs(dragTranslation.width) > 1 || abs(dragTranslation.height) > 1
-                    let baseScaleForDrag = isDraggingNow
-                        ? autoPromotedScaleForDrag(imageSize: img.size, containerSize: geo.size, baseScale: currentScale)
-                        : currentScale
-                    let effectiveScale = max(1.0, min(3.5, baseScaleForDrag * pinchScale))
+                    let effectiveScale = max(1.0, min(3.5, currentScale * pinchScale))
                     let basePixelOffset = CGSize(
                         width: currentOffsetRatio.width * geo.size.width,
                         height: currentOffsetRatio.height * geo.size.height
@@ -368,7 +308,7 @@ struct HeadshotReviewView: View {
                         .scaleEffect(effectiveScale)
                         .offset(x: liveClampedOffset.width, y: liveClampedOffset.height)
                         .contentShape(Rectangle())
-                        .gesture(
+                        .highPriorityGesture(
                             SimultaneousGesture(
                                 MagnificationGesture()
                                     .onChanged { scale in
@@ -402,12 +342,7 @@ struct HeadshotReviewView: View {
                                         dragTranslation = val.translation
                                     }
                                     .onEnded { val in
-                                        let promotedBase = autoPromotedScaleForDrag(
-                                            imageSize: img.size,
-                                            containerSize: geo.size,
-                                            baseScale: currentScale
-                                        )
-                                        let activeScale = max(1.0, min(3.5, promotedBase * pinchScale))
+                                        let activeScale = max(1.0, min(3.5, currentScale * pinchScale))
                                         let rawOffset = CGSize(
                                             width: currentOffsetRatio.width * geo.size.width + val.translation.width,
                                             height: currentOffsetRatio.height * geo.size.height + val.translation.height
@@ -418,7 +353,6 @@ struct HeadshotReviewView: View {
                                             containerSize: geo.size,
                                             scale: activeScale
                                         )
-                                        setScaleForCurrentAngle(activeScale)
                                         setOffsetRatioForCurrentAngle(CGSize(
                                             width: clamped.width / max(1, geo.size.width),
                                             height: clamped.height / max(1, geo.size.height)
@@ -439,7 +373,6 @@ struct HeadshotReviewView: View {
                             cropContainerSize = newSize
                         }
                 }
-                .id(selectedAngle)
                 .aspectRatio(frameAspectRatio, contentMode: .fit)
 
                 gridOverlay
@@ -456,7 +389,7 @@ struct HeadshotReviewView: View {
                 }
             }
         }
-        .frame(maxHeight: 340)
+        .frame(maxHeight: 390)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: Color.black.opacity(0.12), radius: 10, x: 0, y: 4)
         .animation(.snappy(duration: 0.25), value: currentRatio)
@@ -511,9 +444,6 @@ struct HeadshotReviewView: View {
                 dragTranslation = .zero
                 isInteractingWithCrop = false
                 selectedAngle = angle
-                if (angle == .left || angle == .right) && scaleForAngle(angle) <= 1.01 {
-                    setScaleForCurrentAngle(1.20)
-                }
             }
         } label: {
             VStack(spacing: 6) {
@@ -598,8 +528,7 @@ struct HeadshotReviewView: View {
 
     private func resetFramingForCurrentAngle() {
         withAnimation(.snappy(duration: 0.25)) {
-            let defaultScale: CGFloat = (selectedAngle == .front) ? 1.0 : 1.20
-            setScaleForCurrentAngle(defaultScale)
+            setScaleForCurrentAngle(1.0)
             setOffsetRatioForCurrentAngle(.zero)
             pinchScale = 1.0
             dragTranslation = .zero
@@ -625,14 +554,8 @@ struct HeadshotReviewView: View {
         rightRatio = requiredRatio
 
         if let f = initialFront { frontImage = HeadshotCropMath.normalizedImage(f) }
-        if let l = initialLeft {
-            leftImage = HeadshotCropMath.normalizedImage(l)
-            if leftScale <= 1.01 { leftScale = 1.20 }
-        }
-        if let r = initialRight {
-            rightImage = HeadshotCropMath.normalizedImage(r)
-            if rightScale <= 1.01 { rightScale = 1.20 }
-        }
+        if let l = initialLeft { leftImage = HeadshotCropMath.normalizedImage(l) }
+        if let r = initialRight { rightImage = HeadshotCropMath.normalizedImage(r) }
 
         let sourceAssets = !assets.isEmpty ? assets : audition.headshots
 
@@ -645,13 +568,13 @@ struct HeadshotReviewView: View {
         if leftImage == nil, let asset = sourceAssets.first(where: { $0.angle == .left }) {
             leftImage = loadResolvedImage(for: asset)
             leftRatio = asset.aspectRatio
-            leftScale = max(1.20, asset.cropScale)
+            leftScale = max(1.0, asset.cropScale)
             leftOffsetRatio = CGSize(width: asset.cropOffsetRatioX, height: asset.cropOffsetRatioY)
         }
         if rightImage == nil, let asset = sourceAssets.first(where: { $0.angle == .right }) {
             rightImage = loadResolvedImage(for: asset)
             rightRatio = asset.aspectRatio
-            rightScale = max(1.20, asset.cropScale)
+            rightScale = max(1.0, asset.cropScale)
             rightOffsetRatio = CGSize(width: asset.cropOffsetRatioX, height: asset.cropOffsetRatioY)
         }
     }
