@@ -229,7 +229,7 @@ struct AuditionPackageHubView: View {
             AuditionDetailsEditorView(existingAudition: audition) { _ in
                 showBanner("Audition details updated!")
             }
-            .presentationDragIndicator(.hidden)
+            .presentationDragIndicator(.visible)
             .presentationBackground(Theme.Colors.canvasBackground)
         }
         .sheet(isPresented: $showingPackageValidation) {

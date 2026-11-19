@@ -368,7 +368,6 @@ struct AuditionDetailsEditorView: View {
             }
             .navigationTitle(isEditingExisting ? "Edit Audition Details" : "Audition Details")
             .navigationBarTitleDisplayMode(.inline)
-            .interactiveDismissDisabled(true)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -478,7 +477,7 @@ struct AuditionDetailsEditorView: View {
             } message: {
                 Text("Your edits to this audition haven't been saved yet.")
             }
-            .presentationDragIndicator(.hidden)
+            .presentationDragIndicator(.visible)
             .presentationBackground(Theme.Colors.canvasBackground)
         }
     }

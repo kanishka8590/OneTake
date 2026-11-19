@@ -14,3 +14,4 @@ DerivedData/
 build/
 test/
 OneTake-iOS-main/
+.derivedData-device/

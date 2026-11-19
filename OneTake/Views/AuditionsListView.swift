@@ -229,7 +229,7 @@ struct AuditionsListView: View {
                 AuditionDetailsEditorView(parsedCall: presentation.parsedCall) { _ in
                     editorPresentation = nil
                 }
-                .presentationDragIndicator(.hidden)
+                .presentationDragIndicator(.visible)
                 .presentationBackground(Theme.Colors.canvasBackground)
                 .environment(appState)
             }
@@ -237,7 +237,7 @@ struct AuditionsListView: View {
                 AuditionDetailsEditorView(existingAudition: existing) { _ in
                     auditionToEdit = nil
                 }
-                .presentationDragIndicator(.hidden)
+                .presentationDragIndicator(.visible)
                 .presentationBackground(Theme.Colors.canvasBackground)
                 .environment(appState)
             }

@@ -94,19 +94,26 @@ struct PackageValidationAndExportView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if stage == .checking { validationView } else { readyView }
-            }
-            .background(Theme.Colors.canvasBackground)
-            .navigationTitle(stage == .checking ? "Check your package" : "Ready to Send")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(stage == .checking ? "Close" : "Back") {
-                        if stage == .checking { dismiss() } else { stage = .checking }
+            validationView
+                .background(Theme.Colors.canvasBackground)
+                .navigationTitle("Check your package")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { dismiss() }
                     }
                 }
-            }
+                .navigationDestination(
+                    isPresented: Binding(
+                        get: { stage == .ready },
+                        set: { if !$0 { stage = .checking } }
+                    )
+                ) {
+                    readyView
+                        .background(Theme.Colors.canvasBackground)
+                        .navigationTitle("Ready to Send")
+                        .navigationBarTitleDisplayMode(.inline)
+                }
             .sheet(isPresented: $showingCompressor) {
                 if let oversizedTake {
                     VideoCompressorView(
