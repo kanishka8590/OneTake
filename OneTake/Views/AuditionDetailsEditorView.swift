@@ -370,6 +370,7 @@ struct AuditionDetailsEditorView: View {
                     .padding(.top, 16)
                     .padding(.bottom, 28)
                 }
+                .scrollEdgeHaptics()
 
                 if isProcessingSides {
                     ZStack {
@@ -1055,6 +1056,7 @@ struct AuditionDetailsEditorView: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Project Name")
             .navigationBarTitleDisplayMode(.inline)
@@ -1086,6 +1088,7 @@ struct AuditionDetailsEditorView: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Role Details")
             .navigationBarTitleDisplayMode(.inline)
@@ -1189,6 +1192,7 @@ struct AuditionDetailsEditorView: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Deadline & Reminder")
             .navigationBarTitleDisplayMode(.inline)
@@ -1227,6 +1231,7 @@ struct AuditionDetailsEditorView: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Recipient Email")
             .navigationBarTitleDisplayMode(.inline)
@@ -1379,6 +1384,7 @@ struct AuditionDetailsEditorView: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Edit Requirements")
             .navigationBarTitleDisplayMode(.inline)
@@ -1431,6 +1437,7 @@ struct AuditionDetailsEditorView: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Attach Sides")
             .navigationBarTitleDisplayMode(.inline)

@@ -74,6 +74,7 @@ struct TalkToOneTakeBriefingView: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Talk to OneTake")
             .navigationBarTitleDisplayMode(.inline)

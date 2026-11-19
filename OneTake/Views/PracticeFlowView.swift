@@ -229,6 +229,7 @@ struct PracticeASceneSheet: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
             .navigationTitle("Add Scene")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -480,7 +481,7 @@ struct PracticeAuditionCueSelectionView: View {
     }
     var body: some View {
         NavigationStack {
-            ZStack { Theme.Colors.canvasBackground.ignoresSafeArea(); ScrollView { VStack(alignment: .leading, spacing: 20) { header; scriptCard }.padding(.horizontal, 20).padding(.bottom, 24) } }
+            ZStack { Theme.Colors.canvasBackground.ignoresSafeArea(); ScrollView { VStack(alignment: .leading, spacing: 20) { header; scriptCard }.padding(.horizontal, 20).padding(.bottom, 24) }.scrollEdgeHaptics() }
             .navigationTitle("Add Cue Lines").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -723,6 +724,7 @@ struct MemoriseView: View {
                 .padding(16)
                 .padding(.bottom, 20)
             }
+            .scrollEdgeHaptics()
 
             // Sticky Bottom Action Bar
             VStack(spacing: 8) {
@@ -1074,6 +1076,7 @@ struct SayItAloudView: View {
                     )
                         .padding(.horizontal, 2)
                 }
+                .scrollEdgeHaptics()
                 .scrollIndicators(.visible)
                 .frame(maxHeight: .infinity)
                 .onChange(of: clueTracker.currentActorLineIndex) { _, _ in
@@ -1349,6 +1352,7 @@ struct PracticeReviewView: View {
             }
             .padding(16)
         }
+        .scrollEdgeHaptics()
         .background(Theme.Colors.canvasBackground)
         .navigationTitle("Your delivery")
         .navigationBarTitleDisplayMode(.inline)
@@ -1717,6 +1721,7 @@ struct PracticeHistoryView: View {
                     }
                     .listStyle(.insetGrouped)
                     .scrollContentBackground(.hidden)
+                    .scrollEdgeHaptics()
                     .background(Theme.Colors.canvasBackground.ignoresSafeArea())
                 }
             }

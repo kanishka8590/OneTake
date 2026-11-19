@@ -118,6 +118,7 @@ struct TakesListView: View {
                     }
                     .listStyle(.insetGrouped)
                     .scrollContentBackground(.hidden)
+                    .scrollEdgeHaptics()
                 }
             }
             .navigationTitle(isSlate ? "Slate Takes" : "Audition Takes")

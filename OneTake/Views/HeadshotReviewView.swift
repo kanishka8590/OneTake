@@ -114,6 +114,7 @@ struct HeadshotReviewView: View {
                     }
                 }
                 .scrollDisabled(isInteractingWithCrop)
+                .scrollEdgeHaptics()
             }
             .navigationTitle("Review Headshots")
             .navigationBarTitleDisplayMode(.inline)

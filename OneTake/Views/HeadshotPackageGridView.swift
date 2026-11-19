@@ -89,6 +89,7 @@ struct HeadshotPackageGridView: View {
                     }
                 }
             }
+            .scrollEdgeHaptics()
             .navigationTitle("Headshot Package")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

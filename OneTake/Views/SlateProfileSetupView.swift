@@ -124,6 +124,7 @@ struct SlateProfileSetupView: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Slate Preview")
             .navigationBarTitleDisplayMode(.inline)

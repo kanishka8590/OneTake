@@ -307,6 +307,7 @@ struct PackageValidationAndExportView: View {
             }
             .padding(16)
         }
+        .scrollEdgeHaptics()
     }
 
     private func validationCard(_ title: String, detail: String, passed: Bool, action: String?, actionHandler: @escaping () -> Void) -> some View {
@@ -355,6 +356,7 @@ struct PackageValidationAndExportView: View {
             }
             .padding(16)
         }
+        .scrollEdgeHaptics()
     }
 
     private struct BundleItem: Identifiable {
@@ -535,6 +537,7 @@ struct PackageValidationAndExportView: View {
                 }
                 .padding(20)
             }
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Send it your way")
             .navigationBarTitleDisplayMode(.inline)

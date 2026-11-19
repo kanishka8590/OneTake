@@ -469,4 +469,35 @@ final class AppStateAndSettingsTests: XCTestCase {
         Haptics.setMicCaptureActive(false, source: "cue")
         XCTAssertFalse(Haptics.isMicCaptureActive)
     }
+
+    func testScrollEdgeTrackerFiresOncePerBoundaryAndOverscroll() {
+        var tracker = ScrollEdgeTracker()
+        let t0 = Date(timeIntervalSince1970: 1_000)
+
+        // Initial idle layout at top never triggers.
+        XCTAssertFalse(tracker.update(offsetY: 0, topEdge: 0, bottomEdge: 400, isActiveScroll: false, now: t0))
+
+        // Scroll down past top rearm distance, then reach bottom -> fires once.
+        XCTAssertFalse(tracker.update(offsetY: 120, topEdge: 0, bottomEdge: 400, isActiveScroll: true, now: t0.addingTimeInterval(0.3)))
+        XCTAssertTrue(tracker.update(offsetY: 400, topEdge: 0, bottomEdge: 400, isActiveScroll: true, now: t0.addingTimeInterval(0.6)))
+        // Continuing past bottom immediately (fling bounce) stays latched.
+        XCTAssertFalse(tracker.update(offsetY: 416, topEdge: 0, bottomEdge: 400, isActiveScroll: true, now: t0.addingTimeInterval(0.9)))
+
+        // Scroll back up into middle, then hit top -> fires once.
+        XCTAssertFalse(tracker.update(offsetY: 200, topEdge: 0, bottomEdge: 400, isActiveScroll: true, now: t0.addingTimeInterval(1.2)))
+        XCTAssertTrue(tracker.update(offsetY: 0, topEdge: 0, bottomEdge: 400, isActiveScroll: true, now: t0.addingTimeInterval(1.5)))
+        XCTAssertFalse(tracker.update(offsetY: -14, topEdge: 0, bottomEdge: 400, isActiveScroll: true, now: t0.addingTimeInterval(1.8)))
+
+        // Settle to idle, then pull down from rest at top -> rubber-band overscroll fires once.
+        XCTAssertFalse(tracker.update(offsetY: 0, topEdge: 0, bottomEdge: 400, isActiveScroll: false, now: t0.addingTimeInterval(2.1)))
+        XCTAssertTrue(tracker.update(offsetY: -12, topEdge: 0, bottomEdge: 400, isActiveScroll: true, now: t0.addingTimeInterval(2.4)))
+        XCTAssertFalse(tracker.update(offsetY: -20, topEdge: 0, bottomEdge: 400, isActiveScroll: true, now: t0.addingTimeInterval(2.7)))
+
+        // Non-scrollable short screen fires only when pulled past top/bottom overscroll threshold.
+        var shortTracker = ScrollEdgeTracker()
+        XCTAssertFalse(shortTracker.update(offsetY: 0, topEdge: 0, bottomEdge: 0, isActiveScroll: false, now: t0))
+        XCTAssertFalse(shortTracker.update(offsetY: -4, topEdge: 0, bottomEdge: 0, isActiveScroll: true, now: t0.addingTimeInterval(0.3)))
+        XCTAssertTrue(shortTracker.update(offsetY: -12, topEdge: 0, bottomEdge: 0, isActiveScroll: true, now: t0.addingTimeInterval(0.6)))
+        XCTAssertFalse(shortTracker.update(offsetY: -12, topEdge: 0, bottomEdge: 0, isActiveScroll: true, now: t0.addingTimeInterval(0.9)))
+    }
 }

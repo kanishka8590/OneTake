@@ -75,7 +75,7 @@ struct ProfileView: View {
                     } header: {
                         Text("Profile & settings")
                     } footer: {
-                        Text("Selective cues captures, framing lock, and exports. Rich adds subtle feedback to tabs and controls.")
+                        Text("Selective cues captures, framing lock, and exports. Rich adds subtle feedback to screen edges and controls.")
                     }
 
                     // Demo Mode
@@ -172,6 +172,7 @@ struct ProfileView: View {
                 .listStyle(.insetGrouped)
                 .listSectionSpacing(.compact)
                 .scrollContentBackground(.hidden)
+                .scrollEdgeHaptics()
                 .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.large)
@@ -366,6 +367,7 @@ struct EditProfileSheet: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Edit Profile")
             .navigationBarTitleDisplayMode(.inline)

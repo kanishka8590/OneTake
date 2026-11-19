@@ -61,6 +61,7 @@ struct AuditionModeAndCuesView: View {
                     .padding(.horizontal, Theme.Layout.screenHPadding)
                     .padding(.bottom, 24)
                 }
+                .scrollEdgeHaptics()
             }
             .navigationTitle(hasScript ? "Add Cue Lines" : "Audition Take")
             .navigationBarTitleDisplayMode(.inline)

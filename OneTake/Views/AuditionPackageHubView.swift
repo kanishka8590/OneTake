@@ -148,6 +148,7 @@ struct AuditionPackageHubView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 16)
             }
+            .scrollEdgeHaptics()
 
             // Transient confirmation banner overlay
             if let banner = bannerMessage {

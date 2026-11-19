@@ -94,6 +94,7 @@ struct PracticeHubView: View {
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .overlay {
                 if appState.practiceScripts.isEmpty {

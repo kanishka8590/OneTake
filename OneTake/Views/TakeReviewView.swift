@@ -145,6 +145,7 @@ struct TakeReviewView: View {
                     }
                     .padding(.bottom, 24)
                 }
+                .scrollEdgeHaptics()
             }
             .navigationTitle("Review Take")
             .navigationBarTitleDisplayMode(.inline)

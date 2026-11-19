@@ -877,6 +877,7 @@ struct HeadshotGuidanceView: View {
                     }
                     .padding(24)
                 }
+                .scrollEdgeHaptics()
             }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

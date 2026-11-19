@@ -70,6 +70,7 @@ struct HeadshotImportPickerView: View {
                     }
                 }
             }
+            .scrollEdgeHaptics()
             .navigationTitle("Photo Import")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

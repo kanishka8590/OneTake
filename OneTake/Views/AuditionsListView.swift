@@ -148,6 +148,7 @@ struct AuditionsListView: View {
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .overlay {
                 if isParsingCall {
