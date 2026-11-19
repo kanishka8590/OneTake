@@ -19,9 +19,9 @@ nonisolated struct GroundedCastingExtraction: Sendable {
 #endif
 
 /// On-device neural notice refinement adapted from `OneTake-iOS-main`'s `OnDeviceIntelligence`.
-/// Priority order (Option A Hybrid):
-/// 1. Tier 1: Core ML Seq2Seq / ANE parser (`CoreMLParserRunner`) when weights are bundled.
-/// 2. Tier 2: Apple Intelligence `FoundationModels` (`@Generable`) on iOS 26+ if any core field remains missing.
+/// Priority order:
+/// 1. Tier 1: Apple Intelligence `FoundationModels` (`@Generable`) on supported iOS 26+ devices (`SystemLanguageModel.default.isAvailable`).
+/// 2. Tier 2: Bundled Core ML Seq2Seq parser (`CoreMLParserRunner`) as fallback on unsupported devices or if any core field remains missing.
 /// Every neural field is source-grounded against the OCR/notice text and only fills gaps
 /// left open by prior tiers.
 nonisolated enum OnDeviceIntelligence {
@@ -40,25 +40,19 @@ nonisolated enum OnDeviceIntelligence {
         var updated = parsed
         let snippet = String(trimmed.prefix(2800))
 
-        // Tier 1: Core ML Parser Runner (100% offline, iOS 18+ all devices >= 2.5 GB RAM)
-        if await CoreMLParserRunner.shared.isAvailable {
-            defer { Task { await CoreMLParserRunner.shared.unloadModel() } }
-            let system = """
-            You are OneTake's audition notice parser.
-            Extract the casting details from the provided text into JSON:
-            {"project": "Title", "role": "Target Character", "role_description": null, "due_date": null, "submission_email": null}
-            Output valid JSON only.
-            """
-            if let rawOutput = await CoreMLParserRunner.shared.generate(systemPrompt: system, userPrompt: snippet),
-               let tier1Fields = parseModelOutput(rawOutput, sourceText: trimmed) {
-                updated = apply(tier1Fields, to: updated, sourceText: trimmed)
-            }
+        // Tier 1: Apple Intelligence FoundationModels (@Generable) on supported iOS 26+ devices
+        if let tier1Fields = await extractWithFoundationModels(from: snippet, fullSourceText: trimmed) {
+            updated = apply(tier1Fields, to: updated, sourceText: trimmed)
         }
 
-        // Tier 2: Apple Intelligence FoundationModels (@Generable) semantic rescue for any remaining gaps
+        // Tier 2: Bundled Core ML Seq2Seq parser fallback (unsupported devices or remaining gaps)
         if hasMissingCoreFields(updated),
-           let tier2Fields = await extractWithFoundationModels(from: snippet, fullSourceText: trimmed) {
-            updated = apply(tier2Fields, to: updated, sourceText: trimmed)
+           await CoreMLParserRunner.shared.isAvailable {
+            defer { Task { await CoreMLParserRunner.shared.unloadModel() } }
+            if let rawOutput = await CoreMLParserRunner.shared.generate(userPrompt: snippet),
+               let tier2Fields = parseModelOutput(rawOutput, sourceText: trimmed) {
+                updated = apply(tier2Fields, to: updated, sourceText: trimmed)
+            }
         }
 
         return updated

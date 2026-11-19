@@ -169,20 +169,9 @@ struct AuditionPackageHubView: View {
                 .zIndex(99)
             }
         }
-        .navigationBarBackButtonHidden(true)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Theme.Colors.textPrimary)
-                }
-                .accessibilityLabel("Close")
-            }
-
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button {
