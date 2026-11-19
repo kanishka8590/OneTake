@@ -806,8 +806,8 @@ final class AppSettings {
         self.notifyAuditions = Self.readValue("notifyAuditions", from: defaults, prefix: p, fallback: true)
         self.notifySubmissions = Self.readValue("notifySubmissions", from: defaults, prefix: p, fallback: true)
         self.notifyPractice = Self.readValue("notifyPractice", from: defaults, prefix: p, fallback: true)
-        self.framingTipsOutLoud = Self.readValue("framingTipsOutLoud", from: defaults, prefix: p, fallback: true)
-        self.countdownOutLoud = Self.readValue("countdownOutLoud", from: defaults, prefix: p, fallback: true)
+        self.framingTipsOutLoud = Self.readValue("framingTipsOutLoud", from: defaults, prefix: p, fallback: false)
+        self.countdownOutLoud = Self.readValue("countdownOutLoud", from: defaults, prefix: p, fallback: false)
     }
 
     func resetToDefaults() {
@@ -825,8 +825,8 @@ final class AppSettings {
         notifyAuditions = true
         notifySubmissions = true
         notifyPractice = true
-        framingTipsOutLoud = true
-        countdownOutLoud = true
+        framingTipsOutLoud = false
+        countdownOutLoud = false
 
         for name in Self.settingKeys {
             defaults.removeObject(forKey: key(name))

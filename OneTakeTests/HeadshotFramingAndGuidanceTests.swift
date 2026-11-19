@@ -343,4 +343,19 @@ final class HeadshotFramingAndGuidanceTests: XCTestCase {
         service.handleRecognizedTranscript("shoot", isFinal: false)
         XCTAssertTrue(didTrigger, "Headshot voice trigger 'shoot' must fire capture callback immediately")
     }
+
+    @MainActor
+    func testVoiceGuidanceDefaultsDisabledAndStartSessionDoesNotAutoEnableVoice() {
+        let service = HeadshotGuidanceService.shared
+        defer {
+            service.voiceGuidanceEnabled = false
+            service.stopSession()
+        }
+
+        XCTAssertFalse(service.voiceGuidanceEnabled)
+        service.startSession(for: .front, isDemoMode: true)
+        XCTAssertFalse(service.voiceGuidanceEnabled)
+        XCTAssertFalse(service.isVoiceListening)
+        XCTAssertEqual(service.voiceStatus, .idle)
+    }
 }

@@ -492,6 +492,7 @@ final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
             completion()
             return
         }
+        routeToSpeakerIfNoExternalOutput(AVAudioSession.sharedInstance())
         isCuePlaying = true
         pendingPlaybackCompletion = completion
         let utterance = AVSpeechUtterance(string: trimmed)

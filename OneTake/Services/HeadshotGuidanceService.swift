@@ -312,7 +312,16 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     var feedback: GuidanceFeedback = GuidanceFeedback()
     var isCapturing: Bool = false
     var countdownRemaining: Int = 0
-    var voiceGuidanceEnabled: Bool = true
+    var voiceGuidanceEnabled: Bool = false {
+        didSet {
+            if !voiceGuidanceEnabled {
+                poseAnnouncementToken = nil
+                if speechSynthesizer.isSpeaking {
+                    speechSynthesizer.stopSpeaking(at: .immediate)
+                }
+            }
+        }
+    }
     var gesturesEnabled: Bool = true {
         didSet {
             stateBox.wantsHandGesture = gesturesEnabled
@@ -722,7 +731,6 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     }
 
     func startSession(for angle: HeadshotAngle, isDemoMode: Bool = false) {
-        let needsInitialVoiceSetup = !isSessionRunning
         self.targetAngle = angle
         self.isDemoMode = isDemoMode
         self.stateBox.targetAngle = angle
@@ -762,14 +770,8 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
             feedback.isAngleCorrect = false
             cameraErrorMessage = "Live camera is unavailable in the iOS Simulator. Enable Demo Mode in Profile or test on a physical device."
         }
-        if needsInitialVoiceSetup, isVoiceAuthorizedInSystem {
-            setupVoiceTriggerIfAuthorized()
-        }
         #else
         prepareCameraSession()
-        if needsInitialVoiceSetup, isVoiceAuthorizedInSystem {
-            setupVoiceTriggerIfAuthorized()
-        }
         #endif
     }
 
@@ -788,6 +790,9 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
         stopVoiceTrigger()
         poseAnnouncementToken = nil
+        if speechSynthesizer.isSpeaking {
+            speechSynthesizer.stopSpeaking(at: .immediate)
+        }
         countdownTask?.cancel()
         countdownTask = nil
         shutterStatusClearTask?.cancel()
@@ -1275,11 +1280,6 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         VoiceAudioSessionCoordinator.shared.activate()
     }
 
-    private func setupVoiceTriggerIfAuthorized() {
-        guard isVoiceAuthorizedInSystem else { return }
-        enableVoiceTriggers()
-    }
-
     private func startVoiceListening(audioAlreadyActivated: Bool = false) {
         guard isSessionRunning, isVoiceAuthorizedInSystem else { voiceStatus = .failed; return }
         if isVoiceListening, recognitionTask != nil { return }
@@ -1500,7 +1500,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     }
 
     private func announceAngle(_ angle: HeadshotAngle, notBefore: Date) {
-        guard !isCapturing else { return }
+        guard voiceGuidanceEnabled, !isCapturing else { return }
         let prompt: String
         switch angle {
         case .front: prompt = "Front headshot. Look straight at the camera."

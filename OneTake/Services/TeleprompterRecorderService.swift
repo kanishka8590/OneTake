@@ -236,8 +236,20 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     var currentZoomFactor: CGFloat = 1.0
     var qualityMetrics: PreTakeQualityMetrics = PreTakeQualityMetrics()
     var recordingDurationSeconds: Double = 0.0
-    var voiceGuidanceEnabled: Bool = true
-    var countdownOutLoud: Bool = true
+    var voiceGuidanceEnabled: Bool = false {
+        didSet {
+            if !voiceGuidanceEnabled && speechSynthesizer.isSpeaking {
+                speechSynthesizer.stopSpeaking(at: .immediate)
+            }
+        }
+    }
+    var countdownOutLoud: Bool = false {
+        didSet {
+            if !countdownOutLoud && speechSynthesizer.isSpeaking {
+                speechSynthesizer.stopSpeaking(at: .immediate)
+            }
+        }
+    }
     var voiceCommandsEnabled: Bool = true
     var gesturesEnabled: Bool = true {
         didSet {
@@ -426,6 +438,9 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         cancelCountdown()
         stopVoiceCommands()
         stopRecordingTimer()
+        if speechSynthesizer.isSpeaking {
+            speechSynthesizer.stopSpeaking(at: .immediate)
+        }
         simulatorRecordTask?.cancel()
         simulatorRecordTask = nil
 
@@ -1251,6 +1266,7 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     }
 
     func triggerFramingFeedbackVoice() {
+        guard !isRecording else { return }
         var adjustments: [String] = []
 
         if !qualityMetrics.isAlignmentPassed {
@@ -1306,6 +1322,9 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
         countdownToken = nil
         setCountingDownState(false)
         countdownRemaining = 0
+        if speechSynthesizer.isSpeaking {
+            speechSynthesizer.stopSpeaking(at: .immediate)
+        }
     }
 
     private func speakCountdownStep(seconds: Int, token: UUID) {
@@ -1314,8 +1333,9 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
             countdownToken = nil
             setCountingDownState(false)
             countdownRemaining = 0
-            if countdownOutLoud {
-                speak("Action!", forceSpeak: true)
+            // Never speak "Action!" into the live microphone at recording start.
+            if speechSynthesizer.isSpeaking {
+                speechSynthesizer.stopSpeaking(at: .immediate)
             }
             beginRecordingNow()
             return
@@ -1333,7 +1353,7 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     }
 
     private func speak(_ text: String, forceSpeak: Bool = false) {
-        guard forceSpeak || voiceGuidanceEnabled else { return }
+        guard !isRecording, forceSpeak || voiceGuidanceEnabled else { return }
         if speechSynthesizer.isSpeaking {
             speechSynthesizer.stopSpeaking(at: .immediate)
         }
@@ -1346,6 +1366,9 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     private var isUsingSimulatedRecording = false
 
     private func beginRecordingNow() {
+        if speechSynthesizer.isSpeaking {
+            speechSynthesizer.stopSpeaking(at: .immediate)
+        }
         #if targetEnvironment(simulator)
         let shouldSimulate = true
         #else

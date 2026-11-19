@@ -98,6 +98,8 @@ final class AppStateAndSettingsTests: XCTestCase {
         reloaded.resetToDefaults()
         XCTAssertEqual(reloaded.countdownSeconds, 3)
         XCTAssertTrue(reloaded.mirrorFrontCamera)
+        XCTAssertFalse(reloaded.framingTipsOutLoud)
+        XCTAssertFalse(reloaded.countdownOutLoud)
         XCTAssertEqual(reloaded.cueTriggerMode, .afterMyLine)
         XCTAssertEqual(reloaded.videoQuality, .p1080)
         XCTAssertTrue(reloaded.notifyAuditions)

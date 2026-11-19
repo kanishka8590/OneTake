@@ -80,6 +80,10 @@ struct HeadshotGuidanceView: View {
         .onAppear {
             previousShutterCallback = guidanceService.onShutterTriggered
             bindShutterCallback()
+            if showVoiceGuideIntro {
+                guidanceService.voiceGuidanceEnabled = false
+                guidanceService.disableVoiceTriggers()
+            }
             if let target = retakeAngle, let idx = sequence.firstIndex(of: target) {
                 currentStepIndex = idx
             }
@@ -738,18 +742,11 @@ struct HeadshotGuidanceView: View {
                         desc: "Take photo after 3s countdown",
                         icon: "camera"
                     )
-
-                    Divider().overlay(Color.white.opacity(0.12))
-
-                    headshotVoiceRow(
-                        phrase: "\"How do I look?\"",
-                        desc: "Hear live framing & lighting check",
-                        icon: "sparkles"
-                    )
                 }
 
                 VStack(spacing: 10) {
                     Button {
+                        guidanceService.voiceGuidanceEnabled = true
                         guidanceService.enableVoiceTriggers()
                         withAnimation(.easeInOut(duration: 0.22)) {
                             showVoiceGuideIntro = false
@@ -764,10 +761,11 @@ struct HeadshotGuidanceView: View {
                     .nativeProminentGlassButton(tint: Theme.Colors.primaryPlum)
 
                     Button {
+                        guidanceService.voiceGuidanceEnabled = false
+                        guidanceService.disableVoiceTriggers()
                         withAnimation(.easeInOut(duration: 0.22)) {
                             showVoiceGuideIntro = false
                         }
-                        guidanceService.announceAngle(currentAngle)
                     } label: {
                         Text("Not Now")
                             .font(.system(size: 14, weight: .medium))
