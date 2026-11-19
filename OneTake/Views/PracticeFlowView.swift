@@ -228,6 +228,7 @@ struct PracticeASceneSheet: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
             .navigationTitle("Add Scene")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -659,6 +660,9 @@ struct MemoriseView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .onChange(of: selectedMode) { _, _ in
+                    Haptics.selectionTick()
+                }
 
                 // Instruction & Hint Reset
                 HStack(alignment: .center, spacing: 8) {
@@ -1211,6 +1215,7 @@ struct SayItAloudView: View {
 
     private func requestNextSentence() {
         guard let range = clueTracker.requestNextSentence() else { return }
+        Haptics.selectionTick()
         hintLineID = range.lineID
         hintText = range.text
         clueTokenIDs.formUnion(range.tokenIDs)
@@ -1218,11 +1223,13 @@ struct SayItAloudView: View {
 
     private func requestClueForToken(_ tokenID: Int) {
         guard let range = clueTracker.requestClue(containingTokenID: tokenID) else { return }
+        Haptics.selectionTick()
         clueTokenIDs.formUnion(range.tokenIDs)
     }
 
     private func stopAndReview() {
         recorder.stop()
+        Haptics.success()
         discardedAudioURL = recorder.recordedAudioURL
         reviewSession = PracticeSpeechDeliveryAnalyzer.makeSession(
             script: script,
@@ -1708,8 +1715,12 @@ struct PracticeHistoryView: View {
                             }
                         }
                     }
+                    .listStyle(.insetGrouped)
+                    .scrollContentBackground(.hidden)
+                    .background(Theme.Colors.canvasBackground.ignoresSafeArea())
                 }
             }
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Practice History")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

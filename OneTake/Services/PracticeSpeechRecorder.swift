@@ -105,7 +105,11 @@ private nonisolated final class PracticeAudioTapState: @unchecked Sendable {
 final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
     typealias AccessRequester = (@escaping (Bool) -> Void) -> Void
 
-    var isRecording = false
+    var isRecording = false {
+        didSet {
+            Haptics.setMicCaptureActive(isRecording, source: "practice")
+        }
+    }
     var transcript = ""
     var recognizedWords: [RecognizedPracticeWord] = []
     var audioLevel: CGFloat = 0.12

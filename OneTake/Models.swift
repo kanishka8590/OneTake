@@ -123,6 +123,12 @@ nonisolated enum VideoQuality: String, Codable, Hashable, CaseIterable, Sendable
     case p1080 = "1080p"
 }
 
+nonisolated enum HapticFeedbackLevel: String, Codable, Hashable, CaseIterable, Sendable {
+    case selective = "Selective"
+    case rich = "Rich"
+    case off = "Off"
+}
+
 // MARK: - Codable Structs
 
 nonisolated struct SubmissionRequirement: Codable, Sendable, Hashable, Identifiable {
@@ -770,7 +776,8 @@ final class AppSettings {
         "notifySubmissions",
         "notifyPractice",
         "framingTipsOutLoud",
-        "countdownOutLoud"
+        "countdownOutLoud",
+        "hapticFeedbackLevelRaw"
     ]
 
     // MARK: Private Helpers
@@ -808,6 +815,10 @@ final class AppSettings {
         self.notifyPractice = Self.readValue("notifyPractice", from: defaults, prefix: p, fallback: true)
         self.framingTipsOutLoud = Self.readValue("framingTipsOutLoud", from: defaults, prefix: p, fallback: false)
         self.countdownOutLoud = Self.readValue("countdownOutLoud", from: defaults, prefix: p, fallback: false)
+        self.hapticFeedbackLevelRaw = Self.readValue("hapticFeedbackLevelRaw", from: defaults, prefix: p, fallback: HapticFeedbackLevel.selective.rawValue)
+        if defaults === UserDefaults.standard {
+            Haptics.setLevel(HapticFeedbackLevel(rawValue: hapticFeedbackLevelRaw) ?? .selective)
+        }
     }
 
     func resetToDefaults() {
@@ -827,6 +838,7 @@ final class AppSettings {
         notifyPractice = true
         framingTipsOutLoud = false
         countdownOutLoud = false
+        hapticFeedbackLevelRaw = HapticFeedbackLevel.selective.rawValue
 
         for name in Self.settingKeys {
             defaults.removeObject(forKey: key(name))
@@ -922,5 +934,21 @@ final class AppSettings {
 
     var countdownOutLoud: Bool {
         didSet { setValue("countdownOutLoud", value: countdownOutLoud) }
+    }
+
+    // MARK: Feedback & Haptics
+
+    var hapticFeedbackLevelRaw: String {
+        didSet {
+            setValue("hapticFeedbackLevelRaw", value: hapticFeedbackLevelRaw)
+            if defaults === UserDefaults.standard {
+                Haptics.setLevel(hapticFeedbackLevel)
+            }
+        }
+    }
+
+    var hapticFeedbackLevel: HapticFeedbackLevel {
+        get { HapticFeedbackLevel(rawValue: hapticFeedbackLevelRaw) ?? .selective }
+        set { hapticFeedbackLevelRaw = newValue.rawValue }
     }
 }

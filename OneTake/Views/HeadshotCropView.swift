@@ -33,6 +33,7 @@ struct HeadshotCropView: View {
                         HStack(spacing: 8) {
                             ForEach(HeadshotCropPreset.allCases, id: \.self) { preset in
                                 Button {
+                                    Haptics.selectionTick()
                                     selectedPreset = preset
                                     updateRatioForPreset(preset)
                                     generateAutoCrop()
@@ -151,6 +152,7 @@ struct HeadshotCropView: View {
                     .pickerStyle(.segmented)
                     .padding(.horizontal, 24)
                     .onChange(of: selectedRatio) { _, newRatio in
+                        Haptics.selectionTick()
                         if selectedPreset == .commercial && newRatio != .free {
                             selectedPreset = .theatrical
                         }
@@ -304,6 +306,7 @@ struct HeadshotCropView: View {
     private func applyAndConfirmCrop() {
         guard let preview = croppedPreviewImage else { return }
         if zoomScale <= 1.001 && panOffset == .zero {
+            Haptics.success()
             onCropConfirmed(preview, selectedRatio, selectedPreset)
             dismiss()
             return

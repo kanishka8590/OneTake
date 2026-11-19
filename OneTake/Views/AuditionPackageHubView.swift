@@ -214,16 +214,19 @@ struct AuditionPackageHubView: View {
             HeadshotCaptureView(audition: audition, onCompleted:  {
                 showBanner("Headshots saved successfully!")
             })
+            .presentationBackground(Theme.Colors.canvasBackground)
         }
         .sheet(isPresented: $showingSlateSetup) {
             SlateProfileSetupView(audition: audition) {
                 showBanner("Slate saved successfully!")
             }
+            .presentationBackground(Theme.Colors.canvasBackground)
         }
         .sheet(isPresented: $showingAuditionMode) {
             AuditionModeAndCuesView(audition: audition) {
                 showBanner("Audition take saved successfully!")
             }
+            .presentationBackground(Theme.Colors.canvasBackground)
         }
         .sheet(isPresented: $showingDetailsEditor) {
             AuditionDetailsEditorView(existingAudition: audition) { _ in
@@ -234,6 +237,7 @@ struct AuditionPackageHubView: View {
         }
         .sheet(isPresented: $showingPackageValidation) {
             PackageValidationAndExportView(audition: audition)
+                .presentationBackground(Theme.Colors.canvasBackground)
         }
         // Issue 8: Direct Review FullScreenCover
         .fullScreenCover(item: $activeReviewTarget, onDismiss: { cleanupPendingImportedVideoIfUnused() }) { target in
@@ -873,6 +877,11 @@ struct AuditionPackageHubView: View {
 
     private func showBanner(_ message: String, isSuccess: Bool = true) {
         bannerTask?.cancel()
+        if isSuccess {
+            Haptics.success()
+        } else {
+            Haptics.error()
+        }
         withAnimation {
             bannerMessage = message
             bannerColor = isSuccess ? Theme.Colors.successGreen : Theme.Colors.warningAmber

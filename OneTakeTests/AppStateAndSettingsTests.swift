@@ -1,6 +1,8 @@
 import AVFoundation
 import Observation
 import SwiftData
+import SwiftUI
+import UIKit
 import XCTest
 @testable import OneTake
 
@@ -408,5 +410,63 @@ final class AppStateAndSettingsTests: XCTestCase {
         let asset = AVURLAsset(url: clipURL)
         let tracks = try await asset.load(.tracks)
         XCTAssertFalse(tracks.isEmpty)
+    }
+
+    func testCanvasBackgroundIsPureBlackInDarkModeAndLightInLightMode() throws {
+        let dynamicColor = UIColor(Theme.Colors.canvasBackground)
+
+        let darkResolved = dynamicColor.resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
+        var dr: CGFloat = -1, dg: CGFloat = -1, db: CGFloat = -1, da: CGFloat = -1
+        XCTAssertTrue(darkResolved.getRed(&dr, green: &dg, blue: &db, alpha: &da))
+        XCTAssertEqual(dr, 0.0, accuracy: 0.001)
+        XCTAssertEqual(dg, 0.0, accuracy: 0.001)
+        XCTAssertEqual(db, 0.0, accuracy: 0.001)
+        XCTAssertEqual(da, 1.0, accuracy: 0.001)
+
+        let lightResolved = dynamicColor.resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
+        var lr: CGFloat = -1, lg: CGFloat = -1, lb: CGFloat = -1, la: CGFloat = -1
+        XCTAssertTrue(lightResolved.getRed(&lr, green: &lg, blue: &lb, alpha: &la))
+        XCTAssertGreaterThan(lr, 0.9)
+        XCTAssertGreaterThan(lg, 0.9)
+        XCTAssertGreaterThan(lb, 0.9)
+        XCTAssertEqual(la, 1.0, accuracy: 0.001)
+    }
+
+    func testHapticFeedbackLevelDefaultsPersistenceAndGating() {
+        let defaults = makeIsolatedDefaults()
+        let settings = AppSettings(defaults: defaults)
+        XCTAssertEqual(settings.hapticFeedbackLevel, .selective)
+
+        settings.hapticFeedbackLevel = .rich
+        let reloaded = AppSettings(defaults: defaults)
+        XCTAssertEqual(reloaded.hapticFeedbackLevel, .rich)
+
+        settings.resetToDefaults()
+        XCTAssertEqual(settings.hapticFeedbackLevel, .selective)
+
+        // Mode & mic-capture gating
+        XCTAssertTrue(Haptics.shouldPlay(.essential, level: .selective, isMicActive: false))
+        XCTAssertFalse(Haptics.shouldPlay(.tactile, level: .selective, isMicActive: false))
+        XCTAssertTrue(Haptics.shouldPlay(.essential, level: .rich, isMicActive: false))
+        XCTAssertTrue(Haptics.shouldPlay(.tactile, level: .rich, isMicActive: false))
+        XCTAssertFalse(Haptics.shouldPlay(.essential, level: .off, isMicActive: false))
+        XCTAssertFalse(Haptics.shouldPlay(.tactile, level: .off, isMicActive: false))
+
+        // Active mic capture must suppress all haptics across every level
+        XCTAssertFalse(Haptics.shouldPlay(.essential, level: .selective, isMicActive: true))
+        XCTAssertFalse(Haptics.shouldPlay(.essential, level: .rich, isMicActive: true))
+        XCTAssertFalse(Haptics.shouldPlay(.tactile, level: .rich, isMicActive: true))
+
+        Haptics.resetMicCaptureStateForTesting()
+        defer { Haptics.resetMicCaptureStateForTesting() }
+        XCTAssertFalse(Haptics.isMicCaptureActive)
+        Haptics.setMicCaptureActive(true, source: "teleprompter")
+        Haptics.setMicCaptureActive(true, source: "teleprompter")
+        Haptics.setMicCaptureActive(true, source: "cue")
+        XCTAssertTrue(Haptics.isMicCaptureActive)
+        Haptics.setMicCaptureActive(false, source: "teleprompter")
+        XCTAssertTrue(Haptics.isMicCaptureActive)
+        Haptics.setMicCaptureActive(false, source: "cue")
+        XCTAssertFalse(Haptics.isMicCaptureActive)
     }
 }

@@ -70,6 +70,24 @@ struct RecordingSettingsView: View {
                     ForEach(TeleprompterTextSize.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
             }
+
+            Section {
+                Picker("Haptic feedback", selection: Bindable(appState.settings).hapticFeedbackLevel) {
+                    ForEach(HapticFeedbackLevel.allCases, id: \.self) { level in
+                        Text(level.rawValue).tag(level)
+                    }
+                }
+                .onChange(of: appState.settings.hapticFeedbackLevel) { _, newLevel in
+                    Haptics.setLevel(newLevel)
+                    if newLevel != .off {
+                        Haptics.impact(.light, tier: .essential)
+                    }
+                }
+            } header: {
+                Text("Feedback")
+            } footer: {
+                Text("Selective cues captures, framing lock, and exports. Rich adds subtle feedback to tabs and controls. Haptics pause while recording audio.")
+            }
         }
         .navigationTitle("Recording settings")
         .toolbar(.hidden, for: .tabBar)
@@ -228,6 +246,7 @@ struct PrivacyAndDataView: View {
         }
         .sheet(isPresented: $showingPolicy) {
             PrivacyPolicyView()
+                .presentationBackground(Theme.Colors.canvasBackground)
         }
     }
 

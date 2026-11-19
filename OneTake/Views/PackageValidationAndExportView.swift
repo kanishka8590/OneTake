@@ -135,6 +135,7 @@ struct PackageValidationAndExportView: View {
                     let label = route.isSlate ? "Slate" : "Audition Clip"
                     compressionFeedbackMessage = "\(label) compressed: \(formattedSizeString(originalMB)) → \(formattedSizeString(compressedMB))"
                 }
+                .presentationBackground(Theme.Colors.canvasBackground)
             }
             .fullScreenCover(item: $reviewRoute) { route in
                 switch route {
@@ -153,6 +154,7 @@ struct PackageValidationAndExportView: View {
                 }
             }) {
                 shareChoices
+                    .presentationBackground(Theme.Colors.canvasBackground)
             }
             .fullScreenCover(isPresented: $showingCelebration) {
                 DeliveryCelebrationView(audition: audition) { dismiss() }
@@ -170,6 +172,12 @@ struct PackageValidationAndExportView: View {
             }
             .onAppear { seedNamesIfNeeded() }
             .onDisappear { cleanupTempPackageDirectory() }
+            .onChange(of: exportErrorMessage) { _, msg in
+                if msg != nil { Haptics.error() }
+            }
+            .onChange(of: shareSheetErrorMessage) { _, msg in
+                if msg != nil { Haptics.error() }
+            }
             .task(id: videoInspectionKey) {
                 await refreshVideoMetadata()
             }
@@ -953,6 +961,7 @@ struct PackageValidationAndExportView: View {
         audition.headshots[index].aspectRatio = ratio
         audition.headshots[index].cropPreset = preset
         appState.saveChanges()
+        Haptics.success()
     }
 }
 
@@ -1295,7 +1304,7 @@ private struct VideoCompressorView: View {
                 audition.auditionTakes[index].fileSizeMB = sizeMB
             }
         }
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        Haptics.success()
         onCompressed(originalSizeMB, sizeMB)
     }
 }
@@ -1466,6 +1475,9 @@ private struct DeliveryCelebrationView: View {
                 }
                 .padding(.horizontal, 24)
             }
+        }
+        .onAppear {
+            Haptics.success()
         }
     }
 

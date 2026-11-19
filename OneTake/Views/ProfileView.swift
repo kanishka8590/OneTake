@@ -173,9 +173,11 @@ struct ProfileView: View {
             }
             .sheet(isPresented: $showingEditProfile) {
                 EditProfileSheet(appState: appState, isPresented: $showingEditProfile)
+                    .presentationBackground(Theme.Colors.canvasBackground)
             }
             .sheet(isPresented: $showingSignIn) {
                 AuthView(appState: appState)
+                    .presentationBackground(Theme.Colors.canvasBackground)
             }
         }
     }
@@ -347,6 +349,8 @@ struct EditProfileSheet: View {
                     PersonalDetailsFormRows(draft: $draft, includeEmail: true)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Edit Profile")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

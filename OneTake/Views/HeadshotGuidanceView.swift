@@ -116,11 +116,19 @@ struct HeadshotGuidanceView: View {
         .sheet(isPresented: $showingMatchGuide) {
             referenceMatchGuideSheet
         }
-        .onChange(of: guidanceService.feedback.allChecksPassed) { _, isAligned in
+        .onChange(of: guidanceService.feedback.allChecksPassed) { wasAligned, isAligned in
+            if !wasAligned && isAligned && !showVoiceGuideIntro && !showingReviewSheet && !guidanceService.isCapturing {
+                Haptics.alignmentReady()
+            }
             if !isAligned {
                 guidanceService.cancelCountdownIfAlignmentLost()
             }
             updateAutoCaptureSchedule()
+        }
+        .onChange(of: guidanceService.countdownRemaining) { _, remaining in
+            if guidanceService.isCapturing && remaining > 0 {
+                Haptics.countdownTick()
+            }
         }
         .onChange(of: guidanceService.autoCaptureEnabled) { _, _ in
             updateAutoCaptureSchedule()
@@ -155,7 +163,7 @@ struct HeadshotGuidanceView: View {
                       !showingReviewSheet,
                       Date().timeIntervalSince(lastGestureTriggerAt) > 2.0 else { return }
                 lastGestureTriggerAt = Date()
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                Haptics.capture()
                 triggerBatchCapture(requireAlignment: false)
             }
         }
@@ -231,7 +239,7 @@ struct HeadshotGuidanceView: View {
                 }
                 autoHoldProgress = 0.0
                 autoCaptureHoldTask = nil
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                Haptics.capture()
                 triggerBatchCapture(requireAlignment: true, countdownSeconds: 1)
             }
         } else if autoCaptureHoldTask != nil && autoCaptureCancelTask == nil {
@@ -619,6 +627,7 @@ struct HeadshotGuidanceView: View {
                 Spacer()
 
                 Button {
+                    Haptics.capture()
                     triggerBatchCapture(requireAlignment: false)
                 } label: {
                     ZStack {
@@ -916,6 +925,7 @@ struct HeadshotGuidanceView: View {
             }
 
             if retakeAngle != nil {
+                Haptics.success()
                 guidanceService.stopSession()
                 onRetakeComplete?(image)
                 dismiss()
@@ -924,9 +934,11 @@ struct HeadshotGuidanceView: View {
 
             // Continuous batch: advance Front -> Left -> Right without re-showing intro guide
             if currentStepIndex < sequence.count - 1 {
+                Haptics.capture()
                 currentStepIndex += 1
                 guidanceService.transitionToNextPose(currentAngle, isDemoMode: appState.isDemoMode)
             } else {
+                Haptics.success()
                 guidanceService.stopSession()
                 self.showingReviewSheet = true
             }

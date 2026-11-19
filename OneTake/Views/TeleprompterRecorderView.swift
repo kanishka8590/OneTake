@@ -259,6 +259,11 @@ struct TeleprompterRecorderView: View {
                     cueEngine.stopListening()
                 }
             }
+            .onChange(of: recorderService.countdownRemaining) { _, remaining in
+                if recorderService.isCountingDown && remaining > 0 {
+                    Haptics.countdownTick()
+                }
+            }
             .onChange(of: recorderService.openPalmDetected) { _, detected in
                 gestureHoldTask?.cancel()
                 gestureHoldTask = nil
@@ -277,10 +282,10 @@ struct TeleprompterRecorderView: View {
                           takeReviewRoute == nil,
                           Date().timeIntervalSince(lastGestureTriggerAt) > 2.0 else { return }
                     lastGestureTriggerAt = Date()
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     if recorderService.isRecording {
                         stopRecordingAndReview()
                     } else {
+                        Haptics.capture()
                         startCountdownAndRecord()
                     }
                 }
@@ -300,6 +305,7 @@ struct TeleprompterRecorderView: View {
                     usedFrontCamera: route.usedFrontCamera,
                     autoTrimSilence: appState.settings.autoTrimSilence
                 ) { approvedTake in
+                    Haptics.success()
                     didSaveApprovedTake = true
                     takeReviewRoute = nil
                     onTakeSaved(approvedTake)
@@ -678,6 +684,7 @@ struct TeleprompterRecorderView: View {
                     if recorderService.isRecording {
                         stopRecordingAndReview()
                     } else if !recorderService.isCountingDown {
+                        Haptics.capture()
                         startCountdownAndRecord()
                     }
                 } label: {
@@ -741,6 +748,7 @@ struct TeleprompterRecorderView: View {
         stopPrompterScroll()
         cueEngine.stopListening()
         recorderService.stopRecording()
+        Haptics.capture()
     }
 
     private func startPrompterScroll() {

@@ -121,6 +121,9 @@ struct MainTabView: View {
         }
         .environment(\.symbolVariants, .none)
         .tint(Theme.Colors.accent)
+        .onChange(of: appState.selectedTab) { _, _ in
+            Haptics.selectionTick()
+        }
     }
 }
 

@@ -1488,6 +1488,7 @@ final class TeleprompterRecorderService: NSObject, TeleprompterRecorderServicePr
     private func setRecordingState(_ recording: Bool) {
         isRecording = recording
         stateBox.isRecording = recording
+        Haptics.setMicCaptureActive(recording, source: "teleprompter")
     }
 
     private func setCountingDownState(_ countingDown: Bool) {

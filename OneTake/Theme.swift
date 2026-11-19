@@ -21,7 +21,7 @@ enum Theme {
         static let onAction = Color.white
         static let lavenderSurface = adaptive(light: UIColor(red: 237 / 255, green: 232 / 255, blue: 245 / 255, alpha: 1), dark: UIColor(red: 54 / 255, green: 43 / 255, blue: 67 / 255, alpha: 1))
         static let lavenderTint = adaptive(light: UIColor(red: 245 / 255, green: 242 / 255, blue: 250 / 255, alpha: 1), dark: UIColor(red: 38 / 255, green: 31 / 255, blue: 48 / 255, alpha: 1))
-        static let canvasBackground = adaptive(light: UIColor(red: 247 / 255, green: 246 / 255, blue: 249 / 255, alpha: 1), dark: UIColor(red: 18 / 255, green: 16 / 255, blue: 22 / 255, alpha: 1))
+        static let canvasBackground = adaptive(light: UIColor(red: 247 / 255, green: 246 / 255, blue: 249 / 255, alpha: 1), dark: UIColor.black)
         static let cardSurface = adaptive(light: .white, dark: UIColor(red: 31 / 255, green: 28 / 255, blue: 36 / 255, alpha: 1))
         /// General-purpose adaptive surfaces for sheets, form controls, and
         /// elevated content. These deliberately never resolve to white in dark mode.

@@ -1054,6 +1054,8 @@ struct AuditionDetailsEditorView: View {
                     TextField("Enter project title", text: $draftProjectName)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Project Name")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1083,6 +1085,8 @@ struct AuditionDetailsEditorView: View {
                         .lineLimit(3...6)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Role Details")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1184,6 +1188,8 @@ struct AuditionDetailsEditorView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Deadline & Reminder")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1220,6 +1226,8 @@ struct AuditionDetailsEditorView: View {
                         .autocorrectionDisabled()
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Recipient Email")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1370,6 +1378,8 @@ struct AuditionDetailsEditorView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Edit Requirements")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1420,6 +1430,8 @@ struct AuditionDetailsEditorView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Attach Sides")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

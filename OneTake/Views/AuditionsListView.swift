@@ -160,6 +160,9 @@ struct AuditionsListView: View {
             }
             .navigationTitle("Auditions")
             .navigationBarTitleDisplayMode(.large)
+            .onChange(of: selectedFilter) { _, _ in
+                Haptics.selectionTick()
+            }
             .toolbar {
                 if #available(iOS 26.0, *) {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -182,7 +185,7 @@ struct AuditionsListView: View {
                     .presentationDetents([.height(225)])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(28)
-                    .presentationBackground(Theme.Colors.surface)
+                    .presentationBackground(Theme.Colors.canvasBackground)
             }
             // Multi-Photo Picker
             .photosPicker(
@@ -509,6 +512,7 @@ struct AuditionsListView: View {
     }
 
     private func presentImportError(_ message: String) {
+        Haptics.error()
         importErrorMessage = message
         showingImportError = true
     }
@@ -570,7 +574,11 @@ struct AuditionsListView: View {
     @MainActor
     private func finishParsing(with parsed: ParsedCastingCall?) {
         isParsingCall = false
-        guard let parsed else { return }
+        guard let parsed else {
+            Haptics.warning()
+            return
+        }
+        Haptics.success()
         editorPresentation = AuditionEditorPresentation(parsedCall: parsed)
     }
 
