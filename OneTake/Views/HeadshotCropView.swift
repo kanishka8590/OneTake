@@ -212,12 +212,15 @@ struct HeadshotCropView: View {
                         }
                     }
 
-                    Spacer()
-
-                    // Confirm Crop
-                    Button {
-                        applyAndConfirmCrop()
-                    } label: {
+                    Spacer(minLength: 8)
+                }
+            }
+            .floatingBottomActionBar(horizontalPadding: 24) {
+                let disabled = croppedPreviewImage == nil || isProcessingCrop || isApplyingCrop
+                Button {
+                    applyAndConfirmCrop()
+                } label: {
+                    Group {
                         if isApplyingCrop {
                             ProgressView()
                                 .tint(.white)
@@ -225,11 +228,10 @@ struct HeadshotCropView: View {
                             Text("Apply Crop")
                         }
                     }
-                    .primaryCapsuleButton()
-                    .disabled(croppedPreviewImage == nil || isProcessingCrop || isApplyingCrop)
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 24)
+                    .primaryCapsuleButton(disabled: disabled)
                 }
+                .buttonStyle(.plain)
+                .disabled(disabled)
             }
             .navigationTitle(Self.navigationTitle(for: angle))
             .navigationBarTitleDisplayMode(.inline)

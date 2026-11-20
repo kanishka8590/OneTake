@@ -96,20 +96,25 @@ struct HeadshotPackageGridView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }
-
-                ToolbarItem(placement: .confirmationAction) {
-                    if isSaving {
-                        ProgressView()
-                    } else {
-                        Button("Save") {
-                            savePackageToAudition()
+            }
+            .floatingBottomActionBar {
+                let disabled = isSaving || frontCropped == nil || leftCropped == nil || rightCropped == nil
+                Button {
+                    savePackageToAudition()
+                } label: {
+                    Group {
+                        if isSaving {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Text("Save")
                         }
-                        .font(Theme.Typography.cardTitle)
-                        .foregroundStyle(Theme.Colors.accent)
-                        .disabled(frontCropped == nil || leftCropped == nil || rightCropped == nil)
-                        .accessibilityLabel("Save Headshots to Audition")
                     }
+                    .primaryCapsuleButton(disabled: disabled)
                 }
+                .buttonStyle(.plain)
+                .disabled(disabled)
+                .accessibilityLabel("Save Headshots to Audition")
             }
             .alert("Unable to Save Headshots", isPresented: $showingErrorAlert) {
                 Button("OK", role: .cancel) {}

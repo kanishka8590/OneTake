@@ -706,4 +706,159 @@ final class PhysicalDeviceAuditTests: XCTestCase {
         ===END_AUDIT_PARSE[\(label)]===
         """)
     }
+
+    func test05_ShowcaseAllFloatingBottomBars3SecondsEach() async throws {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first else {
+            throw XCTSkip("No active UIWindowScene on device")
+        }
+
+        let (state, container) = try makeInMemoryState(withSampleData: true)
+        let folder = "Showcase_\(UUID().uuidString)"
+        let dir = MediaStorage.documentsDirectory.appendingPathComponent(folder, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+
+        let frontImg = DemoMediaGenerator.renderHeadshotImage(angle: "Front")
+        let leftImg = DemoMediaGenerator.renderHeadshotImage(angle: "Left")
+        let rightImg = DemoMediaGenerator.renderHeadshotImage(angle: "Right")
+        if let fData = frontImg.jpegData(compressionQuality: 0.85) { try fData.write(to: dir.appendingPathComponent("front.jpg")) }
+        if let lData = leftImg.jpegData(compressionQuality: 0.85) { try lData.write(to: dir.appendingPathComponent("left.jpg")) }
+        if let rData = rightImg.jpegData(compressionQuality: 0.85) { try rData.write(to: dir.appendingPathComponent("right.jpg")) }
+
+        let slateURL = dir.appendingPathComponent("slate.mp4")
+        let clipURL = dir.appendingPathComponent("clip.mp4")
+        _ = await DemoMediaGenerator.writeQuickSimulatedClip(to: slateURL, title: "Slate Take", subtitle: "Showcase", durationSeconds: 2.0)
+        _ = await DemoMediaGenerator.writeQuickSimulatedClip(to: clipURL, title: "Audition Take", subtitle: "Showcase", durationSeconds: 2.0)
+
+        let completeAudition = Audition(
+            projectName: "Monsoon Hearts",
+            productionType: ProductionType.featureFilm.rawValue,
+            roleName: "Meera",
+            roleDescription: "Lead opposite Arjun.",
+            deadline: Calendar.current.date(byAdding: .day, value: 4, to: Date()) ?? Date(),
+            recipientEmail: "casting@monsoon.in",
+            requirements: [
+                SubmissionRequirement(title: "3 Headshots (4:5)", isCompleted: true),
+                SubmissionRequirement(title: "Intro Slate (15s max)", isCompleted: true),
+                SubmissionRequirement(title: "Audition Self-Tape Take", isCompleted: true)
+            ],
+            scriptText: """
+            MEERA
+            You promised we'd leave before the first train.
+
+            ARJUN
+            The tracks were flooded till midnight.
+
+            MEERA
+            Then we walk.
+            """,
+            headshots: [
+                HeadshotAsset(angle: .front, originalFilePath: "\(folder)/front.jpg", croppedFilePath: "\(folder)/front.jpg", aspectRatio: .ratio4x5, cropPreset: .theatrical),
+                HeadshotAsset(angle: .left, originalFilePath: "\(folder)/left.jpg", croppedFilePath: "\(folder)/left.jpg", aspectRatio: .ratio4x5, cropPreset: .theatrical),
+                HeadshotAsset(angle: .right, originalFilePath: "\(folder)/right.jpg", croppedFilePath: "\(folder)/right.jpg", aspectRatio: .ratio4x5, cropPreset: .theatrical)
+            ],
+            slateTakes: [VideoTake(title: "Slate 1", filePath: "\(folder)/slate.mp4", durationSeconds: 11.2, fileSizeMB: 1.8)],
+            auditionTakes: [VideoTake(title: "Clip 1", filePath: "\(folder)/clip.mp4", durationSeconds: 42.0, fileSizeMB: 3.4)]
+        )
+        container.mainContext.insert(completeAudition)
+
+        let script = state.practiceScripts.first ?? MockData.noahAndAllie
+        let reviewSession = PracticeSpeechDeliveryAnalyzer.makeSession(
+            script: script,
+            transcript: "We first met at Luke's during a rush.",
+            words: [
+                RecognizedPracticeWord(text: "We", timestamp: 0.1, duration: 0.15),
+                RecognizedPracticeWord(text: "first", timestamp: 0.3, duration: 0.2),
+                RecognizedPracticeWord(text: "met", timestamp: 0.55, duration: 0.2),
+                RecognizedPracticeWord(text: "at", timestamp: 0.8, duration: 0.15),
+                RecognizedPracticeWord(text: "Luke's", timestamp: 1.0, duration: 0.2),
+                RecognizedPracticeWord(text: "during", timestamp: 2.6, duration: 0.2), // >1.2s hesitation
+                RecognizedPracticeWord(text: "a", timestamp: 2.85, duration: 0.1),
+                RecognizedPracticeWord(text: "rush", timestamp: 3.0, duration: 0.2)
+            ],
+            clueRequestedRanges: [],
+            duration: 5.0,
+            help: .gaps,
+            audioURL: nil
+        )
+        let sampleTake = completeAudition.auditionTakes[0]
+
+        let screens: [(name: String, view: AnyView)] = [
+            ("01_MemoriseView_PracticeAloud", AnyView(NavigationStack { MemoriseView(script: script, appState: state) })),
+            ("02_SayItAloudView_PracticeAloud", AnyView(NavigationStack { SayItAloudView(script: script, appState: state, help: .nothing) })),
+            ("03_PracticeReviewView_YourDelivery", AnyView(NavigationStack { PracticeReviewView(script: script, session: reviewSession, appState: state, isSavedReview: false) })),
+            ("04_TestYourselfView", AnyView(NavigationStack { TestYourselfView(script: script, appState: state) })),
+            ("05_PracticeAuditionCueSelectionView", AnyView(PracticeAuditionCueSelectionView(scriptText: script.rawText, initialCues: script.cueLines) { _ in })),
+            ("06_AuditionPackageHub_ExportPackage", AnyView(NavigationStack { AuditionPackageHubView(audition: completeAudition) })),
+            ("07_PackageValidation_CheckYourPackage", AnyView(PackageValidationAndExportView(audition: completeAudition, initialStage: .checking))),
+            ("08_PackageValidation_ReadyToSend", AnyView(PackageValidationAndExportView(audition: completeAudition, initialStage: .ready))),
+            ("09_VideoCompressorView", AnyView(NavigationStack { VideoCompressorView(audition: completeAudition, take: sampleTake, isSlate: false, initialSizeMB: 34.5, isDemoMode: true) { _, _ in } })),
+            ("10_TakeReviewView", AnyView(TakeReviewView(audition: completeAudition, rawVideoURL: clipURL, totalDurationSeconds: 2.0, isSlate: false, qualityMetrics: PreTakeQualityMetrics(), onTakeApproved: { _ in }, onRetake: {}))),
+            ("11_HeadshotCropView", AnyView(HeadshotCropView(originalImage: frontImg, defaultRatio: .ratio4x5, angle: .front, batchProgress: (1, 3)) { _, _, _ in })),
+            ("12_HeadshotPackageGridView", AnyView(HeadshotPackageGridView(audition: completeAudition, frontCropped: frontImg, leftCropped: leftImg, rightCropped: rightImg, frontOriginal: frontImg, leftOriginal: leftImg, rightOriginal: rightImg, onRetakeAngle: { _ in }, onSaveCompleted: {}))),
+            ("13_HeadshotImportPickerView", AnyView(HeadshotImportPickerView(audition: completeAudition) {})),
+            ("14_VideoImportPickerView", AnyView(VideoImportPickerView(audition: completeAudition, isSlate: false) { _ in })),
+            ("15_AuditionModeAndCuesView", AnyView(AuditionModeAndCuesView(audition: completeAudition) {})),
+            ("16_SlateProfileSetupView", AnyView(SlateProfileSetupView(audition: completeAudition) {})),
+            ("17_TalkToOneTakeBriefingView", AnyView(TalkToOneTakeBriefingView(audition: completeAudition, isSlate: true, scriptPreview: "Hi, I'm Meow...") { _ in }))
+        ]
+
+        let model = FloatingBarShowcaseModel()
+        let root = FloatingBarShowcaseRoot(model: model, screens: screens.map(\.view))
+            .environment(state)
+            .modelContainer(container)
+
+        let window = auditWindow ?? UIWindow(windowScene: scene)
+        auditWindow = window
+        window.frame = scene.coordinateSpace.bounds
+        window.windowLevel = .alert + 1
+        let hosting = UIHostingController(rootView: root)
+        window.rootViewController = hosting
+        window.makeKeyAndVisible()
+
+        for (index, item) in screens.enumerated() {
+            model.index = index
+            print("===SHOWCASE [\(index + 1)/\(screens.count)] \(item.name)===")
+            try await Task.sleep(for: .seconds(3))
+            autoreleasepool {
+                let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
+                let image = renderer.image { _ in
+                    window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                }
+                let attachment = XCTAttachment(image: image, quality: .medium)
+                attachment.name = item.name
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+        }
+        model.index = -1
+        window.isHidden = true
+        window.rootViewController = nil
+        auditWindow = nil
+        // Allow SwiftUI to flush child view teardown before the local ModelContainer deallocates.
+        try await Task.sleep(for: .milliseconds(300))
+    }
+}
+
+@MainActor
+@Observable
+private final class FloatingBarShowcaseModel {
+    var index: Int = 0
+}
+
+private struct FloatingBarShowcaseRoot: View {
+    let model: FloatingBarShowcaseModel
+    let screens: [AnyView]
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            if model.index >= 0, screens.indices.contains(model.index) {
+                screens[model.index]
+                    .id(model.index)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 }

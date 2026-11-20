@@ -485,13 +485,15 @@ struct PracticeAuditionCueSelectionView: View {
             .navigationTitle("Add Cue Lines").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Continue") {
-                        onContinue(makeCues())
-                        dismiss()
-                    }
-                    .fontWeight(.bold)
+            }
+            .floatingBottomActionBar {
+                Button {
+                    onContinue(makeCues())
+                    dismiss()
+                } label: {
+                    Text("Continue").primaryCapsuleButton()
                 }
+                .buttonStyle(.plain)
             }
             .onAppear { parseAndInitializeScript() }
         }
@@ -1036,7 +1038,23 @@ struct TestYourselfView: View {
     var body: some View {
         Group {
             if enteredRun { SayItAloudView(script: script, appState: appState, help: help) }
-            else { VStack(spacing: 22) { Text("Test Yourself!").font(Theme.Typography.screenTitle); Text("Choose how much help you want before you start.").foregroundStyle(Theme.Colors.textSecondary); Picker("Show", selection: $help) { ForEach(HelpLevel.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.inline); Button { enteredRun = true } label: { Text("Continue").primaryCapsuleButton() } }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.Colors.canvasBackground) }
+            else {
+                VStack(spacing: 22) {
+                    Text("Test Yourself!").font(Theme.Typography.screenTitle)
+                    Text("Choose how much help you want before you start.").foregroundStyle(Theme.Colors.textSecondary)
+                    Picker("Show", selection: $help) {
+                        ForEach(HelpLevel.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .floatingBottomActionBar {
+                    Button { enteredRun = true } label: { Text("Continue").primaryCapsuleButton() }
+                        .buttonStyle(.plain)
+                }
+                .background(Theme.Colors.canvasBackground)
+            }
         }.navigationTitle(enteredRun ? "Say It Aloud!" : "Test Yourself!").navigationBarTitleDisplayMode(.inline)
             .toolbar(.hidden, for: .tabBar)
     }

@@ -99,7 +99,7 @@ struct AuditionPackageHubView: View {
             }
             .ignoresSafeArea(edges: .top)
             .scrollEdgeHaptics()
-            .floatingBottomActionBar(isPresented: audition.packageReadyCount > 0) {
+            .floatingBottomActionBar(isPresented: audition.isPackageComplete) {
                 Button {
                     showingPackageValidation = true
                 } label: {
@@ -560,7 +560,7 @@ struct AuditionPackageHubView: View {
     private var packageProgressSection: some View {
         let deliverables = audition.requiredDeliverables
         let total = audition.packageTotalCount
-        let isAllReady = total > 0 && audition.packageReadyCount == total
+        let isAllReady = audition.isPackageComplete
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack {

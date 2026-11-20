@@ -77,20 +77,25 @@ struct HeadshotImportPickerView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
-
-                ToolbarItem(placement: .confirmationAction) {
-                    if isAutoCropping {
-                        ProgressView()
-                    } else {
-                        Button("Save") {
-                            saveImportedHeadshots()
+            }
+            .floatingBottomActionBar {
+                let disabled = !isReadyToSave || isAutoCropping
+                Button {
+                    saveImportedHeadshots()
+                } label: {
+                    Group {
+                        if isAutoCropping {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Text("Save")
                         }
-                        .font(Theme.Typography.cardTitle)
-                        .foregroundStyle(Theme.Colors.accent)
-                        .disabled(!isReadyToSave)
-                        .accessibilityLabel("Save Imported Headshots")
                     }
+                    .primaryCapsuleButton(disabled: disabled)
                 }
+                .buttonStyle(.plain)
+                .disabled(disabled)
+                .accessibilityLabel("Save Imported Headshots")
             }
             .alert("Unable to Import Headshots", isPresented: $showingErrorAlert) {
                 Button("OK", role: .cancel) {}

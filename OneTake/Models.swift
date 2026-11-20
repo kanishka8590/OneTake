@@ -792,6 +792,10 @@ final class Audition {
         requiredDeliverables.filter { isDeliverableReady($0) }.count
     }
 
+    var isPackageComplete: Bool {
+        packageTotalCount > 0 && packageReadyCount == packageTotalCount
+    }
+
     init(
         id: UUID = UUID(),
         projectName: String = "",

@@ -11,7 +11,7 @@ struct PackageValidationAndExportView: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var audition: Audition
 
-    @State private var stage: Stage = .checking
+    @State private var stage: Stage
     @State private var compressorRoute: CompressorRoute?
     @State private var compressionFeedbackMessage: String?
     @State private var showingShareChoices = false
@@ -33,7 +33,12 @@ struct PackageValidationAndExportView: View {
 
     private typealias VideoMetadata = (isPortrait: Bool, aspectRatioString: String, durationSeconds: Double, fileSizeMB: Double)
 
-    private enum Stage { case checking, ready }
+    enum Stage { case checking, ready }
+
+    init(audition: Audition, initialStage: Stage = .checking) {
+        self.audition = audition
+        self._stage = State(initialValue: initialStage)
+    }
     private enum ReviewRoute: Identifiable {
         case slate(VideoTake)
         case audition(VideoTake)
@@ -1042,7 +1047,7 @@ struct PackageValidationAndExportView: View {
     }
 }
 
-private struct VideoCompressorView: View {
+struct VideoCompressorView: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var audition: Audition
     let take: VideoTake
@@ -1204,22 +1209,22 @@ private struct VideoCompressorView: View {
                 }
 
                 Spacer()
-
-                if !isCompressing {
-                    Button {
-                        if completed {
-                            dismiss()
-                        } else {
-                            compress()
-                        }
-                    } label: {
-                        Text(completed ? "Done" : "Compress \(clipLabel)")
-                            .primaryCapsuleButton()
-                    }
-                    .accessibilityLabel(completed ? "Done" : "Compress \(clipLabel)")
-                }
             }
             .padding(20)
+            .floatingBottomActionBar(isPresented: !isCompressing) {
+                Button {
+                    if completed {
+                        dismiss()
+                    } else {
+                        compress()
+                    }
+                } label: {
+                    Text(completed ? "Done" : "Compress \(clipLabel)")
+                        .primaryCapsuleButton()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(completed ? "Done" : "Compress \(clipLabel)")
+            }
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Compress your \(clipLabel)")
             .navigationBarTitleDisplayMode(.inline)

@@ -55,22 +55,21 @@ struct VideoImportPickerView: View {
                     }
 
                     Spacer()
-
-                    PhotosPicker(
-                        selection: $selectedVideoItem,
-                        matching: .videos,
-                        preferredItemEncoding: .current
-                    ) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "photo.on.rectangle")
-                            Text("Choose from Photos")
-                        }
-                        .primaryCapsuleButton()
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 36)
-                    .disabled(isImporting)
                 }
+            }
+            .floatingBottomActionBar(horizontalPadding: 24) {
+                PhotosPicker(
+                    selection: $selectedVideoItem,
+                    matching: .videos,
+                    preferredItemEncoding: .current
+                ) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "photo.on.rectangle")
+                        Text("Choose from Photos")
+                    }
+                    .primaryCapsuleButton(disabled: isImporting)
+                }
+                .disabled(isImporting)
             }
             .navigationTitle("Import Video")
             .navigationBarTitleDisplayMode(.inline)

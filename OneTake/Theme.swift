@@ -91,6 +91,8 @@ enum Theme {
 // MARK: - View Modifiers
 
 struct PrimaryCapsuleButtonModifier: ViewModifier {
+    var disabled: Bool = false
+
     func body(content: Content) -> some View {
         content
             .font(Theme.Typography.cardTitle)
@@ -98,6 +100,7 @@ struct PrimaryCapsuleButtonModifier: ViewModifier {
             .frame(maxWidth: .infinity, minHeight: 50)
             .background(Theme.Colors.primaryPlum)
             .clipShape(Capsule())
+            .opacity(disabled ? 0.45 : 1.0)
     }
 }
 
@@ -187,8 +190,8 @@ struct CompactProgressRing: View {
 // MARK: - View Extensions
 
 extension View {
-    func primaryCapsuleButton() -> some View {
-        modifier(PrimaryCapsuleButtonModifier())
+    func primaryCapsuleButton(disabled: Bool = false) -> some View {
+        modifier(PrimaryCapsuleButtonModifier(disabled: disabled))
     }
 
     func secondaryLavenderButton() -> some View {

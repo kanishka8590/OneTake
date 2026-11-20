@@ -69,15 +69,16 @@ struct AuditionModeAndCuesView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }
-
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Continue") {
-                        handleContinue()
-                    }
-                    .font(Theme.Typography.cardTitle)
-                    .foregroundStyle(Theme.Colors.accent)
-                    .accessibilityLabel(hasScript ? "Continue" : "Continue to Record")
+            }
+            .floatingBottomActionBar {
+                Button {
+                    handleContinue()
+                } label: {
+                    Text(hasScript ? "Continue" : "Continue to Record")
+                        .primaryCapsuleButton()
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(hasScript ? "Continue" : "Continue to Record")
             }
             .onAppear {
                 parseAndInitializeScript()

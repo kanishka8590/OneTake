@@ -369,6 +369,7 @@ final class MediaStorageAndModelsTests: XCTestCase {
         let emptyReqs = Audition(requirements: [])
         XCTAssertEqual(emptyReqs.requiredDeliverables, [.headshots, .slate, .audition])
         XCTAssertEqual(emptyReqs.packageTotalCount, 3)
+        XCTAssertFalse(emptyReqs.isPackageComplete)
 
         // When Self-Tape / Audition Clip is omitted or toggled off, only Headshots & Slate exist
         let noSelfTape = Audition(
@@ -390,12 +391,19 @@ final class MediaStorageAndModelsTests: XCTestCase {
         XCTAssertEqual(noSelfTape.requiredDeliverables, [.headshots, .slate])
         XCTAssertEqual(noSelfTape.packageTotalCount, 2)
         XCTAssertEqual(noSelfTape.packageReadyCount, 2)
+        XCTAssertTrue(noSelfTape.isPackageComplete)
 
-        // Enabling Self-Tape adds Audition Clip back
+        // Adding Self-Tape requirement without a ready clip keeps package incomplete (2 of 3).
+        noSelfTape.auditionTakes = []
         noSelfTape.requirements.append(SubmissionRequirement(title: "Audition Self-Tape Take"))
         XCTAssertTrue(noSelfTape.requiresAudition)
         XCTAssertEqual(noSelfTape.requiredDeliverables, [.headshots, .slate, .audition])
         XCTAssertEqual(noSelfTape.packageTotalCount, 3)
+        XCTAssertEqual(noSelfTape.packageReadyCount, 2)
+        XCTAssertFalse(noSelfTape.isPackageComplete)
+
+        noSelfTape.auditionTakes = [VideoTake(title: "Clip", filePath: "\(folder)/clip.mp4", durationSeconds: 20, fileSizeMB: 2)]
         XCTAssertEqual(noSelfTape.packageReadyCount, 3)
+        XCTAssertTrue(noSelfTape.isPackageComplete)
     }
 }

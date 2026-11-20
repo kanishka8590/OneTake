@@ -87,21 +87,22 @@ struct TalkToOneTakeBriefingView: View {
                     Button("Close") { dismiss() }
                 }
 
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Record") {
-                        onReadyToRecord(editableScript)
-                    }
-                    .font(Theme.Typography.cardTitle)
-                    .foregroundStyle(Theme.Colors.accent)
-                    .accessibilityLabel("Start Recording")
-                }
-
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
                     Button("Done") {
                         dismissActiveKeyboard()
                     }
                 }
+            }
+            .floatingBottomActionBar {
+                Button {
+                    onReadyToRecord(editableScript)
+                } label: {
+                    Label("Record", systemImage: "record.circle")
+                        .primaryCapsuleButton()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Start Recording")
             }
         }
     }

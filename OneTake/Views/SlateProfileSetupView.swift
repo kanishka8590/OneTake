@@ -138,23 +138,24 @@ struct SlateProfileSetupView: View {
                     Button("Close") { dismiss() }
                 }
 
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Continue") {
-                        persistProfileEdits()
-                        updateGeneratedScript()
-                        finalSlateScriptToRecord = generatedSlateScript
-                        showingBriefing = true
-                    }
-                    .font(Theme.Typography.cardTitle)
-                    .foregroundStyle(Theme.Colors.accent)
-                }
-
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
                     Button("Done") {
                         dismissActiveKeyboard()
                     }
                 }
+            }
+            .floatingBottomActionBar {
+                Button {
+                    persistProfileEdits()
+                    updateGeneratedScript()
+                    finalSlateScriptToRecord = generatedSlateScript
+                    showingBriefing = true
+                } label: {
+                    Text("Continue")
+                        .primaryCapsuleButton()
+                }
+                .buttonStyle(.plain)
             }
             .onAppear {
                 loadProfileDefaults()
