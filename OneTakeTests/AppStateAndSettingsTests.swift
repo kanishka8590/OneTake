@@ -527,4 +527,32 @@ final class AppStateAndSettingsTests: XCTestCase {
         let fallbackState = AppState(settings: AppSettings(defaults: defaults), defaults: defaults)
         XCTAssertEqual(fallbackState.auditionListFilter, .all)
     }
+
+    func testSlateScriptTemplateHandlesSelfRepresentedAndAgencyRepresentation() {
+        let selfRepScript = SlateScriptTemplate.build(
+            name: "Meow",
+            height: "128 cm",
+            age: "20",
+            basedIn: "",
+            representation: "Self-represented",
+            previousWork: [],
+            roleName: "Female Lead",
+            projectName: "Heer Ranjha"
+        )
+        XCTAssertTrue(selfRepScript.contains("I am self-represented."))
+        XCTAssertFalse(selfRepScript.contains("represented by Self-represented"))
+
+        let agencyScript = SlateScriptTemplate.build(
+            name: "Avery Vance",
+            height: "5'8\"",
+            age: "27",
+            basedIn: "Mumbai",
+            representation: "Bramwell Talent",
+            previousWork: [],
+            roleName: "Heer",
+            projectName: "Heer Ranjha"
+        )
+        XCTAssertTrue(agencyScript.contains("I am represented by Bramwell Talent."))
+        XCTAssertTrue(agencyScript.contains("I am based in Mumbai."))
+    }
 }

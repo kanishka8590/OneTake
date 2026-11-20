@@ -46,7 +46,12 @@ nonisolated enum SlateScriptTemplate {
             parts.append("I am based in \(stripDot(trimmedBasedIn)).")
         }
         if !trimmedRep.isEmpty {
-            parts.append("I am represented by \(stripDot(trimmedRep)).")
+            let cleanRep = stripDot(trimmedRep)
+            if cleanRep.caseInsensitiveCompare("Self-represented") == .orderedSame {
+                parts.append("I am self-represented.")
+            } else {
+                parts.append("I am represented by \(cleanRep).")
+            }
         }
 
         let role = trimmedRole.isEmpty ? "this role" : stripDot(trimmedRole)

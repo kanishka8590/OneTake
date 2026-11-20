@@ -30,6 +30,7 @@ struct TeleprompterRecorderView: View {
     @State private var scrollOffset: CGFloat = 0.0
     @State private var prompterViewportHeight: CGFloat = 0.0
     @State private var prompterContentHeight: CGFloat = 0.0
+    @State private var prompterTextHeight: CGFloat = 0.0
     @State private var lineFrames: [Int: CGRect] = [:]
     @State private var lastProcessedTranscript: String = ""
     @State private var lastProcessedIsFinal: Bool = false
@@ -87,9 +88,8 @@ struct TeleprompterRecorderView: View {
                     // Scrolling Teleprompter Overlay (hidden if empty)
                     if !effectiveScriptLines.isEmpty {
                         teleprompterOverlay
-                            .frame(maxHeight: 280)
                             .padding(.horizontal, 16)
-                            .padding(.top, 10)
+                            .padding(.top, 8)
                     }
 
                     if let cameraError = recorderService.cameraErrorMessage {
@@ -126,6 +126,7 @@ struct TeleprompterRecorderView: View {
                 }
             }
             .preferredColorScheme(.dark)
+            .navigationBarTitleDisplayMode(.inline)
             .navigationBarBackButtonHidden()
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -393,6 +394,7 @@ struct TeleprompterRecorderView: View {
             .nativeGlassCapsuleButton(
                 tint: recorderService.gesturesEnabled ? Theme.Colors.cameraGuideGold : nil
             )
+            .background(Color.black.opacity(0.32), in: Capsule())
             .disabled(recorderService.cameraPermissionDenied)
             .accessibilityLabel(recorderService.gesturesEnabled ? "Disable open palm gesture trigger" : "Enable open palm gesture trigger")
 
@@ -414,6 +416,7 @@ struct TeleprompterRecorderView: View {
                     ? (recorderService.isVoiceListening ? .green : Theme.Colors.cameraGuideGold)
                     : nil
             )
+            .background(Color.black.opacity(0.32), in: Capsule())
             .disabled(recorderService.cameraPermissionDenied)
             .accessibilityLabel(recorderService.voiceCommandsEnabled ? "Disable voice commands" : "Enable voice commands")
         }
@@ -421,8 +424,18 @@ struct TeleprompterRecorderView: View {
 
     // MARK: - Scrolling Teleprompter Overlay
 
+    private var prompterCardHeight: CGFloat {
+        let maxBoxHeight: CGFloat = 240
+        guard prompterTextHeight > 0 else { return 160 }
+        return min(maxBoxHeight, prompterTextHeight)
+    }
+
+    private var needsPrompterScrolling: Bool {
+        prompterTextHeight > 240
+    }
+
     private var teleprompterOverlay: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             HStack(spacing: 8) {
                 Button {
                     resetPrompterPosition()
@@ -431,6 +444,7 @@ struct TeleprompterRecorderView: View {
                         .font(.system(size: 12, weight: .semibold))
                 }
                 .nativeGlassCapsuleButton()
+                .background(Color.black.opacity(0.32), in: Capsule())
                 .disabled(recorderService.isCountingDown)
 
                 Spacer()
@@ -453,6 +467,7 @@ struct TeleprompterRecorderView: View {
                     .font(.system(size: 12, weight: .semibold))
                 }
                 .nativeGlassCapsuleButton(tint: followVoice ? .green : nil)
+                .background(Color.black.opacity(0.32), in: Capsule())
 
                 if !followVoice {
                     Button {
@@ -462,6 +477,7 @@ struct TeleprompterRecorderView: View {
                             .font(.system(size: 12, weight: .semibold))
                     }
                     .nativeGlassCircleButton()
+                    .background(Color.black.opacity(0.32), in: Circle())
                     .accessibilityLabel("Adjust scroll speed")
                 }
             }
@@ -475,31 +491,42 @@ struct TeleprompterRecorderView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
+                .background(Color.black.opacity(0.36), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .nativeGlassRoundedSurface(cornerRadius: 12)
             }
 
             ZStack(alignment: .top) {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.black.opacity(0.5))
+                    .fill(Color.black.opacity(0.55))
 
                 ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        ForEach(voiceTracker.lines) { line in
-                            prompterLineView(line)
-                                .id(line.id)
-                                .onGeometryChange(for: CGRect.self) { proxy in
-                                    proxy.frame(in: .named("prompterContent"))
-                                } action: { rect in
-                                    lineFrames[line.id] = rect
-                                }
-                                .onTapGesture {
-                                    voiceTracker.jumpToLine(line.id)
-                                    syncScrollOffsetToVoiceTracker()
-                                }
+                    VStack(alignment: .leading, spacing: 0) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            ForEach(voiceTracker.lines) { line in
+                                prompterLineView(line)
+                                    .id(line.id)
+                                    .onGeometryChange(for: CGRect.self) { proxy in
+                                        proxy.frame(in: .named("prompterContent"))
+                                    } action: { rect in
+                                        lineFrames[line.id] = rect
+                                    }
+                                    .onTapGesture {
+                                        voiceTracker.jumpToLine(line.id)
+                                        syncScrollOffsetToVoiceTracker()
+                                    }
+                            }
                         }
-                        Spacer().frame(height: 120)
+                        .padding(16)
+                        .onGeometryChange(for: CGFloat.self) { proxy in
+                            proxy.size.height
+                        } action: { measuredHeight in
+                            prompterTextHeight = measuredHeight
+                        }
+
+                        if needsPrompterScrolling {
+                            Spacer().frame(height: 100)
+                        }
                     }
-                    .padding(16)
                     .coordinateSpace(name: "prompterContent")
                     .onGeometryChange(for: CGFloat.self) { proxy in
                         proxy.size.height
@@ -509,6 +536,7 @@ struct TeleprompterRecorderView: View {
                     }
                     .offset(y: -scrollOffset)
                 }
+                .scrollDisabled(!needsPrompterScrolling)
                 .clipped()
                 .onGeometryChange(for: CGFloat.self) { proxy in
                     proxy.size.height
@@ -517,6 +545,8 @@ struct TeleprompterRecorderView: View {
                     scrollOffset = min(scrollOffset, max(0, prompterContentHeight - newHeight))
                 }
             }
+            .frame(height: prompterCardHeight)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
     }
 
@@ -639,6 +669,7 @@ struct TeleprompterRecorderView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
+                .background(Color.black.opacity(0.36), in: Capsule())
                 .nativeGlassCapsuleSurface()
 
                 HStack(spacing: 5) {
@@ -651,18 +682,7 @@ struct TeleprompterRecorderView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .nativeGlassCapsuleSurface()
-
-                HStack(spacing: 5) {
-                    Circle()
-                        .fill(recorderService.isVoiceListening ? Color.green : Color.orange)
-                        .frame(width: 6, height: 6)
-                    Text(recorderService.voiceStatus.label)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
+                .background(Color.black.opacity(0.36), in: Capsule())
                 .nativeGlassCapsuleSurface()
             }
 
