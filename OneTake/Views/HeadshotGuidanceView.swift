@@ -829,12 +829,8 @@ struct HeadshotGuidanceView: View {
                 Theme.Colors.cameraCanvas.ignoresSafeArea()
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        Text("Industry Standard Headshot Guide")
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundStyle(.white)
-
-                        Text("For theatrical and commercial submissions, casting directors look for three essential angles: Front, 3/4 Left, and 3/4 Right.")
+                    VStack(alignment: .leading, spacing: 18) {
+                        Text("For theatrical and commercial submissions, casting directors look for three essential angles: Front, Left, and Right.")
                             .font(.system(size: 14))
                             .foregroundStyle(Color.white.opacity(0.75))
 
@@ -882,15 +878,22 @@ struct HeadshotGuidanceView: View {
                         .background(Color.white.opacity(0.06))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
-                    .padding(24)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 12)
+                    .padding(.bottom, 24)
                 }
                 .scrollEdgeHaptics()
             }
+            .navigationTitle("Headshot Guide")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
+                    Button {
                         showingMatchGuide = false
+                    } label: {
+                        Image(systemName: "checkmark")
                     }
+                    .accessibilityLabel("Done")
                 }
             }
             .presentationDetents([.fraction(0.7), .large])
