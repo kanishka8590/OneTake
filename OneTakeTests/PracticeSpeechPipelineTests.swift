@@ -465,4 +465,66 @@ final class PracticeSpeechPipelineTests: XCTestCase {
         XCTAssertEqual(session.hesitatedCount, 1)
         XCTAssertEqual(session.annotations.filter { $0.kind == .hesitated }.map(\.text), ["here"])
     }
+
+    func testHindiDevanagariSpeechAlignsWithHinglishScriptForCluesAndDeliveryReview() {
+        let script = MockData.naina
+        let tracker = PracticeSpeechClueTracker(script: script)
+
+        let devanagariLine1 = segments([
+            "तुम", "समझते", "क्यों", "नहीं", "कि", "अगर", "मैं", "एक", "मिनट", "और", "रुकी", "तो"
+        ])
+        tracker.processRecognizedSpeech(segments: devanagariLine1)
+        XCTAssertEqual(
+            tracker.nextSentence?.text,
+            "To mujhe tumse pyaar hojaayega, firse.",
+            "Devanagari hi-IN speech must match the Hinglish line and skip the BUNNY cue."
+        )
+
+        // Include a repeat stumble ("तुम" "तुम") before "तुमसे", split compounds ("हो जाएगा", "फिर से"),
+        // a 1.4s pause before "दूसरा" -> "दूसरे" (say "फिरसे" repeated or pause before "औऱ"),
+        // an ad-lib ("मेरा मतलब"), and skip the final clause.
+        var spoken: [RecognizedPracticeWord] = devanagariLine1
+        var t = (spoken.last?.timestamp ?? 0) + 0.5
+        let nextTokens: [(String, Double)] = [
+            ("तो", 0.2), ("मुझे", 0.2),
+            ("तुम", 0.18), ("तुमसे", 0.2), // repeat stumble -> Hesitated on "tumse"
+            ("प्यार", 0.25), ("हो", 0.18), ("जाएगा", 0.25), // compound -> matches "hojaayega,"
+            ("फिर", 0.18), ("से", 0.18), // compound -> matches "firse."
+            ("और", 0.2), ("तुम्हें", 0.2), ("नहीं", 0.2), ("होगा", 0.2), ("फिरसे", 0.2),
+            ("इसलिए", 0.25), ("बनी", 0.2), ("बेहतर", 0.25), ("यही", 0.2), ("होगा", 0.2),
+            ("कि", 0.15), ("हम", 0.18), ("एक", 0.18), ("दूसरे", 0.25), ("से", 0.18),
+            ("मेरा", 0.2), ("मतलब", 0.25) // genuine Hindi Not in Script ad-lib
+        ]
+        for (word, dur) in nextTokens {
+            spoken.append(RecognizedPracticeWord(text: word, timestamp: t, duration: dur))
+            t += dur + 0.08
+        }
+
+        tracker.processRecognizedSpeech(segments: spoken)
+        XCTAssertEqual(
+            tracker.nextSentence?.text,
+            "Isliye bunny behtar yahi hoga ki hum ek dusre se jitnaa dur reh sake utnaa dur rahein.",
+            "Compound Hindi split ('हो जाएगा', 'फिर से') must advance past the second actor sentence."
+        )
+
+        let session = PracticeSpeechDeliveryAnalyzer.makeSession(
+            script: script,
+            transcript: spoken.map(\.text).joined(separator: " "),
+            words: spoken,
+            clueRequestedRanges: [],
+            duration: t,
+            help: .nothing,
+            audioURL: nil
+        )
+
+        // Only the final clause ("jitnaa dur reh sake utnaa dur rahein.") = 7 tokens should be skipped.
+        XCTAssertEqual(session.skippedCount, 7)
+        XCTAssertTrue(session.annotations.contains {
+            $0.kind == .skipped && $0.text == "jitnaa dur reh sake utnaa dur rahein."
+        })
+        XCTAssertEqual(session.hesitatedCount, 1)
+        XCTAssertTrue(session.annotations.contains { $0.kind == .hesitated && $0.text == "tumse" })
+        XCTAssertEqual(session.notInScriptCount, 2)
+        XCTAssertTrue(session.annotations.contains { $0.kind == .notInScript && $0.text == "मेरा मतलब" })
+    }
 }

@@ -452,6 +452,7 @@ struct PracticeScriptModel {
 @Observable
 final class PracticeSpeechClueTracker {
     let model: PracticeScriptModel
+    let language: ScriptLanguage
     private let actorSentences: [PracticeScriptRange]
     private(set) var currentActorLineIndex = 0
     private(set) var currentActorSentenceIndex = 0
@@ -460,6 +461,7 @@ final class PracticeSpeechClueTracker {
     init(script: PracticeScript) {
         let builtModel = PracticeScriptModel(script: script)
         model = builtModel
+        language = script.language
         actorSentences = builtModel.sentenceRanges(containing: Set(builtModel.actorTokens.map(\.id)))
     }
 
@@ -472,19 +474,31 @@ final class PracticeSpeechClueTracker {
     /// double-counting when Speech.framework revises a partial transcription.
     func processRecognizedSpeech(segments: [RecognizedPracticeWord]) {
         let coalesced = PracticeSpeechDeliveryAnalyzer.coalesceSplitTokens(segments)
-        let spoken = coalesced.flatMap { PracticeSpeechDeliveryAnalyzer.normalizedComparisonTokens(for: $0.text) }
+        let rawWords = coalesced.map(\.text)
+        let spoken = rawWords.flatMap {
+            PracticeSpeechDeliveryAnalyzer.comparisonTokens(for: $0, language: language)
+        }
         var cursor = 0
         var matchedSentenceCount = 0
 
         for (index, sentence) in actorSentences.enumerated() {
             let sentenceWords = words(in: sentence.text)
             guard !sentenceWords.isEmpty else { continue }
-            guard let end = contiguousMatch(of: sentenceWords, in: spoken, startingAt: cursor)
-                    ?? tolerantForwardMatch(of: sentenceWords, in: spoken, startingAt: cursor) else {
+            if let end = contiguousMatch(of: sentenceWords, in: spoken, startingAt: cursor)
+                ?? tolerantForwardMatch(of: sentenceWords, in: spoken, startingAt: cursor) {
+                cursor = end
+                matchedSentenceCount = index + 1
+            } else if language == .hindi,
+                      let rawEnd = hindiCompoundMatchEnd(
+                          ofRawSentence: PracticeScriptModel.dialogueWords(in: sentence.text),
+                          inRawSpoken: rawWords,
+                          startingAtNormalizedCursor: cursor
+                      ) {
+                cursor = rawEnd
+                matchedSentenceCount = index + 1
+            } else {
                 break
             }
-            cursor = end
-            matchedSentenceCount = index + 1
         }
 
         currentActorSentenceIndex = min(matchedSentenceCount, actorSentences.count)
@@ -523,7 +537,65 @@ final class PracticeSpeechClueTracker {
 
     private func words(in text: String) -> [String] {
         PracticeScriptModel.dialogueWords(in: text)
-            .flatMap(PracticeSpeechDeliveryAnalyzer.normalizedComparisonTokens)
+            .flatMap { PracticeSpeechDeliveryAnalyzer.comparisonTokens(for: $0, language: language) }
+    }
+
+    /// Coalesces adjacent hi-IN split compound words matching the target sentence
+    /// (for example `"हो" + "जाएगा"` -> `"hojaayega"`) and re-runs tolerant matching
+    /// so stumbles or inserted words alongside compound splits still advance cleanly.
+    private func hindiCompoundMatchEnd(
+        ofRawSentence rawSentenceWords: [String],
+        inRawSpoken rawSpoken: [String],
+        startingAtNormalizedCursor normCursor: Int
+    ) -> Int? {
+        guard !rawSentenceWords.isEmpty, !rawSpoken.isEmpty else { return nil }
+        var rawStart = 0
+        var countSoFar = 0
+        while rawStart < rawSpoken.count && countSoFar < normCursor {
+            countSoFar += PracticeSpeechDeliveryAnalyzer.comparisonTokens(for: rawSpoken[rawStart], language: language).count
+            rawStart += 1
+        }
+        guard rawStart < rawSpoken.count else { return nil }
+
+        let expectedKeys = rawSentenceWords.flatMap {
+            PracticeSpeechDeliveryAnalyzer.comparisonTokens(for: $0, language: language)
+        }
+        let expectedSet = Set(expectedKeys)
+        guard !expectedKeys.isEmpty else { return nil }
+
+        // Build merged spoken keys from rawStart forward alongside how many raw tokens each entry consumed.
+        var mergedKeys: [String] = []
+        var rawEndAfterMerged: [Int] = []
+        var u = rawStart
+        while u < rawSpoken.count {
+            if u + 1 < rawSpoken.count {
+                let compound = PracticeSpeechDeliveryAnalyzer.hindiCompoundKey(rawSpoken[u], rawSpoken[u + 1])
+                if !compound.isEmpty && expectedSet.contains(compound) {
+                    mergedKeys.append(compound)
+                    rawEndAfterMerged.append(u + 2)
+                    u += 2
+                    continue
+                }
+            }
+            let pieces = PracticeSpeechDeliveryAnalyzer.comparisonTokens(for: rawSpoken[u], language: language)
+            for piece in pieces {
+                mergedKeys.append(piece)
+                rawEndAfterMerged.append(u + 1)
+            }
+            u += 1
+        }
+
+        guard let localEnd = contiguousMatch(of: expectedKeys, in: mergedKeys, startingAt: 0)
+                ?? tolerantForwardMatch(of: expectedKeys, in: mergedKeys, startingAt: 0),
+              localEnd > 0,
+              localEnd - 1 < rawEndAfterMerged.count else {
+            return nil
+        }
+
+        let rawConsumedEnd = rawEndAfterMerged[localEnd - 1]
+        return rawSpoken[0..<rawConsumedEnd].reduce(0) { sum, token in
+            sum + PracticeSpeechDeliveryAnalyzer.comparisonTokens(for: token, language: language).count
+        }
     }
 
     private func contiguousMatch(of expected: [String], in spoken: [String], startingAt start: Int) -> Int? {
@@ -721,16 +793,25 @@ enum PracticeSpeechDeliveryAnalyzer {
         silenceIntervals: [PracticeSilenceInterval] = []
     ) -> PracticeSession {
         let model = PracticeScriptModel(script: script)
+        let language = script.language
         let rawSpokenWords = words.isEmpty
             ? recognizedWords(from: transcript)
             : words
         let spokenWords = coalesceSplitTokens(rawSpokenWords)
-        let primaryAlignment = align(scriptTokens: model.actorTokens, spokenWords: spokenWords)
-        let alignment = recoverAlternativeMatches(
+        let primaryAlignment = align(scriptTokens: model.actorTokens, spokenWords: spokenWords, language: language)
+        let alternativeAlignment = recoverAlternativeMatches(
             in: primaryAlignment,
             scriptTokens: model.actorTokens,
-            spokenWords: spokenWords
+            spokenWords: spokenWords,
+            language: language
         )
+        let alignment = (language == .hindi || containsDevanagari(in: spokenWords) || containsDevanagari(in: model.actorTokens))
+            ? recoverHindiCompoundMatches(
+                in: alternativeAlignment,
+                scriptTokens: model.actorTokens,
+                spokenWords: spokenWords
+            )
+            : alternativeAlignment
 
         // All omitted script words count as Skipped (Yellow), eliminating redundant Forgot (Blue).
         let clueTokenIDs = Set(clueRequestedRanges.flatMap(\.tokenIDs))
@@ -749,6 +830,7 @@ enum PracticeSpeechDeliveryAnalyzer {
             in: spokenWords,
             alignment: alignment,
             model: model,
+            language: language,
             silenceIntervals: silenceIntervals
         )
 
@@ -865,6 +947,156 @@ enum PracticeSpeechDeliveryAnalyzer {
         return result
     }
 
+    nonisolated static func comparisonTokens(for word: String, language: ScriptLanguage = .english) -> [String] {
+        let baseTokens = normalizedComparisonTokens(for: word)
+        guard language == .hindi || containsDevanagari(word) else {
+            return baseTokens
+        }
+        return baseTokens.compactMap { piece in
+            let key = hindiPhoneticKey(for: piece)
+            return key.isEmpty ? nil : key
+        }
+    }
+
+    nonisolated static func containsDevanagari(_ text: String) -> Bool {
+        text.unicodeScalars.contains { (0x0900...0x097F).contains($0.value) }
+    }
+
+    private nonisolated static func containsDevanagari(in words: [RecognizedPracticeWord]) -> Bool {
+        words.contains { containsDevanagari($0.text) }
+    }
+
+    private nonisolated static func containsDevanagari(in tokens: [PracticeToken]) -> Bool {
+        tokens.contains { containsDevanagari($0.word) }
+    }
+
+    private nonisolated static func transliterateHindiToLatin(_ raw: String) -> (latin: String, hadDevanagari: Bool) {
+        let trimmed = raw
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+            .lowercased()
+        guard !trimmed.isEmpty else { return ("", false) }
+        let hasDevanagari = containsDevanagari(trimmed)
+        guard hasDevanagari else { return (trimmed, false) }
+
+        var s = trimmed.applyingTransform(.toLatin, reverse: false) ?? trimmed
+        s = s
+            .replacingOccurrences(of: "cch", with: "ch")
+            .replacingOccurrences(of: "ā", with: "A")
+            .replacingOccurrences(of: "ī", with: "I")
+            .replacingOccurrences(of: "ū", with: "U")
+            .replacingOccurrences(of: "ē", with: "E")
+            .replacingOccurrences(of: "ō", with: "O")
+            .replacingOccurrences(of: "ś", with: "sh")
+            .replacingOccurrences(of: "ṣ", with: "sh")
+            .replacingOccurrences(of: "ḵẖ", with: "kh")
+            .replacingOccurrences(of: "ġ", with: "gh")
+            .replacingOccurrences(of: "ṛ", with: "r")
+            .replacingOccurrences(of: "m̐", with: "N")
+            .replacingOccurrences(of: "ṁ", with: "N")
+        s = s.applyingTransform(.stripDiacritics, reverse: false) ?? s
+        // ICU emits 'c' for च and 'ch' for छ; fold standalone 'c' -> 'ch' after cch/chh.
+        s = s.replacingOccurrences(of: "cch", with: "ch")
+            .replacingOccurrences(of: "ch(h)?", with: "ch", options: .regularExpression)
+            .replacingOccurrences(of: "c(?!h)", with: "ch", options: .regularExpression)
+            .replacingOccurrences(of: "'", with: "")
+        return (s, true)
+    }
+
+    /// Maps both Devanagari (`hi-IN` Speech output) and Romanized Hinglish words
+    /// into a shared phonetic key powered by Foundation's `StringTransform.toLatin`.
+    nonisolated static func hindiPhoneticKey(for raw: String) -> String {
+        let (trans, hadDevanagari) = transliterateHindiToLatin(raw)
+        return finalizeHindiPhoneticKey(fromLatin: trans, hadDevanagari: hadDevanagari)
+    }
+
+    nonisolated static func hindiCompoundKey(_ first: String, _ second: String) -> String {
+        let lhs = transliterateHindiToLatin(first)
+        let rhs = transliterateHindiToLatin(second)
+        guard !lhs.latin.isEmpty, !rhs.latin.isEmpty else { return "" }
+        return finalizeHindiPhoneticKey(
+            fromLatin: lhs.latin + rhs.latin,
+            hadDevanagari: lhs.hadDevanagari || rhs.hadDevanagari
+        )
+    }
+
+    private nonisolated static func finalizeHindiPhoneticKey(fromLatin rawLatin: String, hadDevanagari: Bool) -> String {
+        guard !rawLatin.isEmpty else { return "" }
+        var s = rawLatin
+            .replacingOccurrences(of: "ph", with: "f")
+            .replacingOccurrences(of: "w", with: "v")
+            .replacingOccurrences(of: "q", with: "k")
+            .replacingOccurrences(of: "x", with: "ks")
+            .replacingOccurrences(of: "cch", with: "ch")
+            .replacingOccurrences(of: "chh", with: "ch")
+            .replacingOccurrences(of: "c(?!h)", with: "k", options: .regularExpression)
+            .replacingOccurrences(of: "iy", with: "i")
+            .replacingOccurrences(of: "ye", with: "e")
+            .replacingOccurrences(of: "ey", with: "e")
+            .replacingOccurrences(of: "ee", with: "I")
+            .replacingOccurrences(of: "oo", with: "U")
+            .replacingOccurrences(of: "aa", with: "A")
+
+        var collapsed = ""
+        for ch in s where collapsed.last != ch {
+            collapsed.append(ch)
+        }
+        s = collapsed
+
+        // Drop final anusvara / Hinglish trailing nasal 'n' after vowels (मैं/main, नहीं/nahin, रहें/rahein, क्यों/kyun).
+        if s.hasSuffix("N") {
+            s.removeLast()
+        } else if !hadDevanagari && s.hasSuffix("n") && s.count >= 3 {
+            let beforeN = s[s.index(before: s.index(before: s.endIndex))]
+            if "aeiouAEIOU".contains(beforeN) {
+                s.removeLast()
+            }
+        }
+        s = s.replacingOccurrences(of: "N", with: "n")
+
+        // Devanagari final short 'a' is silent schwa (तुम tuma -> tum), whereas long ā ('A') stays.
+        if hadDevanagari && s.hasSuffix("a") {
+            s.removeLast()
+        }
+        // Strip silent English trailing 'e' only on V + [tdnl] + e loanwords (e.g. minute), preserving CC+e (samajhte, tumse).
+        if !hadDevanagari && s.count >= 5 && s.hasSuffix("e") {
+            let idxC = s.index(s.endIndex, offsetBy: -2)
+            let idxV = s.index(s.endIndex, offsetBy: -3)
+            if "tdnl".contains(s[idxC]) && "aeiouAEIOU".contains(s[idxV]) {
+                s.removeLast()
+            }
+        }
+        if s.count >= 3 && s.hasSuffix("y") {
+            s.removeLast()
+            s.append("i")
+        }
+
+        let chars = Array(s)
+        guard chars.count > 2 else { return s.lowercased() }
+        let isVowel: (Character) -> Bool = { "aeiouAEIOU".contains($0) }
+        var out: [Character] = [chars[0]]
+        for i in 1..<(chars.count - 1) {
+            let ch = chars[i]
+            let prev = chars[i - 1]
+            let next = chars[i + 1]
+            if isVowel(ch) && !isVowel(prev) && !isVowel(next) {
+                continue
+            }
+            if (ch == "a" || ch == "y" || ch == "A") && isVowel(prev) && isVowel(next) {
+                continue
+            }
+            out.append(ch)
+        }
+        out.append(chars[chars.count - 1])
+
+        var result = String(out).lowercased()
+            .replacingOccurrences(of: "ae", with: "e")
+            .replacingOccurrences(of: "ei", with: "e")
+        if result == "kyo" || result == "kyu" {
+            result = "kyu"
+        }
+        return result
+    }
+
     /// The vocabulary used by both live clue matching and final delivery
     /// alignment. A contraction has the same comparison shape as its expanded
     /// form, while all comparison pieces retain their original source token.
@@ -950,10 +1182,11 @@ enum PracticeSpeechDeliveryAnalyzer {
 
     private static func align(
         scriptTokens: [PracticeToken],
-        spokenWords: [RecognizedPracticeWord]
+        spokenWords: [RecognizedPracticeWord],
+        language: ScriptLanguage
     ) -> Alignment {
-        let scriptResult = comparisonTokensWithCounts(from: scriptTokens.map(\.word))
-        let spokenResult = comparisonTokensWithCounts(from: spokenWords.map(\.text))
+        let scriptResult = comparisonTokensWithCounts(from: scriptTokens.map(\.word), language: language)
+        let spokenResult = comparisonTokensWithCounts(from: spokenWords.map(\.text), language: language)
         let script = scriptResult.tokens
         let spoken = spokenResult.tokens
         var table = Array(repeating: Array(repeating: 0, count: spoken.count + 1), count: script.count + 1)
@@ -1024,7 +1257,8 @@ enum PracticeSpeechDeliveryAnalyzer {
     private static func recoverAlternativeMatches(
         in alignment: Alignment,
         scriptTokens: [PracticeToken],
-        spokenWords: [RecognizedPracticeWord]
+        spokenWords: [RecognizedPracticeWord],
+        language: ScriptLanguage
     ) -> Alignment {
         guard !alignment.unmatchedSpokenIndexes.isEmpty else { return alignment }
 
@@ -1039,7 +1273,7 @@ enum PracticeSpeechDeliveryAnalyzer {
             let alternatives = spokenWords[spokenIndex].alternativeSubstrings
             guard !alternatives.isEmpty else { continue }
 
-            let altTokenSets = Set(alternatives.map { normalizedComparisonTokens(for: $0) }).filter { !$0.isEmpty }
+            let altTokenSets = Set(alternatives.map { comparisonTokens(for: $0, language: language) }).filter { !$0.isEmpty }
             guard !altTokenSets.isEmpty else { continue }
 
             let prevMatchedSpoken = matchedSpokenSorted.last(where: { $0 < spokenIndex })
@@ -1053,7 +1287,7 @@ enum PracticeSpeechDeliveryAnalyzer {
             guard leftScriptBound < rightScriptBound else { continue }
 
             for candidateScriptIndex in leftScriptBound..<rightScriptBound where !matchedScript.contains(candidateScriptIndex) {
-                let expected = normalizedComparisonTokens(for: scriptTokens[candidateScriptIndex].word)
+                let expected = comparisonTokens(for: scriptTokens[candidateScriptIndex].word, language: language)
                 if altTokenSets.contains(expected) {
                     matchedScript.insert(candidateScriptIndex)
                     unmatchedSpoken.remove(spokenIndex)
@@ -1071,11 +1305,102 @@ enum PracticeSpeechDeliveryAnalyzer {
         )
     }
 
-    private static func comparisonTokensWithCounts(from words: [String]) -> (tokens: [ComparisonToken], partCounts: [Int: Int]) {
+    /// Recovers compound Hindi/Hinglish word splits across adjacent tokens in unmatched gaps,
+    /// such as `"हो" + "जाएगा"` matching `"hojaayega"` or `"फिर" + "से"` matching `"firse"`.
+    private static func recoverHindiCompoundMatches(
+        in alignment: Alignment,
+        scriptTokens: [PracticeToken],
+        spokenWords: [RecognizedPracticeWord]
+    ) -> Alignment {
+        guard !alignment.unmatchedSpokenIndexes.isEmpty else { return alignment }
+
+        var matchedScript = alignment.matchedScriptIndexes
+        var unmatchedSpoken = alignment.unmatchedSpokenIndexes
+        var matchedBySpoken = alignment.matchedScriptIndexesBySpokenIndex
+
+        var spokenIndex = 0
+        var scriptCursorFloor = 0
+        while spokenIndex < spokenWords.count {
+            guard unmatchedSpoken.contains(spokenIndex) else {
+                if let maxS = matchedBySpoken[spokenIndex]?.max() {
+                    scriptCursorFloor = max(scriptCursorFloor, maxS + 1)
+                }
+                spokenIndex += 1
+                continue
+            }
+
+            let prevMatchedSpoken = matchedBySpoken.keys.filter { $0 < spokenIndex }.max()
+            let nextMatchedSpoken = matchedBySpoken.keys.filter { $0 > spokenIndex }.min()
+            let leftScriptBound = max(
+                scriptCursorFloor,
+                prevMatchedSpoken.flatMap { matchedBySpoken[$0]?.max().map { $0 + 1 } } ?? 0
+            )
+            let rightScriptBound = nextMatchedSpoken.flatMap { matchedBySpoken[$0]?.min() } ?? scriptTokens.count
+            guard leftScriptBound < rightScriptBound else {
+                spokenIndex += 1
+                continue
+            }
+
+            var didRecover = false
+            // Case 1: 2 adjacent unmatched spoken tokens -> 1 unmatched script token
+            if spokenIndex + 1 < spokenWords.count && unmatchedSpoken.contains(spokenIndex + 1) {
+                let joinedKey = hindiCompoundKey(spokenWords[spokenIndex].text, spokenWords[spokenIndex + 1].text)
+                if !joinedKey.isEmpty {
+                    for sIdx in leftScriptBound..<rightScriptBound where !matchedScript.contains(sIdx) {
+                        if hindiPhoneticKey(for: scriptTokens[sIdx].word) == joinedKey {
+                            matchedScript.insert(sIdx)
+                            unmatchedSpoken.remove(spokenIndex)
+                            unmatchedSpoken.remove(spokenIndex + 1)
+                            matchedBySpoken[spokenIndex, default: []].insert(sIdx)
+                            matchedBySpoken[spokenIndex + 1, default: []].insert(sIdx)
+                            scriptCursorFloor = sIdx + 1
+                            spokenIndex += 2
+                            didRecover = true
+                            break
+                        }
+                    }
+                }
+            }
+            if didRecover { continue }
+
+            // Case 2: 1 unmatched spoken token -> 2 adjacent unmatched script tokens
+            let singleKey = hindiPhoneticKey(for: spokenWords[spokenIndex].text)
+            if !singleKey.isEmpty && leftScriptBound + 1 < rightScriptBound {
+                for sIdx in leftScriptBound..<(rightScriptBound - 1)
+                where !matchedScript.contains(sIdx) && !matchedScript.contains(sIdx + 1) {
+                    if hindiCompoundKey(scriptTokens[sIdx].word, scriptTokens[sIdx + 1].word) == singleKey {
+                        matchedScript.insert(sIdx)
+                        matchedScript.insert(sIdx + 1)
+                        unmatchedSpoken.remove(spokenIndex)
+                        matchedBySpoken[spokenIndex, default: []].insert(sIdx)
+                        matchedBySpoken[spokenIndex, default: []].insert(sIdx + 1)
+                        scriptCursorFloor = sIdx + 2
+                        spokenIndex += 1
+                        didRecover = true
+                        break
+                    }
+                }
+            }
+            if !didRecover {
+                spokenIndex += 1
+            }
+        }
+
+        return Alignment(
+            matchedScriptIndexes: matchedScript,
+            unmatchedSpokenIndexes: unmatchedSpoken,
+            matchedScriptIndexesBySpokenIndex: matchedBySpoken
+        )
+    }
+
+    private static func comparisonTokensWithCounts(
+        from words: [String],
+        language: ScriptLanguage
+    ) -> (tokens: [ComparisonToken], partCounts: [Int: Int]) {
         var tokens: [ComparisonToken] = []
         var partCounts: [Int: Int] = [:]
         for (index, word) in words.enumerated() {
-            let expanded = normalizedComparisonTokens(for: word)
+            let expanded = comparisonTokens(for: word, language: language)
             partCounts[index] = expanded.count
             for value in expanded {
                 tokens.append(ComparisonToken(value: value, sourceIndex: index))
@@ -1143,6 +1468,7 @@ enum PracticeSpeechDeliveryAnalyzer {
         in spokenWords: [RecognizedPracticeWord],
         alignment: Alignment,
         model: PracticeScriptModel,
+        language: ScriptLanguage,
         silenceIntervals: [PracticeSilenceInterval]
     ) -> (hesitations: [HesitationHit], additions: [AdditionPhrase]) {
         let actorTokens = model.actorTokens
@@ -1192,7 +1518,8 @@ enum PracticeSpeechDeliveryAnalyzer {
                 } else if isFalseStartStumble(
                     candidateText,
                     spokenTarget: spokenWords[spokenIndex].text,
-                    scriptTarget: targetToken.word
+                    scriptTarget: targetToken.word,
+                    language: language
                 ) {
                     hasFillerOrStumble = true
                     localConsumed.insert(backIndex)
@@ -1314,7 +1641,12 @@ enum PracticeSpeechDeliveryAnalyzer {
         return false
     }
 
-    private static func isFalseStartStumble(_ rawWord: String, spokenTarget: String, scriptTarget: String) -> Bool {
+    private static func isFalseStartStumble(
+        _ rawWord: String,
+        spokenTarget: String,
+        scriptTarget: String,
+        language: ScriptLanguage
+    ) -> Bool {
         let candidate = normalize(rawWord)
         guard !candidate.isEmpty else { return false }
         let spokenNorm = normalize(spokenTarget)
@@ -1331,6 +1663,20 @@ enum PracticeSpeechDeliveryAnalyzer {
                 return true
             }
         }
+        if language == .hindi || containsDevanagari(rawWord) || containsDevanagari(spokenTarget) {
+            let candKey = hindiPhoneticKey(for: rawWord)
+            let spokenKey = hindiPhoneticKey(for: spokenTarget)
+            let scriptKey = hindiPhoneticKey(for: scriptTarget)
+            if !candKey.isEmpty && (candKey == spokenKey || candKey == scriptKey) {
+                return true
+            }
+            if candKey.count >= 2 {
+                if (spokenKey.count > candKey.count && spokenKey.hasPrefix(candKey)) ||
+                    (scriptKey.count > candKey.count && scriptKey.hasPrefix(candKey)) {
+                    return true
+                }
+            }
+        }
         return false
     }
 
@@ -1344,7 +1690,7 @@ enum PracticeSpeechDeliveryAnalyzer {
         if fillerWords.contains(normalized) || contractionSuffixNoise.contains(normalized) {
             return false
         }
-        if normalized.count == 1 {
+        if normalized.count == 1 && normalized.allSatisfy(\.isASCII) {
             return normalized == "i" || normalized == "a"
         }
         return true
