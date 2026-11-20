@@ -328,15 +328,17 @@ struct PackageValidationAndExportView: View {
                     }
                     .padding(16).cardStyle()
                 }
-
-                Button { stage = .ready } label: {
-                    Text("Review Your Package").primaryCapsuleButton()
-                }
-                .accessibilityHint("Continues even when an advisory item needs review")
             }
             .padding(16)
         }
         .scrollEdgeHaptics()
+        .floatingBottomActionBar(horizontalPadding: 16) {
+            Button { stage = .ready } label: {
+                Text("Review Your Package").primaryCapsuleButton()
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Continues even when an advisory item needs review")
+        }
     }
 
     private func validationCard(_ title: String, detail: String, passed: Bool, action: String?, actionHandler: @escaping () -> Void) -> some View {
@@ -377,15 +379,16 @@ struct PackageValidationAndExportView: View {
 
                 Text("Bundle summary").font(Theme.Typography.sectionHeader)
                 ForEach(bundleItems) { item in bundleFileRow(item) }
-
-                Button { showingShareChoices = true } label: {
-                    Label("Share Package", systemImage: "square.and.arrow.up").primaryCapsuleButton()
-                }
-                .padding(.top, 8)
             }
             .padding(16)
         }
         .scrollEdgeHaptics()
+        .floatingBottomActionBar(horizontalPadding: 16) {
+            Button { showingShareChoices = true } label: {
+                Label("Share Package", systemImage: "square.and.arrow.up").primaryCapsuleButton()
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     private struct BundleItem: Identifiable {

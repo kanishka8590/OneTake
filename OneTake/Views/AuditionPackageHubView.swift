@@ -90,34 +90,27 @@ struct AuditionPackageHubView: View {
 
                         // Deliverables Section
                         deliverablesSection
-
-                        // Export Package Button (Visible when at least 1 item ready)
-                        if audition.packageReadyCount > 0 {
-                            Button {
-                                showingPackageValidation = true
-                            } label: {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "square.and.arrow.up")
-                                    Text("Export Package")
-                                }
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Theme.Colors.onAction)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .background(Theme.Colors.primaryPlum)
-                                .clipShape(Capsule())
-                            }
-                            .padding(.top, 4)
-                            .padding(.bottom, 36)
-                        }
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
+                    .padding(.bottom, 24)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .ignoresSafeArea(edges: .top)
             .scrollEdgeHaptics()
+            .floatingBottomActionBar(isPresented: audition.packageReadyCount > 0) {
+                Button {
+                    showingPackageValidation = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "square.and.arrow.up")
+                        Text("Export Package")
+                    }
+                    .primaryCapsuleButton()
+                }
+                .buttonStyle(.plain)
+            }
 
             // Transient confirmation banner overlay
             if let banner = bannerMessage {

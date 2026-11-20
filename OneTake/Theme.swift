@@ -195,6 +195,38 @@ extension View {
         modifier(SecondaryCapsuleButtonModifier())
     }
 
+    /// Pins action controls cleanly to the bottom safe area over a soft canvas fade.
+    @ViewBuilder
+    func floatingBottomActionBar<Bar: View>(
+        isPresented: Bool = true,
+        horizontalPadding: CGFloat = Theme.Layout.screenHPadding,
+        @ViewBuilder content: () -> Bar
+    ) -> some View {
+        if isPresented {
+            safeAreaInset(edge: .bottom, spacing: 0) {
+                content()
+                    .shadow(color: Color.black.opacity(0.24), radius: 10, y: 4)
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.top, 10)
+                    .padding(.bottom, 6)
+                    .background(
+                        LinearGradient(
+                            colors: [
+                                Theme.Colors.canvasBackground.opacity(0),
+                                Theme.Colors.canvasBackground.opacity(0.92),
+                                Theme.Colors.canvasBackground
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .ignoresSafeArea(edges: .bottom)
+                    )
+            }
+        } else {
+            self
+        }
+    }
+
     func statusBadge(color: Color) -> some View {
         modifier(StatusBadgeModifier(color: color))
     }

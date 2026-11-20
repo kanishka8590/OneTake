@@ -709,7 +709,7 @@ struct MemoriseView: View {
             }
             .scrollEdgeHaptics()
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .floatingBottomActionBar(horizontalPadding: 16) {
             Button {
                 cueSpeaker.stop()
                 navigateToSayItAloud = true
@@ -725,23 +725,8 @@ struct MemoriseView: View {
                 .background(Theme.Colors.primaryPlum)
                 .foregroundStyle(.white)
                 .clipShape(Capsule())
-                .shadow(color: Color.black.opacity(0.24), radius: 10, y: 4)
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 6)
-            .background(
-                LinearGradient(
-                    colors: [
-                        Theme.Colors.canvasBackground.opacity(0),
-                        Theme.Colors.canvasBackground.opacity(0.92),
-                        Theme.Colors.canvasBackground
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
         }
         .background(Theme.Colors.canvasBackground)
         .onDisappear {
@@ -1728,22 +1713,21 @@ struct PracticeReviewView: View {
             VStack(spacing: 16) {
                 playbackPanel
                 highlightedScriptCard
-                if !isSavedReview {
-                    HStack(spacing: 12) {
-                        Button("Retake") {
-                            onRetake?()
-                            dismiss()
-                        }
-                        .secondaryLavenderButton()
-                        Button("Save") { save() }
-                            .primaryCapsuleButton()
-                    }
-                    .padding(.top, 4)
-                }
             }
             .padding(16)
         }
         .scrollEdgeHaptics()
+        .floatingBottomActionBar(isPresented: !isSavedReview, horizontalPadding: 16) {
+            HStack(spacing: 12) {
+                Button("Retake") {
+                    onRetake?()
+                    dismiss()
+                }
+                .secondaryLavenderButton()
+                Button("Save") { save() }
+                    .primaryCapsuleButton()
+            }
+        }
         .background(Theme.Colors.canvasBackground)
         .navigationTitle("Your delivery")
         .navigationBarTitleDisplayMode(.inline)
