@@ -840,32 +840,25 @@ struct HeadshotGuidanceView: View {
 
                         VStack(spacing: 12) {
                             guideCard(
-                                title: "1. Front Angle",
+                                title: "Front Angle",
                                 detail: "Face the lens squarely with eyes on the upper third horizontal notch. Soft natural key light in front.",
                                 icon: "person.crop.rectangle"
                             )
 
                             guideCard(
-                                title: "2. 3/4 Left Profile",
+                                title: "Left Profile",
                                 detail: "Turn nose approximately 40° to your left while keeping your gaze on the camera lens.",
                                 icon: "arrow.left.and.right.square"
                             )
 
                             guideCard(
-                                title: "3. 3/4 Right Profile",
+                                title: "Right Profile",
                                 detail: "Turn nose approximately 40° to your right, maintaining eye level and relaxed shoulders.",
                                 icon: "arrow.left.and.right.square"
                             )
                         }
 
                         VStack(spacing: 12) {
-                            Toggle("Auto-Capture When Aligned", isOn: Bindable(guidanceService).autoCaptureEnabled)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .tint(Theme.Colors.cameraGuideGold)
-
-                            Divider().background(Color.white.opacity(0.12))
-
                             Toggle("Open-Palm Gesture Shutter", isOn: Bindable(guidanceService).gesturesEnabled)
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(.white)
@@ -874,6 +867,13 @@ struct HeadshotGuidanceView: View {
                             Divider().background(Color.white.opacity(0.12))
 
                             Toggle("Spoken Voice Guidance", isOn: Bindable(guidanceService).voiceGuidanceEnabled)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .tint(Theme.Colors.cameraGuideGold)
+
+                            Divider().background(Color.white.opacity(0.12))
+
+                            Toggle("Auto-Capture When Aligned", isOn: Bindable(guidanceService).autoCaptureEnabled)
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(.white)
                                 .tint(Theme.Colors.cameraGuideGold)
