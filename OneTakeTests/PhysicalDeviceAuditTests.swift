@@ -291,21 +291,6 @@ final class PhysicalDeviceAuditTests: XCTestCase {
         // Headshots Flow
         let sampleImg = DemoMediaGenerator.renderHeadshotImage(angle: "Front")
         captureView(
-            NavigationStack {
-                HeadshotPackageGridView(
-                    audition: audition,
-                    frontCropped: sampleImg,
-                    leftCropped: sampleImg,
-                    rightCropped: sampleImg,
-                    onRetakeAngle: { _ in },
-                    onSaveCompleted: {}
-                )
-            }.modelContainer(container),
-            name: "11_headshot_package_grid",
-            appState: state,
-            style: .dark
-        )
-        captureView(
             HeadshotReviewView(audition: audition, initialFront: sampleImg, initialLeft: sampleImg, initialRight: sampleImg)
                 .modelContainer(container),
             name: "12_headshot_review",
@@ -343,19 +328,6 @@ final class PhysicalDeviceAuditTests: XCTestCase {
                 TalkToOneTakeBriefingView(audition: audition, onReadyToRecord: { _ in })
             }.modelContainer(container),
             name: "16_talk_to_onetake_briefing",
-            appState: state,
-            style: .dark
-        )
-        captureView(
-            NavigationStack {
-                TakesListView(
-                    audition: audition,
-                    isSlate: false,
-                    takes: .constant(audition.auditionTakes),
-                    selectedTakeID: .constant(audition.selectedAuditionTakeID)
-                )
-            }.modelContainer(container),
-            name: "17_takes_list",
             appState: state,
             style: .dark
         )
@@ -789,20 +761,16 @@ final class PhysicalDeviceAuditTests: XCTestCase {
             ("01_MemoriseView_PracticeAloud", AnyView(NavigationStack { MemoriseView(script: script, appState: state) })),
             ("02_SayItAloudView_PracticeAloud", AnyView(NavigationStack { SayItAloudView(script: script, appState: state, help: .nothing) })),
             ("03_PracticeReviewView_YourDelivery", AnyView(NavigationStack { PracticeReviewView(script: script, session: reviewSession, appState: state, isSavedReview: false) })),
-            ("04_TestYourselfView", AnyView(NavigationStack { TestYourselfView(script: script, appState: state) })),
-            ("05_PracticeAuditionCueSelectionView", AnyView(PracticeAuditionCueSelectionView(scriptText: script.rawText, initialCues: script.cueLines) { _ in })),
-            ("06_AuditionPackageHub_ExportPackage", AnyView(NavigationStack { AuditionPackageHubView(audition: completeAudition) })),
-            ("07_PackageValidation_CheckYourPackage", AnyView(PackageValidationAndExportView(audition: completeAudition, initialStage: .checking))),
-            ("08_PackageValidation_ReadyToSend", AnyView(PackageValidationAndExportView(audition: completeAudition, initialStage: .ready))),
-            ("09_VideoCompressorView", AnyView(NavigationStack { VideoCompressorView(audition: completeAudition, take: sampleTake, isSlate: false, initialSizeMB: 34.5, isDemoMode: true) { _, _ in } })),
-            ("10_TakeReviewView", AnyView(TakeReviewView(audition: completeAudition, rawVideoURL: clipURL, totalDurationSeconds: 2.0, isSlate: false, qualityMetrics: PreTakeQualityMetrics(), onTakeApproved: { _ in }, onRetake: {}))),
-            ("11_HeadshotCropView", AnyView(HeadshotCropView(originalImage: frontImg, defaultRatio: .ratio4x5, angle: .front, batchProgress: (1, 3)) { _, _, _ in })),
-            ("12_HeadshotPackageGridView", AnyView(HeadshotPackageGridView(audition: completeAudition, frontCropped: frontImg, leftCropped: leftImg, rightCropped: rightImg, frontOriginal: frontImg, leftOriginal: leftImg, rightOriginal: rightImg, onRetakeAngle: { _ in }, onSaveCompleted: {}))),
-            ("13_HeadshotImportPickerView", AnyView(HeadshotImportPickerView(audition: completeAudition) {})),
-            ("14_VideoImportPickerView", AnyView(VideoImportPickerView(audition: completeAudition, isSlate: false) { _ in })),
-            ("15_AuditionModeAndCuesView", AnyView(AuditionModeAndCuesView(audition: completeAudition) {})),
-            ("16_SlateProfileSetupView", AnyView(SlateProfileSetupView(audition: completeAudition) {})),
-            ("17_TalkToOneTakeBriefingView", AnyView(TalkToOneTakeBriefingView(audition: completeAudition, isSlate: true, scriptPreview: "Hi, I'm Meow...") { _ in }))
+            ("04_PracticeAuditionCueSelectionView", AnyView(PracticeAuditionCueSelectionView(scriptText: script.rawText, initialCues: script.cueLines) { _ in })),
+            ("05_AuditionPackageHub_ExportPackage", AnyView(NavigationStack { AuditionPackageHubView(audition: completeAudition) })),
+            ("06_PackageValidation_CheckYourPackage", AnyView(PackageValidationAndExportView(audition: completeAudition, initialStage: .checking))),
+            ("07_PackageValidation_ReadyToSend", AnyView(PackageValidationAndExportView(audition: completeAudition, initialStage: .ready))),
+            ("08_VideoCompressorView", AnyView(NavigationStack { VideoCompressorView(audition: completeAudition, take: sampleTake, isSlate: false, initialSizeMB: 34.5, isDemoMode: true) { _, _ in } })),
+            ("09_TakeReviewView", AnyView(TakeReviewView(audition: completeAudition, rawVideoURL: clipURL, totalDurationSeconds: 2.0, isSlate: false, qualityMetrics: PreTakeQualityMetrics(), onTakeApproved: { _ in }, onRetake: {}))),
+            ("10_HeadshotCropView", AnyView(HeadshotCropView(originalImage: frontImg, defaultRatio: .ratio4x5, angle: .front, batchProgress: (1, 3)) { _, _, _ in })),
+            ("11_AuditionModeAndCuesView", AnyView(AuditionModeAndCuesView(audition: completeAudition) {})),
+            ("12_SlateProfileSetupView", AnyView(SlateProfileSetupView(audition: completeAudition) {})),
+            ("13_TalkToOneTakeBriefingView", AnyView(TalkToOneTakeBriefingView(audition: completeAudition, isSlate: true, scriptPreview: "Hi, I'm Meow...") { _ in }))
         ]
 
         let model = FloatingBarShowcaseModel()

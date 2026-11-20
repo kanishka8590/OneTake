@@ -1029,36 +1029,7 @@ private struct ScriptPracticeCard: View {
     }
 }
 
-// MARK: - Test and live delivery
-
-struct TestYourselfView: View {
-    let script: PracticeScript; let appState: AppState
-    @State private var help = HelpLevel.nothing
-    @State private var enteredRun = false
-    var body: some View {
-        Group {
-            if enteredRun { SayItAloudView(script: script, appState: appState, help: help) }
-            else {
-                VStack(spacing: 22) {
-                    Text("Test Yourself!").font(Theme.Typography.screenTitle)
-                    Text("Choose how much help you want before you start.").foregroundStyle(Theme.Colors.textSecondary)
-                    Picker("Show", selection: $help) {
-                        ForEach(HelpLevel.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.inline)
-                }
-                .padding(20)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .floatingBottomActionBar {
-                    Button { enteredRun = true } label: { Text("Continue").primaryCapsuleButton() }
-                        .buttonStyle(.plain)
-                }
-                .background(Theme.Colors.canvasBackground)
-            }
-        }.navigationTitle(enteredRun ? "Say It Aloud!" : "Test Yourself!").navigationBarTitleDisplayMode(.inline)
-            .toolbar(.hidden, for: .tabBar)
-    }
-}
+// MARK: - Live delivery
 
 struct SayItAloudView: View {
     let script: PracticeScript
@@ -1287,11 +1258,13 @@ struct SayItAloudView: View {
             Text(formattedElapsedTime)
                 .font(.caption.weight(.semibold))
                 .monospacedDigit()
+                .lineLimit(1)
                 .foregroundStyle(Theme.Colors.textPrimary)
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
         .background(Theme.Colors.lavenderSurface, in: Capsule())
+        .fixedSize(horizontal: true, vertical: true)
     }
 
     private var topControlHeader: some View {

@@ -1075,3 +1075,20 @@ struct AuditionPackageHubView: View {
         }
     }
 }
+
+struct MovieTransferable: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(contentType: .movie) { movie in
+            SentTransferredFile(movie.url)
+        } importing: { received in
+            let ext = received.file.pathExtension.isEmpty ? "mov" : received.file.pathExtension
+            let copyURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(UUID().uuidString).\(ext)")
+            try? FileManager.default.removeItem(at: copyURL)
+            try FileManager.default.copyItem(at: received.file, to: copyURL)
+            return Self(url: copyURL)
+        }
+    }
+}
