@@ -1217,19 +1217,15 @@ struct SayItAloudView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(statusDotColor)
-                        .frame(width: 7, height: 7)
-                    Text(formattedElapsedTime)
-                        .font(.caption.weight(.semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.Colors.textPrimary)
+            if #available(iOS 26.0, *) {
+                ToolbarItem(placement: .topBarTrailing) {
+                    timerPill
                 }
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .background(Theme.Colors.lavenderSurface, in: Capsule())
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .topBarTrailing) {
+                    timerPill
+                }
             }
         }
         .onChange(of: recorder.recognizedWords) { _, segments in
@@ -1281,6 +1277,21 @@ struct SayItAloudView: View {
                 )
             }
         }
+    }
+
+    private var timerPill: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(statusDotColor)
+                .frame(width: 7, height: 7)
+            Text(formattedElapsedTime)
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(Theme.Colors.textPrimary)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .background(Theme.Colors.lavenderSurface, in: Capsule())
     }
 
     private var topControlHeader: some View {
