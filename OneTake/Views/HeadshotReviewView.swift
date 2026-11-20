@@ -260,7 +260,6 @@ struct HeadshotReviewView: View {
                 Button {
                     withAnimation(.snappy(duration: 0.25)) {
                         setRatioForCurrentAngle(ratio)
-                        resetFramingForCurrentAngle()
                     }
                 } label: {
                     Text(ratio.rawValue)
@@ -287,16 +286,9 @@ struct HeadshotReviewView: View {
             if let img = currentImage {
                 GeometryReader { geo in
                     let effectiveScale = max(1.0, min(3.5, currentScale * pinchScale))
-                    let basePixelOffset = CGSize(
-                        width: currentOffsetRatio.width * geo.size.width,
-                        height: currentOffsetRatio.height * geo.size.height
-                    )
-                    let proposedOffset = CGSize(
-                        width: basePixelOffset.width + dragTranslation.width,
-                        height: basePixelOffset.height + dragTranslation.height
-                    )
-                    let liveClampedOffset = HeadshotCropMath.clampedOffset(
-                        proposedOffset,
+                    let liveClampedOffset = HeadshotCropMath.adjustedOffset(
+                        baseRatio: currentOffsetRatio,
+                        translation: dragTranslation,
                         imageSize: img.size,
                         containerSize: geo.size,
                         scale: effectiveScale
@@ -318,12 +310,9 @@ struct HeadshotReviewView: View {
                                     }
                                     .onEnded { scale in
                                         let finalScale = max(1.0, min(3.5, currentScale * scale))
-                                        let activeOffset = CGSize(
-                                            width: currentOffsetRatio.width * geo.size.width + dragTranslation.width,
-                                            height: currentOffsetRatio.height * geo.size.height + dragTranslation.height
-                                        )
-                                        let clamped = HeadshotCropMath.clampedOffset(
-                                            activeOffset,
+                                        let clamped = HeadshotCropMath.adjustedOffset(
+                                            baseRatio: currentOffsetRatio,
+                                            translation: dragTranslation,
                                             imageSize: img.size,
                                             containerSize: geo.size,
                                             scale: finalScale
@@ -344,12 +333,9 @@ struct HeadshotReviewView: View {
                                     }
                                     .onEnded { val in
                                         let activeScale = max(1.0, min(3.5, currentScale * pinchScale))
-                                        let rawOffset = CGSize(
-                                            width: currentOffsetRatio.width * geo.size.width + val.translation.width,
-                                            height: currentOffsetRatio.height * geo.size.height + val.translation.height
-                                        )
-                                        let clamped = HeadshotCropMath.clampedOffset(
-                                            rawOffset,
+                                        let clamped = HeadshotCropMath.adjustedOffset(
+                                            baseRatio: currentOffsetRatio,
+                                            translation: val.translation,
                                             imageSize: img.size,
                                             containerSize: geo.size,
                                             scale: activeScale

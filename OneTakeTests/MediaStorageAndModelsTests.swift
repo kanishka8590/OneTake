@@ -353,4 +353,49 @@ final class MediaStorageAndModelsTests: XCTestCase {
         XCTAssertEqual(Audition(hasDeadline: false).deadlineUrgencyLabel(referenceDate: now), "No Deadline")
         XCTAssertEqual(Audition(deadline: past, statusRaw: AuditionStatus.sent.rawValue).deadlineUrgencyLabel(referenceDate: now), "Submitted")
     }
+
+    func testAuditionRequiredDeliverablesReflectSubmissionRequirements() throws {
+        let folder = "TestReqs_\(UUID().uuidString)"
+        let folderURL = MediaStorage.documentsDirectory.appendingPathComponent(folder, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folderURL) }
+
+        _ = try MediaStorage.saveData(Data([1]), relativePath: "\(folder)/front.jpg")
+        _ = try MediaStorage.saveData(Data([2]), relativePath: "\(folder)/left.jpg")
+        _ = try MediaStorage.saveData(Data([3]), relativePath: "\(folder)/right.jpg")
+        _ = try MediaStorage.saveData(Data([4]), relativePath: "\(folder)/slate.mp4")
+        _ = try MediaStorage.saveData(Data([5]), relativePath: "\(folder)/clip.mp4")
+
+        // Empty requirements fall back to all 3 deliverables
+        let emptyReqs = Audition(requirements: [])
+        XCTAssertEqual(emptyReqs.requiredDeliverables, [.headshots, .slate, .audition])
+        XCTAssertEqual(emptyReqs.packageTotalCount, 3)
+
+        // When Self-Tape / Audition Clip is omitted or toggled off, only Headshots & Slate exist
+        let noSelfTape = Audition(
+            requirements: [
+                SubmissionRequirement(title: "Guided Headshots (3 Angles: Front, Left, Right)"),
+                SubmissionRequirement(title: "Slate / Introduction Video")
+            ],
+            headshots: [
+                HeadshotAsset(angle: .front, originalFilePath: "\(folder)/front.jpg", croppedFilePath: ""),
+                HeadshotAsset(angle: .left, originalFilePath: "\(folder)/left.jpg", croppedFilePath: ""),
+                HeadshotAsset(angle: .right, originalFilePath: "\(folder)/right.jpg", croppedFilePath: "")
+            ],
+            slateTakes: [VideoTake(title: "Slate", filePath: "\(folder)/slate.mp4", durationSeconds: 10, fileSizeMB: 1)],
+            auditionTakes: [VideoTake(title: "Clip", filePath: "\(folder)/clip.mp4", durationSeconds: 20, fileSizeMB: 2)]
+        )
+        XCTAssertTrue(noSelfTape.requiresHeadshots)
+        XCTAssertTrue(noSelfTape.requiresSlate)
+        XCTAssertFalse(noSelfTape.requiresAudition)
+        XCTAssertEqual(noSelfTape.requiredDeliverables, [.headshots, .slate])
+        XCTAssertEqual(noSelfTape.packageTotalCount, 2)
+        XCTAssertEqual(noSelfTape.packageReadyCount, 2)
+
+        // Enabling Self-Tape adds Audition Clip back
+        noSelfTape.requirements.append(SubmissionRequirement(title: "Audition Self-Tape Take"))
+        XCTAssertTrue(noSelfTape.requiresAudition)
+        XCTAssertEqual(noSelfTape.requiredDeliverables, [.headshots, .slate, .audition])
+        XCTAssertEqual(noSelfTape.packageTotalCount, 3)
+        XCTAssertEqual(noSelfTape.packageReadyCount, 3)
+    }
 }

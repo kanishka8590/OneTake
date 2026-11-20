@@ -2,38 +2,6 @@ import SwiftUI
 import SwiftData
 import PhotosUI
 
-enum PackageDeliverable: String, CaseIterable, Identifiable {
-    case headshots
-    case slate
-    case audition
-
-    var id: String { rawValue }
-
-    var stepNumber: Int {
-        switch self {
-        case .headshots: return 1
-        case .slate: return 2
-        case .audition: return 3
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .headshots: return "Headshot"
-        case .slate: return "Slate"
-        case .audition: return "Audition Clip"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .headshots: return "person.crop.rectangle.badge.plus"
-        case .slate: return "person.badge.shield.checkmark"
-        case .audition: return "movieclapper"
-        }
-    }
-}
-
 enum PackageReviewTarget: Identifiable {
     case headshots([HeadshotAsset])
     case slate(VideoTake)
@@ -93,22 +61,15 @@ struct AuditionPackageHubView: View {
     // MARK: - Deliverables State
 
     private func isDeliverableComplete(_ deliverable: PackageDeliverable) -> Bool {
-        switch deliverable {
-        case .headshots:
-            return audition.isHeadshotsReady
-        case .slate:
-            return audition.isSlateReady
-        case .audition:
-            return audition.isAuditionReady
-        }
+        audition.isDeliverableReady(deliverable)
     }
 
     private var incompleteDeliverables: [PackageDeliverable] {
-        PackageDeliverable.allCases.filter { !isDeliverableComplete($0) }
+        audition.requiredDeliverables.filter { !isDeliverableComplete($0) }
     }
 
     private var completedDeliverables: [PackageDeliverable] {
-        PackageDeliverable.allCases.filter { isDeliverableComplete($0) }
+        audition.requiredDeliverables.filter { isDeliverableComplete($0) }
     }
 
     // MARK: - Body
@@ -604,7 +565,11 @@ struct AuditionPackageHubView: View {
     // MARK: - PACKAGE Progress Bar Section
 
     private var packageProgressSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let deliverables = audition.requiredDeliverables
+        let total = audition.packageTotalCount
+        let isAllReady = total > 0 && audition.packageReadyCount == total
+
+        return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("PACKAGE")
                     .font(.system(size: 12, weight: .bold))
@@ -612,55 +577,51 @@ struct AuditionPackageHubView: View {
 
                 Spacer()
 
-                Text("\(audition.packageReadyCount) of 3 ready")
+                Text("\(audition.packageReadyCount) of \(total) ready")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(audition.packageReadyCount == 3 ? Theme.Colors.successGreen : Theme.Colors.accent)
+                    .foregroundStyle(isAllReady ? Theme.Colors.successGreen : Theme.Colors.accent)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(audition.packageReadyCount == 3 ? Theme.Colors.successGreen.opacity(0.12) : Theme.Colors.lavenderSurface)
+                    .background(isAllReady ? Theme.Colors.successGreen.opacity(0.12) : Theme.Colors.lavenderSurface)
                     .clipShape(Capsule())
             }
 
-            // 3-segment progress bar (each segment colored by its own boolean)
-            HStack(spacing: 8) {
-                Capsule()
-                    .fill(audition.isHeadshotsReady ? Theme.Colors.successGreen : Theme.Colors.lavenderSurface)
-                    .frame(height: 6)
-                Capsule()
-                    .fill(audition.isSlateReady ? Theme.Colors.successGreen : Theme.Colors.lavenderSurface)
-                    .frame(height: 6)
-                Capsule()
-                    .fill(audition.isAuditionReady ? Theme.Colors.successGreen : Theme.Colors.lavenderSurface)
-                    .frame(height: 6)
-            }
+            if !deliverables.isEmpty {
+                // Multi-segment progress bar (each required deliverable colored by its readiness)
+                HStack(spacing: 8) {
+                    ForEach(deliverables) { deliverable in
+                        Capsule()
+                            .fill(isDeliverableComplete(deliverable) ? Theme.Colors.successGreen : Theme.Colors.lavenderSurface)
+                            .frame(height: 6)
+                    }
+                }
 
-            // Labels under progress bar
-            HStack {
-                Text("Headshot")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(audition.isHeadshotsReady ? Theme.Colors.successGreen : Theme.Colors.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Text("Slate")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(audition.isSlateReady ? Theme.Colors.successGreen : Theme.Colors.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-
-                Text("Audition Clip")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(audition.isAuditionReady ? Theme.Colors.successGreen : Theme.Colors.textSecondary)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+                // Labels under progress bar
+                HStack {
+                    ForEach(Array(deliverables.enumerated()), id: \.element.id) { index, deliverable in
+                        Text(deliverable.title)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(isDeliverableComplete(deliverable) ? Theme.Colors.successGreen : Theme.Colors.textSecondary)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .frame(maxWidth: .infinity, alignment: progressLabelAlignment(index: index, count: deliverables.count))
+                    }
+                }
             }
         }
+    }
+
+    private func progressLabelAlignment(index: Int, count: Int) -> Alignment {
+        if count <= 1 || index == 0 { return .leading }
+        if index == count - 1 { return .trailing }
+        return .center
     }
 
     // MARK: - Deliverables Section
 
     private var deliverablesSection: some View {
         VStack(spacing: 12) {
-            // 1. Completed Items as Compact White Rounded Rows
+            // 1. Completed Items as Compact Rounded Rows
             ForEach(completedDeliverables) { deliverable in
                 completedRow(for: deliverable)
             }
@@ -674,8 +635,8 @@ struct AuditionPackageHubView: View {
                 ForEach(Array(remaining)) { item in
                     simpleRemainingRow(for: item)
                 }
-            } else if audition.packageReadyCount == 3 {
-                // All 3 Completed Card
+            } else if !audition.requiredDeliverables.isEmpty {
+                // All Required Items Completed Card
                 allCompletedCard
             }
         }
@@ -737,10 +698,13 @@ struct AuditionPackageHubView: View {
     // UP NEXT • PIECE X OF 3 with ≈ 2 min, bold title, 1-line subtitle, primary pill & soft lavender pill
 
     private func heroFocusCard(for deliverable: PackageDeliverable) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            // Eyebrow row: UP NEXT • PIECE X OF 3 on left, ≈ 2 min on right
+        let pieceNumber = (audition.requiredDeliverables.firstIndex(of: deliverable) ?? 0) + 1
+        let totalPieces = max(1, audition.packageTotalCount)
+
+        return VStack(alignment: .leading, spacing: 14) {
+            // Eyebrow row: UP NEXT • PIECE X OF Y on left, ≈ 2 min on right
             HStack {
-                Text("UP NEXT • PIECE \(deliverable.stepNumber) OF 3")
+                Text("UP NEXT • PIECE \(pieceNumber) OF \(totalPieces)")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(Theme.Colors.accent)
 
@@ -762,30 +726,26 @@ struct AuditionPackageHubView: View {
                 .foregroundStyle(Theme.Colors.textSecondary)
                 .lineLimit(1)
 
-            // Buttons: Dark plum primary + soft lavender secondary
+            // Buttons: Equal-sized dark plum primary + soft lavender secondary
             HStack(spacing: 10) {
                 Button {
                     startAction(for: deliverable)
                 } label: {
-                    Text(focusPrimaryButtonTitle(deliverable))
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Theme.Colors.onAction)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Theme.Colors.primaryPlum)
-                        .clipShape(Capsule())
+                    focusPillLabel(
+                        focusPrimaryButtonTitle(deliverable),
+                        foreground: Theme.Colors.onAction,
+                        background: Theme.Colors.primaryPlum
+                    )
                 }
 
                 Button {
                     startImport(for: deliverable)
                 } label: {
-                    Text(focusSecondaryButtonTitle(deliverable))
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.Colors.accent)
-                        .padding(.vertical, 12)
-                        .padding(.horizontal, 14)
-                        .background(Theme.Colors.lavenderSurface)
-                        .clipShape(Capsule())
+                    focusPillLabel(
+                        focusSecondaryButtonTitle(deliverable),
+                        foreground: Theme.Colors.accent,
+                        background: Theme.Colors.lavenderSurface
+                    )
                 }
             }
         }
@@ -794,6 +754,22 @@ struct AuditionPackageHubView: View {
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Color.primary.opacity(0.06), lineWidth: 1))
         .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
+    }
+
+    private func focusPillLabel(
+        _ title: String,
+        foreground: Color,
+        background: Color
+    ) -> some View {
+        Text(title)
+            .font(.system(size: 14, weight: .semibold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.82)
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: Theme.Layout.minTapTarget)
+            .background(background)
+            .clipShape(Capsule())
     }
 
     private func focusCardTitle(_ deliverable: PackageDeliverable) -> String {
@@ -877,14 +853,25 @@ struct AuditionPackageHubView: View {
                 .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(Theme.Colors.textPrimary)
 
-            Text("Headshots, slate, and audition clips are fully completed.")
+            Text(allCompletedSubtitle)
                 .font(.system(size: 13, weight: .regular))
                 .foregroundStyle(Theme.Colors.textSecondary)
+                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(20)
         .background(Theme.Colors.cardSurface)
         .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var allCompletedSubtitle: String {
+        let names = audition.requiredDeliverables.map(\.title)
+        switch names.count {
+        case 0: return "Your submission requirements are completed."
+        case 1: return "\(names[0]) is completed."
+        case 2: return "\(names[0]) and \(names[1]) are fully completed."
+        default: return "Headshots, slate, and audition clips are fully completed."
+        }
     }
 
     // MARK: - Actions

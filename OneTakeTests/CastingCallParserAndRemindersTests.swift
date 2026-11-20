@@ -579,7 +579,10 @@ final class CastingCallParserAndRemindersTests: XCTestCase {
         XCTAssertEqual(filteredSent.count, 1)
         XCTAssertEqual(filteredSent.first?.projectName, "Sent Project")
 
-        XCTAssertEqual(AuditionListFilter.allCases.map(\.rawValue), ["Active", "Sent", "All"])
+        XCTAssertEqual(AuditionListFilter.allCases.map(\.rawValue), ["All", "Active", "Sent"])
+        XCTAssertEqual(AuditionListFilter.all.tintColor, Theme.Colors.accent)
+        XCTAssertEqual(AuditionListFilter.active.tintColor, Theme.Colors.warningAmber)
+        XCTAssertEqual(AuditionListFilter.sent.tintColor, Theme.Colors.successGreen)
     }
 
     func testMissingDeadlineLeavesHasDetectedDeadlineFalse() async {

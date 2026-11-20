@@ -75,6 +75,35 @@ nonisolated enum HeadshotCropMath {
         )
     }
 
+    /// Clamps `baseRatio * containerSize` to the active frame bounds before applying `translation`,
+    /// preventing pan dead-zones after switching aspect ratios while preserving reversible framing.
+    static func adjustedOffset(
+        baseRatio: CGSize,
+        translation: CGSize = .zero,
+        imageSize: CGSize,
+        containerSize: CGSize,
+        scale: CGFloat
+    ) -> CGSize {
+        let clampedBase = clampedOffset(
+            CGSize(
+                width: baseRatio.width * containerSize.width,
+                height: baseRatio.height * containerSize.height
+            ),
+            imageSize: imageSize,
+            containerSize: containerSize,
+            scale: scale
+        )
+        return clampedOffset(
+            CGSize(
+                width: clampedBase.width + translation.width,
+                height: clampedBase.height + translation.height
+            ),
+            imageSize: imageSize,
+            containerSize: containerSize,
+            scale: scale
+        )
+    }
+
     /// Computes the exact visible crop rect in upright image pixel coordinates (top-left origin)
     /// corresponding to SwiftUI `.scaledToFill()` inside `containerSize` with `scale` and `offset`.
     static func cropRect(

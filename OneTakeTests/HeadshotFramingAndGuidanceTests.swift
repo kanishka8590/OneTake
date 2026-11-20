@@ -209,6 +209,37 @@ final class HeadshotFramingAndGuidanceTests: XCTestCase {
         XCTAssertEqual(downsampled.imageOrientation, .up)
     }
 
+    func testAdjustedOffsetClampsBaseAcrossAspectSwitchWithoutDragDeadZone() {
+        let imgSize = CGSize(width: 1200, height: 1600) // 3:4 portrait image
+        // Panned horizontally in a narrower 2:3 container at 1.2x zoom
+        let narrowContainer = CGSize(width: 260, height: 390)
+        let wideContainer = CGSize(width: 390, height: 390) // 1:1 container
+        let baseRatio = CGSize(width: 0.25, height: 0.0)
+
+        let narrowLimit = HeadshotCropMath.maxOffset(imageSize: imgSize, containerSize: narrowContainer, scale: 1.2)
+        let wideLimit = HeadshotCropMath.maxOffset(imageSize: imgSize, containerSize: wideContainer, scale: 1.2)
+        XCTAssertGreaterThan(narrowLimit.width, wideLimit.width)
+
+        // Switching directly to 1:1 clamps cleanly within 1:1 bounds
+        let switchedOffset = HeadshotCropMath.adjustedOffset(
+            baseRatio: baseRatio,
+            imageSize: imgSize,
+            containerSize: wideContainer,
+            scale: 1.2
+        )
+        XCTAssertLessThanOrEqual(abs(switchedOffset.width), wideLimit.width + 0.01)
+
+        // Dragging back by -20pt immediately moves inward from the clamped edge (no dead-zone)
+        let draggedBack = HeadshotCropMath.adjustedOffset(
+            baseRatio: baseRatio,
+            translation: CGSize(width: -20, height: 0),
+            imageSize: imgSize,
+            containerSize: wideContainer,
+            scale: 1.2
+        )
+        XCTAssertEqual(draggedBack.width, switchedOffset.width - 20, accuracy: 0.01)
+    }
+
     // MARK: - HeadshotGuidanceService Pure Evaluators & Demo Gating
 
     func testIsEyeLevelPitchRejectsFlatPhoneAndAcceptsUprightPhone() {

@@ -90,11 +90,22 @@ struct PackageValidationAndExportView: View {
         return take.fileSizeMB
     }
 
+    private var requiredVideoTakes: [VideoTake] {
+        [
+            audition.requiresSlate ? slate : nil,
+            audition.requiresAudition ? clip : nil
+        ].compactMap { $0 }
+    }
+
+    private var requiresAnyVideo: Bool {
+        audition.requiresSlate || audition.requiresAudition
+    }
+
     private var oversizedTake: VideoTake? {
-        if let slate, actualSizeMB(for: slate, metadata: slateMetadata) > rules.maxPerClipSizeMB {
+        if audition.requiresSlate, let slate, actualSizeMB(for: slate, metadata: slateMetadata) > rules.maxPerClipSizeMB {
             return slate
         }
-        if let clip, actualSizeMB(for: clip, metadata: clipMetadata) > rules.maxPerClipSizeMB {
+        if audition.requiresAudition, let clip, actualSizeMB(for: clip, metadata: clipMetadata) > rules.maxPerClipSizeMB {
             return clip
         }
         return nil
@@ -199,41 +210,49 @@ struct PackageValidationAndExportView: View {
                     .font(Theme.Typography.sectionHeader)
                     .accessibilityAddTraits(.isHeader)
 
-                validationCard(
-                    "Headshots \(rules.requiredHeadshotRatio.rawValue)",
-                    detail: headshotValidationDetail,
-                    passed: headshotsPass,
-                    action: hasMissingHeadshotFiles ? nil : "Fix crops"
-                ) {
-                    presentHeadshotCrop()
-                }
-                validationCard(
-                    "Slate under \(Int(rules.maxSlateSeconds))s",
-                    detail: durationDetail(slate, metadata: slateMetadata, cap: rules.maxSlateSeconds),
-                    passed: slateDurationPass,
-                    action: (slate != nil && MediaStorage.fileExists(at: slate?.filePath)) ? "Open Slate Trimmer" : nil
-                ) {
-                    if let slate, MediaStorage.fileExists(at: slate.filePath) {
-                        reviewRoute = .slate(slate)
+                if audition.requiresHeadshots {
+                    validationCard(
+                        "Headshots \(rules.requiredHeadshotRatio.rawValue)",
+                        detail: headshotValidationDetail,
+                        passed: headshotsPass,
+                        action: hasMissingHeadshotFiles ? nil : "Fix crops"
+                    ) {
+                        presentHeadshotCrop()
                     }
                 }
-                validationCard(
-                    clipDurationTitle,
-                    detail: durationDetail(clip, metadata: clipMetadata, cap: rules.maxClipSeconds),
-                    passed: clipDurationPass,
-                    action: (clip != nil && MediaStorage.fileExists(at: clip?.filePath)) ? "Open Audition Trimmer" : nil
-                ) {
-                    if let clip, MediaStorage.fileExists(at: clip.filePath) {
-                        reviewRoute = .audition(clip)
+                if audition.requiresSlate {
+                    validationCard(
+                        "Slate under \(Int(rules.maxSlateSeconds))s",
+                        detail: durationDetail(slate, metadata: slateMetadata, cap: rules.maxSlateSeconds),
+                        passed: slateDurationPass,
+                        action: (slate != nil && MediaStorage.fileExists(at: slate?.filePath)) ? "Open Slate Trimmer" : nil
+                    ) {
+                        if let slate, MediaStorage.fileExists(at: slate.filePath) {
+                            reviewRoute = .slate(slate)
+                        }
                     }
                 }
-                validationCard(
-                    "Video orientation & ratio",
-                    detail: "Consistent \(expectedOrientation) across both clips",
-                    passed: orientationPass,
-                    action: nil,
-                    actionHandler: {}
-                )
+                if audition.requiresAudition {
+                    validationCard(
+                        clipDurationTitle,
+                        detail: durationDetail(clip, metadata: clipMetadata, cap: rules.maxClipSeconds),
+                        passed: clipDurationPass,
+                        action: (clip != nil && MediaStorage.fileExists(at: clip?.filePath)) ? "Open Audition Trimmer" : nil
+                    ) {
+                        if let clip, MediaStorage.fileExists(at: clip.filePath) {
+                            reviewRoute = .audition(clip)
+                        }
+                    }
+                }
+                if requiresAnyVideo {
+                    validationCard(
+                        "Video orientation & ratio",
+                        detail: orientationDetailText,
+                        passed: orientationPass,
+                        action: nil,
+                        actionHandler: {}
+                    )
+                }
                 validationCard(
                     "File Name",
                     detail: "Auto-formatted as \(formattedFilePrefix)",
@@ -241,14 +260,16 @@ struct PackageValidationAndExportView: View {
                     action: nil,
                     actionHandler: {}
                 )
-                validationCard(
-                    "File Size",
-                    detail: fileSizeValidationDetail,
-                    passed: fileSizePass,
-                    action: oversizedTake.map { "Compress \($0.id == clip?.id ? "Audition Clip" : "Slate")" }
-                ) {
-                    if let oversizedTake {
-                        openCompressor(for: oversizedTake)
+                if requiresAnyVideo {
+                    validationCard(
+                        "File Size",
+                        detail: fileSizeValidationDetail,
+                        passed: fileSizePass,
+                        action: oversizedTake.map { "Compress \($0.id == clip?.id ? "Audition Clip" : "Slate")" }
+                    ) {
+                        if let oversizedTake {
+                            openCompressor(for: oversizedTake)
+                        }
                     }
                 }
 
@@ -370,47 +391,55 @@ struct PackageValidationAndExportView: View {
 
     private var bundleItems: [BundleItem] {
         let prefix = formattedFilePrefix
-        let heads = HeadshotAngle.allCases.map { angle -> BundleItem in
-            let headshot = audition.headshot(for: angle)
-            let path = headshot.map { PackageExportHelper.effectiveHeadshotPath(for: $0) } ?? ""
-            let exists = MediaStorage.fileExists(at: path)
-            let sizeMB = exists ? MediaStorage.fileSizeMB(at: path) : 0
-            let ratioText = headshot?.aspectRatio.rawValue ?? rules.requiredHeadshotRatio.rawValue
-            let meta = exists ? "JPG · \(ratioText) · \(formattedSizeString(sizeMB))" : "JPG · Missing on disk"
-            return BundleItem(
-                id: "headshot-\(angle.rawValue)",
-                title: "\(prefix)_\(angle.rawValue)",
-                metadata: meta,
-                path: path,
-                fallbackExtension: "jpg",
-                existsOnDisk: exists
-            )
+        var result: [BundleItem] = []
+
+        if audition.requiresHeadshots {
+            let heads = HeadshotAngle.allCases.map { angle -> BundleItem in
+                let headshot = audition.headshot(for: angle)
+                let path = headshot.map { PackageExportHelper.effectiveHeadshotPath(for: $0) } ?? ""
+                let exists = MediaStorage.fileExists(at: path)
+                let sizeMB = exists ? MediaStorage.fileSizeMB(at: path) : 0
+                let ratioText = headshot?.aspectRatio.rawValue ?? rules.requiredHeadshotRatio.rawValue
+                let meta = exists ? "JPG · \(ratioText) · \(formattedSizeString(sizeMB))" : "JPG · Missing on disk"
+                return BundleItem(
+                    id: "headshot-\(angle.rawValue)",
+                    title: "\(prefix)_\(angle.rawValue)",
+                    metadata: meta,
+                    path: path,
+                    fallbackExtension: "jpg",
+                    existsOnDisk: exists
+                )
+            }
+            result.append(contentsOf: heads)
         }
 
-        let slatePath = slate?.filePath ?? ""
-        let slateExists = MediaStorage.fileExists(at: slatePath)
-        let slateMeta: String = {
-            guard let slate else { return "MP4 · Not recorded" }
-            guard slateExists else { return "MP4 · Missing on disk" }
-            let dur = slateMetadata?.durationSeconds ?? slate.durationSeconds
-            let size = actualSizeMB(for: slate, metadata: slateMetadata)
-            return "MP4 · \(Int(dur.rounded()))s · \(formattedSizeString(size))"
-        }()
+        if audition.requiresSlate {
+            let slatePath = slate?.filePath ?? ""
+            let slateExists = MediaStorage.fileExists(at: slatePath)
+            let slateMeta: String = {
+                guard let slate else { return "MP4 · Not recorded" }
+                guard slateExists else { return "MP4 · Missing on disk" }
+                let dur = slateMetadata?.durationSeconds ?? slate.durationSeconds
+                let size = actualSizeMB(for: slate, metadata: slateMetadata)
+                return "MP4 · \(Int(dur.rounded()))s · \(formattedSizeString(size))"
+            }()
+            result.append(BundleItem(id: "slate", title: "\(prefix)_Slate", metadata: slateMeta, path: slatePath, fallbackExtension: "mp4", existsOnDisk: slateExists))
+        }
 
-        let clipPath = clip?.filePath ?? ""
-        let clipExists = MediaStorage.fileExists(at: clipPath)
-        let clipMeta: String = {
-            guard let clip else { return "MP4 · Not recorded" }
-            guard clipExists else { return "MP4 · Missing on disk" }
-            let dur = clipMetadata?.durationSeconds ?? clip.durationSeconds
-            let size = actualSizeMB(for: clip, metadata: clipMetadata)
-            return "MP4 · \(Int(dur.rounded()))s · \(formattedSizeString(size))"
-        }()
+        if audition.requiresAudition {
+            let clipPath = clip?.filePath ?? ""
+            let clipExists = MediaStorage.fileExists(at: clipPath)
+            let clipMeta: String = {
+                guard let clip else { return "MP4 · Not recorded" }
+                guard clipExists else { return "MP4 · Missing on disk" }
+                let dur = clipMetadata?.durationSeconds ?? clip.durationSeconds
+                let size = actualSizeMB(for: clip, metadata: clipMetadata)
+                return "MP4 · \(Int(dur.rounded()))s · \(formattedSizeString(size))"
+            }()
+            result.append(BundleItem(id: "audition", title: "\(prefix)_Audition", metadata: clipMeta, path: clipPath, fallbackExtension: "mp4", existsOnDisk: clipExists))
+        }
 
-        return heads + [
-            BundleItem(id: "slate", title: "\(prefix)_Slate", metadata: slateMeta, path: slatePath, fallbackExtension: "mp4", existsOnDisk: slateExists),
-            BundleItem(id: "audition", title: "\(prefix)_Audition", metadata: clipMeta, path: clipPath, fallbackExtension: "mp4", existsOnDisk: clipExists)
-        ]
+        return result
     }
 
     private var availableBundleItems: [BundleItem] {
@@ -609,14 +638,32 @@ struct PackageValidationAndExportView: View {
         return dur > 0 && dur <= rules.maxClipSeconds
     }
 
+    private var orientationDetailText: String {
+        if audition.requiresSlate && audition.requiresAudition {
+            return "Consistent \(expectedOrientation) across both clips"
+        }
+        return "Matches required \(expectedOrientation)"
+    }
+
     private var orientationPass: Bool {
-        let slateInfo = slateMetadata.map { ($0.isPortrait, $0.aspectRatioString) }
-        let clipInfo = clipMetadata.map { ($0.isPortrait, $0.aspectRatioString) }
-        return PackageExportHelper.validateOrientation(
-            slate: slateInfo,
-            clip: clipInfo,
-            requiredPortrait: rules.requiredPortrait
-        )
+        if audition.requiresSlate && audition.requiresAudition {
+            let slateInfo = slateMetadata.map { ($0.isPortrait, $0.aspectRatioString) }
+            let clipInfo = clipMetadata.map { ($0.isPortrait, $0.aspectRatioString) }
+            return PackageExportHelper.validateOrientation(
+                slate: slateInfo,
+                clip: clipInfo,
+                requiredPortrait: rules.requiredPortrait
+            )
+        }
+        if audition.requiresSlate {
+            guard let slateMetadata else { return false }
+            return rules.requiredPortrait.map { slateMetadata.isPortrait == $0 } ?? true
+        }
+        if audition.requiresAudition {
+            guard let clipMetadata else { return false }
+            return rules.requiredPortrait.map { clipMetadata.isPortrait == $0 } ?? true
+        }
+        return true
     }
 
     private var actorFileStem: String {
@@ -642,14 +689,14 @@ struct PackageValidationAndExportView: View {
     }
 
     private var fileSizePass: Bool {
-        let takes = [slate, clip].compactMap { $0 }
+        let takes = requiredVideoTakes
         guard !takes.isEmpty else { return false }
         let allExist = takes.allSatisfy { MediaStorage.fileExists(at: $0.filePath) }
         return allExist && oversizedTake == nil
     }
 
     private var fileSizeValidationDetail: String {
-        let takes = [slate, clip].compactMap { $0 }
+        let takes = requiredVideoTakes
         if takes.isEmpty {
             return "No video clips recorded yet · limit \(Int(rules.maxPerClipSizeMB)) MB each"
         }
@@ -657,10 +704,10 @@ struct PackageValidationAndExportView: View {
             return "One or more clip files missing on disk · limit \(Int(rules.maxPerClipSizeMB)) MB each"
         }
         var parts: [String] = []
-        if let slate {
+        if audition.requiresSlate, let slate {
             parts.append("Slate \(formattedSizeString(actualSizeMB(for: slate, metadata: slateMetadata)))")
         }
-        if let clip {
+        if audition.requiresAudition, let clip {
             parts.append("Clip \(formattedSizeString(actualSizeMB(for: clip, metadata: clipMetadata)))")
         }
         return "\(parts.joined(separator: " · ")) (limit \(Int(rules.maxPerClipSizeMB)) MB)"

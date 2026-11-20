@@ -4,11 +4,19 @@ import PhotosUI
 import UniformTypeIdentifiers
 
 enum AuditionListFilter: String, CaseIterable, Identifiable {
+    case all = "All"
     case active = "Active"
     case sent = "Sent"
-    case all = "All"
 
     var id: String { rawValue }
+
+    var tintColor: Color {
+        switch self {
+        case .all: return Theme.Colors.accent
+        case .active: return Theme.Colors.warningAmber
+        case .sent: return Theme.Colors.successGreen
+        }
+    }
 }
 
 private enum PendingAddSource {
@@ -249,11 +257,7 @@ struct AuditionsListView: View {
     // MARK: - Toolbar Controls
 
     private var filterTintColor: Color {
-        switch selectedFilter {
-        case .active: return Theme.Colors.accent
-        case .sent: return Theme.Colors.successGreen
-        case .all: return Theme.Colors.warningAmber
-        }
+        selectedFilter.tintColor
     }
 
     private var filterToolbarMenu: some View {
@@ -795,7 +799,7 @@ private struct AuditionSpotlightCard: View {
 
                     Spacer()
 
-                    Text(audition.status == .sent ? "Submitted" : "\(audition.packageReadyCount) of 3 ready")
+                    Text(audition.status == .sent ? "Submitted" : "\(audition.packageReadyCount) of \(audition.packageTotalCount) ready")
                         .font(.system(size: 12, weight: .semibold))
                         .monospacedDigit()
                         .foregroundStyle(.white.opacity(0.92))
@@ -847,7 +851,11 @@ struct AuditionCardRow: View {
 
             Spacer()
 
-            AuditionReadinessRing(readyCount: audition.packageReadyCount, isSent: audition.status == .sent)
+            AuditionReadinessRing(
+                readyCount: audition.packageReadyCount,
+                totalCount: audition.packageTotalCount,
+                isSent: audition.status == .sent
+            )
         }
         .compactListCardStyle()
     }
@@ -869,6 +877,7 @@ struct AuditionCardRow: View {
 
 private struct AuditionReadinessRing: View {
     let readyCount: Int
+    let totalCount: Int
     let isSent: Bool
 
     var body: some View {
@@ -877,10 +886,11 @@ private struct AuditionReadinessRing: View {
                 .font(.system(size: 22))
                 .foregroundStyle(Theme.Colors.successGreen)
         } else {
+            let safeTotal = max(1, totalCount)
             CompactProgressRing(
-                progress: Double(readyCount) / 3.0,
+                progress: Double(readyCount) / Double(safeTotal),
                 label: "\(readyCount)",
-                tint: readyCount == 3 ? Theme.Colors.successGreen : Theme.Colors.accent
+                tint: totalCount > 0 && readyCount == totalCount ? Theme.Colors.successGreen : Theme.Colors.accent
             )
         }
     }

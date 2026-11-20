@@ -1267,7 +1267,7 @@ struct AuditionDetailsEditorView: View {
                 title: "Guided Headshots (3 Angles: Front, Left, Right)",
                 subtitle: "Front, Left Profile & Right Profile photos",
                 icon: "person.crop.rectangle.stack",
-                matchKeywords: ["headshot"]
+                matchKeywords: PackageDeliverable.headshots.requirementKeywords
             ),
             PresetRequirementOption(
                 id: "slate",
@@ -1275,7 +1275,7 @@ struct AuditionDetailsEditorView: View {
                 title: "Slate / Introduction Video",
                 subtitle: "Name, agency & role introduction take",
                 icon: "person.wave.2",
-                matchKeywords: ["slate", "intro"]
+                matchKeywords: PackageDeliverable.slate.requirementKeywords
             ),
             PresetRequirementOption(
                 id: "selftape",
@@ -1283,7 +1283,7 @@ struct AuditionDetailsEditorView: View {
                 title: "Audition Self-Tape Take",
                 subtitle: "Main scene performance self-tape",
                 icon: "video",
-                matchKeywords: ["self-tape", "self tape", "audition", "monologue", "scene"]
+                matchKeywords: PackageDeliverable.audition.requirementKeywords
             )
         ]
     }

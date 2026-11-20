@@ -778,8 +778,8 @@ struct MemoriseView: View {
                         }
                     }
                 } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 17))
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(Theme.Colors.accent)
                 }
             }

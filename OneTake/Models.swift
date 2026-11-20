@@ -129,6 +129,51 @@ nonisolated enum HapticFeedbackLevel: String, Codable, Hashable, CaseIterable, S
     case off = "Off"
 }
 
+nonisolated enum PackageDeliverable: String, CaseIterable, Identifiable, Sendable {
+    case headshots
+    case slate
+    case audition
+
+    var id: String { rawValue }
+
+    var stepNumber: Int {
+        switch self {
+        case .headshots: return 1
+        case .slate: return 2
+        case .audition: return 3
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .headshots: return "Headshot"
+        case .slate: return "Slate"
+        case .audition: return "Audition Clip"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .headshots: return "person.crop.rectangle.badge.plus"
+        case .slate: return "person.badge.shield.checkmark"
+        case .audition: return "movieclapper"
+        }
+    }
+
+    var requirementKeywords: [String] {
+        switch self {
+        case .headshots: return ["headshot"]
+        case .slate: return ["slate", "intro"]
+        case .audition: return ["self-tape", "self tape", "audition", "monologue", "scene"]
+        }
+    }
+
+    func matches(_ requirement: SubmissionRequirement) -> Bool {
+        let lower = requirement.title.lowercased()
+        return requirementKeywords.contains { lower.contains($0) }
+    }
+}
+
 // MARK: - Codable Structs
 
 nonisolated struct SubmissionRequirement: Codable, Sendable, Hashable, Identifiable {
@@ -691,12 +736,33 @@ final class Audition {
         return MediaStorage.fileExists(at: take.filePath)
     }
 
+    func isDeliverableRequired(_ deliverable: PackageDeliverable) -> Bool {
+        guard !requirements.isEmpty else { return true }
+        return requirements.contains { deliverable.matches($0) }
+    }
+
+    var requiresHeadshots: Bool { isDeliverableRequired(.headshots) }
+    var requiresSlate: Bool { isDeliverableRequired(.slate) }
+    var requiresAudition: Bool { isDeliverableRequired(.audition) }
+
+    var requiredDeliverables: [PackageDeliverable] {
+        PackageDeliverable.allCases.filter { isDeliverableRequired($0) }
+    }
+
+    func isDeliverableReady(_ deliverable: PackageDeliverable) -> Bool {
+        switch deliverable {
+        case .headshots: return isHeadshotsReady
+        case .slate: return isSlateReady
+        case .audition: return isAuditionReady
+        }
+    }
+
+    var packageTotalCount: Int {
+        requiredDeliverables.count
+    }
+
     var packageReadyCount: Int {
-        var count = 0
-        if isHeadshotsReady { count += 1 }
-        if isSlateReady { count += 1 }
-        if isAuditionReady { count += 1 }
-        return count
+        requiredDeliverables.filter { isDeliverableReady($0) }.count
     }
 
     init(
