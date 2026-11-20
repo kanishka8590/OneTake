@@ -136,6 +136,54 @@ struct CardStyleModifier: ViewModifier {
     }
 }
 
+struct CompactListCardModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .frame(minHeight: Theme.Layout.minTapTarget)
+            .background(Theme.Colors.cardSurface)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Theme.Colors.controlBorder.opacity(0.28), lineWidth: 0.8)
+            )
+    }
+}
+
+struct CompactProgressRing: View {
+    let progress: Double
+    let label: String
+    let tint: Color
+    var labelColor: Color = Theme.Colors.textPrimary
+    var diameter: CGFloat = 28
+    var fontSize: CGFloat = 11
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Theme.Colors.lavenderSurface, lineWidth: 3)
+            if progress > 0 {
+                Circle()
+                    .trim(from: 0, to: min(1, max(0, progress)))
+                    .stroke(
+                        tint,
+                        style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+            }
+            Text(label)
+                .font(.system(size: fontSize, weight: .bold))
+                .monospacedDigit()
+                .minimumScaleFactor(0.75)
+                .lineLimit(1)
+                .foregroundStyle(labelColor)
+                .padding(.horizontal, 3)
+        }
+        .frame(width: diameter, height: diameter)
+    }
+}
+
 // MARK: - View Extensions
 
 extension View {
@@ -153,6 +201,10 @@ extension View {
 
     func cardStyle() -> some View {
         modifier(CardStyleModifier())
+    }
+
+    func compactListCardStyle() -> some View {
+        modifier(CompactListCardModifier())
     }
 
     func studioPill(_ color: Color) -> some View {

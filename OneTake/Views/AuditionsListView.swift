@@ -849,15 +849,7 @@ struct AuditionCardRow: View {
 
             AuditionReadinessRing(readyCount: audition.packageReadyCount, isSent: audition.status == .sent)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .frame(minHeight: Theme.Layout.minTapTarget)
-        .background(Theme.Colors.cardSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Theme.Colors.controlBorder.opacity(0.28), lineWidth: 0.8)
-        )
+        .compactListCardStyle()
     }
 
     private var deadlineColor: Color {
@@ -885,22 +877,11 @@ private struct AuditionReadinessRing: View {
                 .font(.system(size: 22))
                 .foregroundStyle(Theme.Colors.successGreen)
         } else {
-            ZStack {
-                Circle()
-                    .stroke(Theme.Colors.lavenderSurface, lineWidth: 3)
-                Circle()
-                    .trim(from: 0, to: CGFloat(readyCount) / 3.0)
-                    .stroke(
-                        readyCount == 3 ? Theme.Colors.successGreen : Theme.Colors.accent,
-                        style: StrokeStyle(lineWidth: 3, lineCap: .round)
-                    )
-                    .rotationEffect(.degrees(-90))
-                Text("\(readyCount)")
-                    .font(.system(size: 11, weight: .bold))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.Colors.textPrimary)
-            }
-            .frame(width: 28, height: 28)
+            CompactProgressRing(
+                progress: Double(readyCount) / 3.0,
+                label: "\(readyCount)",
+                tint: readyCount == 3 ? Theme.Colors.successGreen : Theme.Colors.accent
+            )
         }
     }
 }
