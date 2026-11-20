@@ -1,4 +1,5 @@
 import XCTest
+import AVFoundation
 @testable import OneTake
 
 @MainActor
@@ -52,8 +53,10 @@ final class PracticeSpeechPipelineTests: XCTestCase {
             audioURL: nil
         )
 
-        XCTAssertEqual(session.forgotCount, 5)
-        XCTAssertTrue(session.annotations.contains { $0.kind == .forgot && $0.text == "Sentence two needs a clue." })
+        XCTAssertEqual(session.forgotCount, 0)
+        XCTAssertEqual(session.skippedCount, 9)
+        XCTAssertFalse(session.annotations.contains { $0.kind == .forgot })
+        XCTAssertTrue(session.annotations.contains { $0.kind == .skipped && $0.text == "Sentence two needs a clue." })
         XCTAssertTrue(session.annotations.contains { $0.kind == .skipped && $0.text == "Sentence three is skipped." })
         XCTAssertFalse(session.annotations.contains { $0.kind == .skipped && $0.text.contains("Cue partner") })
         XCTAssertEqual(session.hesitatedCount, 1)
@@ -105,8 +108,9 @@ final class PracticeSpeechPipelineTests: XCTestCase {
             audioURL: nil
         )
 
+        XCTAssertEqual(omitted.forgotCount, 0)
         XCTAssertTrue(omitted.annotations.contains {
-            $0.kind == .forgot && $0.text == "Luke’s wouldn't say she'll leave."
+            $0.kind == .skipped && $0.text == "wouldn't"
         })
         XCTAssertTrue(omitted.annotations.contains {
             $0.kind == .skipped && $0.text == "We will not wait."
@@ -306,5 +310,159 @@ final class PracticeSpeechPipelineTests: XCTestCase {
         XCTAssertEqual(realRecorder.transcript, "Sentence one is spoken")
         XCTAssertEqual(realRecorder.recognizedWords.count, 4)
         realRecorder.stop()
+    }
+
+    func testPauseThresholdAt1Point2SecondsAndCueBoundaryExemption() {
+        let script = PracticeScript(
+            title: "Threshold & Cue test",
+            rawText: """
+            ACTOR
+            Hold steady now.
+            CUE
+            Partner interrupts briefly.
+            ACTOR
+            Answer clearly please.
+            """,
+            cueLines: [CueLine(orderIndex: 0, speaker: "CUE", cueText: "Partner interrupts briefly.")]
+        )
+
+        // 1.10s gap before "steady" is <= 1.2s (no hesitation);
+        // 2.60s gap across CUE before "Answer" is partner wait (no hesitation);
+        // 1.35s gap before "please" is > 1.2s inside actor turn (1 hesitation).
+        let words: [RecognizedPracticeWord] = [
+            RecognizedPracticeWord(text: "Hold", timestamp: 0.0, duration: 0.2),
+            RecognizedPracticeWord(text: "steady", timestamp: 1.30, duration: 0.2),
+            RecognizedPracticeWord(text: "now", timestamp: 1.60, duration: 0.2),
+            RecognizedPracticeWord(text: "Answer", timestamp: 4.40, duration: 0.2),
+            RecognizedPracticeWord(text: "clearly", timestamp: 4.70, duration: 0.2),
+            RecognizedPracticeWord(text: "please", timestamp: 6.25, duration: 0.2)
+        ]
+
+        let session = PracticeSpeechDeliveryAnalyzer.makeSession(
+            script: script,
+            transcript: words.map(\.text).joined(separator: " "),
+            words: words,
+            clueRequestedRanges: [],
+            duration: 6.6,
+            help: .nothing,
+            audioURL: nil
+        )
+
+        XCTAssertEqual(session.skippedCount, 0)
+        XCTAssertEqual(session.hesitatedCount, 1)
+        XCTAssertEqual(session.annotations.filter { $0.kind == .hesitated }.map(\.text), ["please."])
+    }
+
+    func testFillerDisfluenciesFalseStartsAlternativeSubstringsAndNotInScript() {
+        let script = PracticeScript(
+            title: "Stumble & Recovery",
+            rawText: """
+            ACTOR
+            Four friends waited inside.
+            """
+        )
+
+        // - "for" recovers "Four" via alternativeSubstrings
+        // - "uh" before "friends" marks "friends" as .hesitated (without entering Not in Script)
+        // - "wa" (false-start prefix) before "waited" marks "waited" as .hesitated (without entering Not in Script)
+        // - "right outside" is a genuine Not in Script addition
+        let words: [RecognizedPracticeWord] = [
+            RecognizedPracticeWord(
+                text: "for",
+                timestamp: 0.0,
+                duration: 0.2,
+                confidence: 0.65,
+                alternativeSubstrings: ["four"]
+            ),
+            RecognizedPracticeWord(text: "uh", timestamp: 0.25, duration: 0.15),
+            RecognizedPracticeWord(text: "friends", timestamp: 0.45, duration: 0.25),
+            RecognizedPracticeWord(text: "wa", timestamp: 0.75, duration: 0.12),
+            RecognizedPracticeWord(text: "waited", timestamp: 0.90, duration: 0.25),
+            RecognizedPracticeWord(text: "inside", timestamp: 1.25, duration: 0.25),
+            RecognizedPracticeWord(text: "right", timestamp: 1.55, duration: 0.2),
+            RecognizedPracticeWord(text: "outside", timestamp: 1.80, duration: 0.25)
+        ]
+
+        let session = PracticeSpeechDeliveryAnalyzer.makeSession(
+            script: script,
+            transcript: words.map(\.text).joined(separator: " "),
+            words: words,
+            clueRequestedRanges: [],
+            duration: 2.2,
+            help: .nothing,
+            audioURL: nil
+        )
+
+        XCTAssertEqual(session.skippedCount, 0)
+        XCTAssertEqual(session.hesitatedCount, 2)
+        XCTAssertEqual(
+            Set(session.annotations.filter { $0.kind == .hesitated }.map(\.text)),
+            Set(["friends", "waited"])
+        )
+        XCTAssertEqual(session.notInScriptCount, 2)
+        XCTAssertTrue(session.annotations.contains { $0.kind == .notInScript && $0.text == "right outside" })
+    }
+
+    func testAcousticSilenceAnalyzerDetectsPauseEvenWhenSpeechDurationStretches() throws {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("practice_silence_test_\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let sampleRate: Double = 16_000
+        guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false) else {
+            XCTFail("Failed to build audio format")
+            return
+        }
+        // Timeline: 0.0-0.5s tone | 0.5-1.95s silence (1.45s > 1.2s) | 1.95-2.45s tone | 2.45-3.25s silence (0.80s <= 1.2s) | 3.25-3.75s tone
+        let totalSamples = Int(3.75 * sampleRate)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(totalSamples)),
+              let ptr = buffer.floatChannelData?.pointee else {
+            XCTFail("Failed to allocate PCM buffer")
+            return
+        }
+        buffer.frameLength = AVAudioFrameCount(totalSamples)
+        for sample in 0..<totalSamples {
+            let t = Double(sample) / sampleRate
+            let isTone = (t < 0.50) || (t >= 1.95 && t < 2.45) || (t >= 3.25)
+            ptr[sample] = isTone ? Float(0.35 * sin(2.0 * .pi * 240.0 * t)) : Float(0.0002)
+        }
+        do {
+            let audioFile = try AVAudioFile(forWriting: tempURL, settings: format.settings)
+            try audioFile.write(from: buffer)
+        }
+
+        let silences = PracticeAudioSilenceAnalyzer.detectSilences(in: tempURL, minimumDuration: 1.2)
+        XCTAssertEqual(silences.count, 1)
+        let firstSilence = try XCTUnwrap(silences.first)
+        XCTAssertEqual(firstSilence.start, 0.50, accuracy: 0.10)
+        XCTAssertEqual(firstSilence.duration, 1.45, accuracy: 0.15)
+
+        let script = PracticeScript(
+            title: "Acoustic silence test",
+            rawText: """
+            ACTOR
+            Wait here please.
+            """
+        )
+        // Simulate ASR stretching "Wait" duration across the 1.45s silence so ASR gap is 0.0s.
+        let stretchedWords: [RecognizedPracticeWord] = [
+            RecognizedPracticeWord(text: "Wait", timestamp: 0.05, duration: 1.90),
+            RecognizedPracticeWord(text: "here", timestamp: 1.95, duration: 0.45),
+            RecognizedPracticeWord(text: "please", timestamp: 3.25, duration: 0.40)
+        ]
+
+        let session = PracticeSpeechDeliveryAnalyzer.makeSession(
+            script: script,
+            transcript: "Wait here please",
+            words: stretchedWords,
+            clueRequestedRanges: [],
+            duration: 3.75,
+            help: .nothing,
+            audioURL: tempURL,
+            silenceIntervals: silences
+        )
+
+        XCTAssertEqual(session.hesitatedCount, 1)
+        XCTAssertEqual(session.annotations.filter { $0.kind == .hesitated }.map(\.text), ["here"])
     }
 }

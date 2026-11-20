@@ -1044,6 +1044,8 @@ struct SayItAloudView: View {
     @State private var discardedAudioURL: URL?
     @State private var reviewSession: PracticeSession?
     @State private var showReview = false
+    @State private var isFinalizingReview = false
+    @State private var finalizeTask: Task<Void, Never>?
     private var model: PracticeScriptModel { clueTracker.model }
     private var mode: Int { help == .nothing ? 0 : help == .fullScript ? 1 : help == .gaps ? 2 : 3 }
     private var nextActorLine: PracticeLine? { clueTracker.nextSentence.flatMap { range in model.actorLines.first(where: { $0.id == range.lineID }) } }
@@ -1112,6 +1114,7 @@ struct SayItAloudView: View {
                         .background(Theme.Colors.primaryPlum)
                         .clipShape(Circle())
                 }
+                .disabled(isFinalizingReview)
                 .accessibilityLabel(didStart ? (paused ? "Resume recording" : "Pause recording") : "Start recording")
             }
             WaveformBars(level: recorder.audioLevel).frame(height: 28)
@@ -1121,18 +1124,29 @@ struct SayItAloudView: View {
                     .foregroundStyle(Theme.Colors.warningAmber)
                     .multilineTextAlignment(.center)
             }
-            Text(recorder.transcript.isEmpty ? recorder.statusText : recorder.transcript)
-                .font(.caption)
-                .foregroundStyle(Theme.Colors.textSecondary)
-                .lineLimit(2)
+            if isFinalizingReview {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Analyzing delivery…")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                }
+            } else {
+                Text(recorder.transcript.isEmpty ? recorder.statusText : recorder.transcript)
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                    .lineLimit(2)
+            }
             HStack {
                 Button(didStart ? (paused ? "Resume" : "Pause") : "Start") {
                     didStart ? togglePause() : toggleStart()
                 }
                 .secondaryLavenderButton()
-                Button("Stop") { stopAndReview() }
+                .disabled(isFinalizingReview)
+                Button(isFinalizingReview ? "Analyzing…" : "Stop") { stopAndReview() }
                     .primaryCapsuleButton()
-                    .disabled(!didStart)
+                    .disabled(!didStart || isFinalizingReview)
             }
         }
         .padding(16)
@@ -1160,6 +1174,8 @@ struct SayItAloudView: View {
         }
         .onDisappear {
             if !showReview {
+                finalizeTask?.cancel()
+                finalizeTask = nil
                 recorder.stop()
             }
         }
@@ -1231,19 +1247,32 @@ struct SayItAloudView: View {
     }
 
     private func stopAndReview() {
-        recorder.stop()
+        guard !isFinalizingReview else { return }
+        isFinalizingReview = true
         Haptics.success()
-        discardedAudioURL = recorder.recordedAudioURL
-        reviewSession = PracticeSpeechDeliveryAnalyzer.makeSession(
-            script: script,
-            transcript: recorder.transcript,
-            words: recorder.recognizedWords,
-            clueRequestedRanges: clueTracker.clueRequestedRanges,
-            duration: recorder.duration,
-            help: help,
-            audioURL: recorder.recordedAudioURL
-        )
-        showReview = true
+
+        finalizeTask?.cancel()
+        finalizeTask = Task { @MainActor in
+            let capture = await recorder.stopAndFinalizeForAnalysis()
+            guard !Task.isCancelled else {
+                isFinalizingReview = false
+                return
+            }
+            discardedAudioURL = capture.audioURL
+            reviewSession = PracticeSpeechDeliveryAnalyzer.makeSession(
+                script: script,
+                transcript: capture.transcript,
+                words: capture.words,
+                clueRequestedRanges: clueTracker.clueRequestedRanges,
+                duration: capture.duration,
+                help: help,
+                audioURL: capture.audioURL,
+                silenceIntervals: capture.silenceIntervals
+            )
+            isFinalizingReview = false
+            finalizeTask = nil
+            showReview = true
+        }
     }
 
     private func deleteDiscardedAudioIfUnsaved() {
@@ -1264,6 +1293,9 @@ struct SayItAloudView: View {
     }
 
     private func resetSessionState() {
+        finalizeTask?.cancel()
+        finalizeTask = nil
+        isFinalizingReview = false
         didStart = false
         paused = false
         clueTracker = PracticeSpeechClueTracker(script: script)
@@ -1301,8 +1333,6 @@ struct PracticeReviewView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var playback = PracticeAudioPlayback()
     @State private var saveConfirmation = false
-
-    private static let forgotBlue = Theme.Colors.annotationBlue
 
     init(
         script: PracticeScript,
@@ -1398,15 +1428,10 @@ struct PracticeReviewView: View {
                     .foregroundStyle(Theme.Colors.accent)
             }
 
-            HStack(spacing: 28) {
-                VStack(alignment: .leading, spacing: 8) {
-                    legendItem(color: Theme.Colors.studioYellow, title: "Skipped")
-                    legendItem(color: Self.forgotBlue, title: "Forgot")
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    legendItem(color: Theme.Colors.studioOrange, title: "Hesitated")
-                    legendItem(color: Theme.Colors.studioGreen, title: "Not in Script")
-                }
+            HStack(spacing: 18) {
+                legendItem(color: Theme.Colors.studioYellow, title: "Skipped")
+                legendItem(color: Theme.Colors.studioOrange, title: "Hesitated")
+                legendItem(color: Theme.Colors.studioGreen, title: "Not in Script")
                 Spacer()
             }
             .padding(.leading, 4)
@@ -1444,7 +1469,7 @@ struct PracticeReviewView: View {
                 } else if scriptModel.cueLineIDs.contains(line.id) {
                     cueBanner(for: line)
                 } else {
-                    Text(highlightedAttributedText(for: line.text))
+                    Text(highlightedAttributedText(for: line))
                         .font(.system(size: 16, design: .monospaced))
                         .lineSpacing(6)
                         .multilineTextAlignment(.center)
@@ -1520,11 +1545,45 @@ struct PracticeReviewView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    private func highlightedAttributedText(for lineText: String) -> AttributedString {
+    private func highlightedAttributedText(for line: PracticeLine) -> AttributedString {
+        let lineText = line.text
         var attributed = AttributedString(lineText)
         let nsRange = NSRange(lineText.startIndex..., in: lineText)
+        let lineTokenRanges = scriptModel.tokenRanges(forLineID: line.id)
 
         for annotation in inlineAnnotations {
+            if !annotation.tokenIDs.isEmpty {
+                guard annotation.lineID == nil || annotation.lineID == line.id else { continue }
+                let targetSet = Set(annotation.tokenIDs)
+                let matchedIndices = lineTokenRanges.indices.filter { targetSet.contains(lineTokenRanges[$0].tokenID) }
+                guard !matchedIndices.isEmpty else { continue }
+
+                var runStart = matchedIndices[0]
+                var runEnd = matchedIndices[0]
+                for index in matchedIndices.dropFirst() {
+                    if index == runEnd + 1 {
+                        runEnd = index
+                    } else {
+                        applyHighlight(
+                            from: lineTokenRanges[runStart].range.lowerBound,
+                            to: lineTokenRanges[runEnd].range.upperBound,
+                            in: &attributed,
+                            color: highlightColor(annotation.kind)
+                        )
+                        runStart = index
+                        runEnd = index
+                    }
+                }
+                applyHighlight(
+                    from: lineTokenRanges[runStart].range.lowerBound,
+                    to: lineTokenRanges[runEnd].range.upperBound,
+                    in: &attributed,
+                    color: highlightColor(annotation.kind)
+                )
+                continue
+            }
+
+            // Legacy saved sessions without stored token IDs fall back to phrase regex matching.
             let needle = annotation.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !needle.isEmpty else { continue }
 
@@ -1538,21 +1597,34 @@ struct PracticeReviewView: View {
                 continue
             }
             for match in regex.matches(in: lineText, range: nsRange) {
-                if let stringRange = Range(match.range, in: lineText),
-                   let attrRange = Range(stringRange, in: attributed) {
-                    attributed[attrRange].backgroundColor = highlightColor(annotation.kind)
+                if let stringRange = Range(match.range, in: lineText) {
+                    applyHighlight(
+                        from: stringRange.lowerBound,
+                        to: stringRange.upperBound,
+                        in: &attributed,
+                        color: highlightColor(annotation.kind)
+                    )
                 }
             }
         }
         return attributed
     }
 
+    private func applyHighlight(
+        from lower: String.Index,
+        to upper: String.Index,
+        in attributed: inout AttributedString,
+        color: Color
+    ) {
+        if let attrRange = Range(lower..<upper, in: attributed) {
+            attributed[attrRange].backgroundColor = color
+        }
+    }
+
     private func highlightColor(_ kind: AnnotationKind) -> Color {
         switch kind {
-        case .skipped:
+        case .skipped, .forgot:
             return Theme.Colors.studioYellow.opacity(0.65)
-        case .forgot:
-            return Self.forgotBlue.opacity(0.55)
         case .hesitated:
             return Theme.Colors.studioOrange.opacity(0.65)
         case .notInScript:
@@ -1587,8 +1659,6 @@ private struct TimelineScrubber: View {
     let scriptModel: PracticeScriptModel
     let isInteractive: Bool
     let onSeek: (Double) -> Void
-
-    private static let forgotBlue = Theme.Colors.annotationBlue
 
     var body: some View {
         GeometryReader { proxy in
@@ -1643,6 +1713,11 @@ private struct TimelineScrubber: View {
         let actorWords = scriptModel.actorTokens.map { PracticeSpeechDeliveryAnalyzer.normalize($0.word) }
 
         return markers.enumerated().map { index, annotation in
+            if let timestamp = annotation.timestamp, timestamp >= 0 {
+                let ratio = timestamp / safeDuration
+                return CGFloat(min(0.98, max(0.02, ratio)))
+            }
+
             let firstNeedle = annotation.text
                 .split(whereSeparator: \.isWhitespace)
                 .first
@@ -1650,10 +1725,10 @@ private struct TimelineScrubber: View {
 
             if !recognizedWords.isEmpty, !firstNeedle.isEmpty {
                 if annotation.kind == .hesitated {
-                    // Prefer the occurrence that followed a hesitation gap (> 1.5s).
+                    // Prefer the occurrence that followed a hesitation gap (> 1.2s).
                     for idx in recognizedWords.indices.dropFirst() {
                         let gap = recognizedWords[idx].timestamp - (recognizedWords[idx - 1].timestamp + recognizedWords[idx - 1].duration)
-                        if gap > 1.5,
+                        if gap > PracticeSpeechDeliveryAnalyzer.hesitationPauseThresholdSeconds,
                            PracticeSpeechDeliveryAnalyzer.normalize(recognizedWords[idx].text) == firstNeedle {
                             let ratio = recognizedWords[idx].timestamp / safeDuration
                             return CGFloat(min(0.98, max(0.02, ratio)))
@@ -1680,8 +1755,7 @@ private struct TimelineScrubber: View {
 
     private func color(_ kind: AnnotationKind) -> Color {
         switch kind {
-        case .skipped: return Theme.Colors.studioYellow
-        case .forgot: return Self.forgotBlue
+        case .skipped, .forgot: return Theme.Colors.studioYellow
         case .hesitated: return Theme.Colors.studioOrange
         case .notInScript: return Theme.Colors.studioGreen
         default: return .clear

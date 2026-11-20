@@ -141,6 +141,7 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
     @ObservationIgnored private var activeSegmentStartedAt: Date?
     @ObservationIgnored private var accumulatedDuration: Double = 0
     @ObservationIgnored private var activeScript: PracticeScript?
+    @ObservationIgnored private var activeContextualVocabulary: [String] = []
     @ObservationIgnored private var activeLanguage: ScriptLanguage = .english
     @ObservationIgnored private var activeIsDemoMode = false
     @ObservationIgnored private var isSimulationRun = false
@@ -151,6 +152,15 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
     @ObservationIgnored private var simulatedSegments: [RecognizedPracticeWord] = []
     @ObservationIgnored private var simulatedEmissionIndex = 0
     @ObservationIgnored private var sessionObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var liveTaskFinalizationContinuations: [CheckedContinuation<Void, Never>] = []
+
+    struct FinalizedPracticeCapture: Sendable {
+        let transcript: String
+        let words: [RecognizedPracticeWord]
+        let silenceIntervals: [PracticeSilenceInterval]
+        let duration: Double
+        let audioURL: URL?
+    }
 
     init(requestAccess: AccessRequester? = nil) {
         self.requestAccess = requestAccess
@@ -167,6 +177,7 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
     func start(language: ScriptLanguage, script: PracticeScript, isDemoMode: Bool = false) {
         reset()
         activeScript = script
+        activeContextualVocabulary = PracticeScriptModel(script: script).contextualVocabulary
         activeLanguage = language
         activeIsDemoMode = isDemoMode
         statusText = "Preparing microphone…"
@@ -306,17 +317,92 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
             activeTask.finish()
             stopFinalizeWorkItem?.cancel()
             let cleanup = DispatchWorkItem { [weak self] in
-                guard let self, self.task === activeTask else { return }
-                self.activeTaskID = nil
-                activeTask.cancel()
-                self.task = nil
+                guard let self else { return }
+                if self.task === activeTask {
+                    self.activeTaskID = nil
+                    activeTask.cancel()
+                    self.task = nil
+                }
+                self.resumeLiveFinalizationWaiters()
             }
             stopFinalizeWorkItem = cleanup
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: cleanup)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: cleanup)
+        } else {
+            resumeLiveFinalizationWaiters()
         }
 
         isRecording = false
         audioLevel = 0.12
+    }
+
+    /// Stops live capture cleanly, waits briefly for final recognizer segments,
+    /// and runs offline `SFSpeechURLRecognitionRequest` + `vDSP` silence analysis
+    /// over the saved WAV file when available.
+    func stopAndFinalizeForAnalysis() async -> FinalizedPracticeCapture {
+        let language = activeLanguage
+        let vocabulary = activeContextualVocabulary
+        let wasSimulation = isSimulationRun
+        let wavURL = recordedAudioURL
+        let hadActiveTask = task != nil
+
+        stop()
+
+        if hadActiveTask && !wasSimulation {
+            await waitForLiveTaskFinalization()
+        }
+
+        let liveWords = recognizedWords
+        let liveTranscript = transcript
+        let fallbackDuration = duration
+
+        guard !wasSimulation,
+              let wavURL,
+              FileManager.default.fileExists(atPath: wavURL.path) else {
+            return FinalizedPracticeCapture(
+                transcript: liveTranscript,
+                words: liveWords,
+                silenceIntervals: [],
+                duration: fallbackDuration,
+                audioURL: wavURL
+            )
+        }
+
+        let minimumPause = PracticeSpeechDeliveryAnalyzer.hesitationPauseThresholdSeconds
+        async let acousticTask: (silences: [PracticeSilenceInterval], audioDuration: Double?) = Task.detached(priority: .userInitiated) {
+            let silences = PracticeAudioSilenceAnalyzer.detectSilences(in: wavURL, minimumDuration: minimumPause)
+            let audioDuration = PracticeAudioSilenceAnalyzer.audioDuration(of: wavURL)
+            return (silences, audioDuration)
+        }.value
+
+        async let urlRecognition = recognizeAudioFile(
+            url: wavURL,
+            language: language,
+            contextualStrings: vocabulary,
+            timeoutSeconds: 4.0
+        )
+
+        let (acoustic, urlResult) = await (acousticTask, urlRecognition)
+        let shouldPreferURLWords = !urlResult.words.isEmpty && urlResult.words.count >= max(1, liveWords.count / 2)
+        let finalWords = shouldPreferURLWords ? urlResult.words : liveWords
+        let finalTranscript = shouldPreferURLWords
+            ? (urlResult.transcript.isEmpty ? finalWords.map(\.text).joined(separator: " ") : urlResult.transcript)
+            : liveTranscript
+
+        if shouldPreferURLWords {
+            processRecognizedSpeech(segments: finalWords)
+        }
+        let resolvedDuration = acoustic.audioDuration ?? fallbackDuration
+        if resolvedDuration > 0 {
+            duration = resolvedDuration
+        }
+
+        return FinalizedPracticeCapture(
+            transcript: finalTranscript,
+            words: finalWords,
+            silenceIntervals: acoustic.silences,
+            duration: resolvedDuration,
+            audioURL: wavURL
+        )
     }
 
     func reset() {
@@ -332,6 +418,7 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
         pausedAt = nil
         pauseDurations = []
         recordedAudioURL = nil
+        activeContextualVocabulary = []
         permissionDenied = false
         errorMessage = nil
         isSimulationRun = false
@@ -342,6 +429,7 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
         activeSessionToken = nil
         stopFinalizeWorkItem?.cancel()
         stopFinalizeWorkItem = nil
+        resumeLiveFinalizationWaiters()
         durationTimer?.invalidate()
         durationTimer = nil
         simulatedTimer?.invalidate()
@@ -488,6 +576,9 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
         let recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         recognitionRequest.shouldReportPartialResults = true
         recognitionRequest.taskHint = .dictation
+        if !activeContextualVocabulary.isEmpty {
+            recognitionRequest.contextualStrings = activeContextualVocabulary
+        }
         request = recognitionRequest
         tapState.setRequest(recognitionRequest)
 
@@ -500,13 +591,10 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
                 guard let self, self.activeTaskID == taskID else { return }
 
                 if let result {
-                    let segments = result.bestTranscription.segments.map {
-                        RecognizedPracticeWord(
-                            text: $0.substring,
-                            timestamp: epochOffset + $0.timestamp,
-                            duration: $0.duration
-                        )
-                    }
+                    let segments = Self.recognizedWords(
+                        from: result.bestTranscription,
+                        timeOffset: epochOffset
+                    )
                     self.currentEpochWords = segments
                     self.processRecognizedSpeech(segments: self.committedWords + segments)
 
@@ -519,6 +607,7 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
                             self.task = nil
                             self.stopFinalizeWorkItem?.cancel()
                             self.stopFinalizeWorkItem = nil
+                            self.resumeLiveFinalizationWaiters()
                         }
                         return
                     }
@@ -531,6 +620,9 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
                     } else {
                         self.activeTaskID = nil
                         self.task = nil
+                        self.stopFinalizeWorkItem?.cancel()
+                        self.stopFinalizeWorkItem = nil
+                        self.resumeLiveFinalizationWaiters()
                     }
                 }
             }
@@ -542,6 +634,114 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
         }
 
         scheduleTaskRolloverTimer()
+    }
+
+    private func waitForLiveTaskFinalization() async {
+        guard task != nil else { return }
+        await withCheckedContinuation { continuation in
+            if task == nil {
+                continuation.resume()
+            } else {
+                liveTaskFinalizationContinuations.append(continuation)
+            }
+        }
+    }
+
+    private func resumeLiveFinalizationWaiters() {
+        guard !liveTaskFinalizationContinuations.isEmpty else { return }
+        let waiters = liveTaskFinalizationContinuations
+        liveTaskFinalizationContinuations.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    private func recognizeAudioFile(
+        url: URL,
+        language: ScriptLanguage,
+        contextualStrings: [String],
+        timeoutSeconds: Double
+    ) async -> (transcript: String, words: [RecognizedPracticeWord]) {
+        let locale = Locale(identifier: language == .hindi ? "hi-IN" : "en-IN")
+        guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
+            return ("", [])
+        }
+
+        let urlRequest = SFSpeechURLRecognitionRequest(url: url)
+        urlRequest.shouldReportPartialResults = false
+        urlRequest.taskHint = .dictation
+        if !contextualStrings.isEmpty {
+            urlRequest.contextualStrings = contextualStrings
+        }
+
+        final class Box: @unchecked Sendable {
+            private let lock = NSLock()
+            private var resolved = false
+            var task: SFSpeechRecognitionTask?
+            var timeoutItem: DispatchWorkItem?
+
+            func finish(
+                continuation: CheckedContinuation<(transcript: String, words: [RecognizedPracticeWord]), Never>,
+                value: (transcript: String, words: [RecognizedPracticeWord])
+            ) {
+                lock.lock()
+                guard !resolved else {
+                    lock.unlock()
+                    return
+                }
+                resolved = true
+                let pendingTask = task
+                let pendingTimeout = timeoutItem
+                task = nil
+                timeoutItem = nil
+                lock.unlock()
+
+                pendingTimeout?.cancel()
+                pendingTask?.cancel()
+                continuation.resume(returning: value)
+            }
+        }
+
+        return await withCheckedContinuation { continuation in
+            let box = Box()
+            let recognitionTask = recognizer.recognitionTask(with: urlRequest) { result, error in
+                if let result, result.isFinal {
+                    let words = Self.recognizedWords(from: result.bestTranscription, timeOffset: 0)
+                    let text = result.bestTranscription.formattedString
+                    box.finish(continuation: continuation, value: (text, words))
+                } else if error != nil {
+                    box.finish(continuation: continuation, value: ("", []))
+                }
+            }
+            box.task = recognitionTask
+
+            let timeout = DispatchWorkItem {
+                box.finish(continuation: continuation, value: ("", []))
+            }
+            box.timeoutItem = timeout
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(
+                deadline: .now() + timeoutSeconds,
+                execute: timeout
+            )
+        }
+    }
+
+    private nonisolated static func recognizedWords(
+        from transcription: SFTranscription,
+        timeOffset: Double
+    ) -> [RecognizedPracticeWord] {
+        transcription.segments.map { segment in
+            let alternatives = segment.alternativeSubstrings.filter {
+                $0.caseInsensitiveCompare(segment.substring) != .orderedSame
+            }
+            return RecognizedPracticeWord(
+                text: segment.substring,
+                timestamp: timeOffset + segment.timestamp,
+                duration: segment.duration,
+                confidence: segment.confidence,
+                alternativeSubstrings: Array(alternatives.prefix(4))
+            )
+        }
     }
 
     private func scheduleTaskRolloverTimer() {

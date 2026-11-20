@@ -445,19 +445,35 @@ nonisolated struct PrivateShareLink: Codable, Sendable, Hashable {
     }
 }
 
+nonisolated struct PracticeSilenceInterval: Codable, Sendable, Hashable {
+    var start: Double
+    var end: Double
+
+    var duration: Double { max(0, end - start) }
+}
+
 nonisolated struct DeliveryAnnotation: Codable, Sendable, Hashable, Identifiable {
     var id: UUID = UUID()
     var text: String
     var kind: AnnotationKind = .normal
+    var lineID: Int? = nil
+    var tokenIDs: [Int] = []
+    var timestamp: Double? = nil
 
     init(
         id: UUID = UUID(),
         text: String,
-        kind: AnnotationKind = .normal
+        kind: AnnotationKind = .normal,
+        lineID: Int? = nil,
+        tokenIDs: [Int] = [],
+        timestamp: Double? = nil
     ) {
         self.id = id
         self.text = text
         self.kind = kind
+        self.lineID = lineID
+        self.tokenIDs = tokenIDs
+        self.timestamp = timestamp
     }
 
     init(from decoder: Decoder) throws {
@@ -465,6 +481,9 @@ nonisolated struct DeliveryAnnotation: Codable, Sendable, Hashable, Identifiable
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
         kind = try c.decodeIfPresent(AnnotationKind.self, forKey: .kind) ?? .normal
+        lineID = try c.decodeIfPresent(Int.self, forKey: .lineID)
+        tokenIDs = try c.decodeIfPresent([Int].self, forKey: .tokenIDs) ?? []
+        timestamp = try c.decodeIfPresent(Double.self, forKey: .timestamp)
     }
 }
 
@@ -474,17 +493,23 @@ nonisolated struct RecognizedPracticeWord: Codable, Sendable, Hashable, Identifi
     var text: String
     var timestamp: Double
     var duration: Double
+    var confidence: Float? = nil
+    var alternativeSubstrings: [String] = []
 
     init(
         id: UUID = UUID(),
         text: String,
         timestamp: Double,
-        duration: Double
+        duration: Double,
+        confidence: Float? = nil,
+        alternativeSubstrings: [String] = []
     ) {
         self.id = id
         self.text = text
         self.timestamp = timestamp
         self.duration = duration
+        self.confidence = confidence
+        self.alternativeSubstrings = alternativeSubstrings
     }
 
     init(from decoder: Decoder) throws {
@@ -493,6 +518,8 @@ nonisolated struct RecognizedPracticeWord: Codable, Sendable, Hashable, Identifi
         text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
         timestamp = try c.decodeIfPresent(Double.self, forKey: .timestamp) ?? 0
         duration = try c.decodeIfPresent(Double.self, forKey: .duration) ?? 0
+        confidence = try c.decodeIfPresent(Float.self, forKey: .confidence)
+        alternativeSubstrings = try c.decodeIfPresent([String].self, forKey: .alternativeSubstrings) ?? []
     }
 }
 
