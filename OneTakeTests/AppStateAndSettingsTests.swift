@@ -504,4 +504,27 @@ final class AppStateAndSettingsTests: XCTestCase {
         XCTAssertTrue(shortTracker.update(offsetY: -10, topEdge: 0, bottomEdge: 0, phase: .interacting, now: t0.addingTimeInterval(0.6)))
         XCTAssertFalse(shortTracker.update(offsetY: -12, topEdge: 0, bottomEdge: 0, phase: .interacting, now: t0.addingTimeInterval(0.8)))
     }
+
+    func testAuditionListFilterDefaultsToAllAndPersistsSelection() {
+        let defaults = makeIsolatedDefaults()
+
+        // Default is `.all` when no prior preference exists
+        let initialState = AppState(settings: AppSettings(defaults: defaults), defaults: defaults)
+        XCTAssertEqual(initialState.auditionListFilter, .all)
+
+        // Changing to `.active` persists across AppState relaunches
+        initialState.auditionListFilter = .active
+        let relaunchedActive = AppState(settings: AppSettings(defaults: defaults), defaults: defaults)
+        XCTAssertEqual(relaunchedActive.auditionListFilter, .active)
+
+        // Changing to `.sent` locks in `.sent`
+        relaunchedActive.auditionListFilter = .sent
+        let relaunchedSent = AppState(settings: AppSettings(defaults: defaults), defaults: defaults)
+        XCTAssertEqual(relaunchedSent.auditionListFilter, .sent)
+
+        // Unknown raw value falls back safely to `.all`
+        defaults.set("UnknownValue", forKey: "onetake.auditionListFilter")
+        let fallbackState = AppState(settings: AppSettings(defaults: defaults), defaults: defaults)
+        XCTAssertEqual(fallbackState.auditionListFilter, .all)
+    }
 }

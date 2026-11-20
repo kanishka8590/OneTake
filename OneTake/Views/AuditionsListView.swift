@@ -38,7 +38,18 @@ struct AuditionsListView: View {
         explicitAppState ?? envAppState
     }
 
-    @State private var selectedFilter: AuditionListFilter = .active
+    private var selectedFilter: AuditionListFilter {
+        get { appState.auditionListFilter }
+        nonmutating set { appState.auditionListFilter = newValue }
+    }
+
+    private var selectedFilterBinding: Binding<AuditionListFilter> {
+        Binding(
+            get: { appState.auditionListFilter },
+            set: { appState.auditionListFilter = $0 }
+        )
+    }
+
     @State private var showingAddSourceSheet = false
     @State private var pendingAddSource: PendingAddSource?
     @State private var auditionToDelete: Audition?
@@ -247,7 +258,7 @@ struct AuditionsListView: View {
 
     private var filterToolbarMenu: some View {
         Menu {
-            Picker("Filter", selection: $selectedFilter) {
+            Picker("Filter", selection: selectedFilterBinding) {
                 ForEach(AuditionListFilter.allCases) { filter in
                     Text(filter.rawValue).tag(filter)
                 }
