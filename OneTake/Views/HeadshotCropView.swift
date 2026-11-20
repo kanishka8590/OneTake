@@ -5,7 +5,32 @@ struct HeadshotCropView: View {
 
     let originalImage: UIImage
     let defaultRatio: HeadshotAspectRatio
+    let angle: HeadshotAngle?
+    let batchProgress: (current: Int, total: Int)?
     let onCropConfirmed: (UIImage, HeadshotAspectRatio, HeadshotCropPreset) -> Void
+
+    init(
+        originalImage: UIImage,
+        defaultRatio: HeadshotAspectRatio,
+        angle: HeadshotAngle? = nil,
+        batchProgress: (current: Int, total: Int)? = nil,
+        onCropConfirmed: @escaping (UIImage, HeadshotAspectRatio, HeadshotCropPreset) -> Void
+    ) {
+        self.originalImage = originalImage
+        self.defaultRatio = defaultRatio
+        self.angle = angle
+        self.batchProgress = batchProgress
+        self.onCropConfirmed = onCropConfirmed
+    }
+
+    static func navigationTitle(for angle: HeadshotAngle?) -> String {
+        switch angle {
+        case .front: return "Crop Front"
+        case .left: return "Crop Left Profile"
+        case .right: return "Crop Right Profile"
+        case nil: return "Adjust Crop"
+        }
+    }
 
     @State private var selectedRatio: HeadshotAspectRatio = .ratio4x5
     @State private var selectedPreset: HeadshotCropPreset = .theatrical
@@ -206,13 +231,21 @@ struct HeadshotCropView: View {
                     .padding(.bottom, 24)
                 }
             }
-            .navigationTitle("Adjust Crop")
+            .navigationTitle(Self.navigationTitle(for: angle))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         autoCropTask?.cancel()
                         dismiss()
+                    }
+                }
+                if let batchProgress, batchProgress.total > 1 {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Text("\(batchProgress.current) of \(batchProgress.total)")
+                            .font(Theme.Typography.captionBadge)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                            .accessibilityLabel("Headshot \(batchProgress.current) of \(batchProgress.total)")
                     }
                 }
             }

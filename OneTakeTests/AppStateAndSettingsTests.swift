@@ -555,4 +555,11 @@ final class AppStateAndSettingsTests: XCTestCase {
         XCTAssertTrue(agencyScript.contains("I am represented by Bramwell Talent."))
         XCTAssertTrue(agencyScript.contains("I am based in Mumbai."))
     }
+
+    func testHeadshotCropViewNavigationTitleIncludesAngleWhenProvided() {
+        XCTAssertEqual(HeadshotCropView.navigationTitle(for: .front), "Crop Front")
+        XCTAssertEqual(HeadshotCropView.navigationTitle(for: .left), "Crop Left Profile")
+        XCTAssertEqual(HeadshotCropView.navigationTitle(for: .right), "Crop Right Profile")
+        XCTAssertEqual(HeadshotCropView.navigationTitle(for: nil), "Adjust Crop")
+    }
 }

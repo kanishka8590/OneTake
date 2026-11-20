@@ -27,6 +27,7 @@ struct PackageValidationAndExportView: View {
     @State private var cropRoute: CropRoute?
     @State private var isCyclingHeadshotCrops = false
     @State private var didApplyCropForCurrentAngle = false
+    @State private var cropBatchTotalCount = 0
     @State private var slateMetadata: VideoMetadata?
     @State private var clipMetadata: VideoMetadata?
 
@@ -46,6 +47,8 @@ struct PackageValidationAndExportView: View {
         let id = UUID()
         let angle: HeadshotAngle
         let image: UIImage
+        let stepIndex: Int
+        let totalCount: Int
     }
     private struct CompressorRoute: Identifiable {
         let id = UUID()
@@ -155,7 +158,12 @@ struct PackageValidationAndExportView: View {
                 }
             }
             .fullScreenCover(item: $cropRoute, onDismiss: { handleCropDismiss() }) { route in
-                HeadshotCropView(originalImage: route.image, defaultRatio: rules.requiredHeadshotRatio) { image, ratio, preset in
+                HeadshotCropView(
+                    originalImage: route.image,
+                    defaultRatio: rules.requiredHeadshotRatio,
+                    angle: route.angle,
+                    batchProgress: (current: route.stepIndex, total: route.totalCount)
+                ) { image, ratio, preset in
                     saveCrop(image, ratio: ratio, preset: preset, angle: route.angle)
                 }
             }
@@ -955,20 +963,35 @@ struct PackageValidationAndExportView: View {
     }
 
     private func presentHeadshotCrop() {
+        let mismatched = mismatchedHeadshotAssets()
+        cropBatchTotalCount = mismatched.count
         isCyclingHeadshotCrops = true
         didApplyCropForCurrentAngle = false
-        presentNextMismatchedHeadshotIfNeeded()
+        presentNextMismatchedHeadshotIfNeeded(mismatched: mismatched)
     }
 
-    private func presentNextMismatchedHeadshotIfNeeded() {
-        guard let asset = HeadshotAngle.allCases
-            .compactMap({ audition.headshot(for: $0) })
-            .first(where: { $0.aspectRatio != rules.requiredHeadshotRatio }),
+    private func mismatchedHeadshotAssets() -> [HeadshotAsset] {
+        HeadshotAngle.allCases
+            .compactMap { audition.headshot(for: $0) }
+            .filter { $0.aspectRatio != rules.requiredHeadshotRatio }
+    }
+
+    private func presentNextMismatchedHeadshotIfNeeded(mismatched: [HeadshotAsset]? = nil) {
+        let remaining = mismatched ?? mismatchedHeadshotAssets()
+        guard let asset = remaining.first,
               let image = loadHeadshotImage(for: asset) else {
             isCyclingHeadshotCrops = false
+            cropBatchTotalCount = 0
             return
         }
-        cropRoute = CropRoute(angle: asset.angle, image: image)
+        let total = max(cropBatchTotalCount, remaining.count)
+        let step = min(total, max(1, total - remaining.count + 1))
+        cropRoute = CropRoute(
+            angle: asset.angle,
+            image: image,
+            stepIndex: step,
+            totalCount: total
+        )
     }
 
     private func loadHeadshotImage(for asset: HeadshotAsset) -> UIImage? {
@@ -987,6 +1010,7 @@ struct PackageValidationAndExportView: View {
         guard isCyclingHeadshotCrops, didApplyCropForCurrentAngle else {
             isCyclingHeadshotCrops = false
             didApplyCropForCurrentAngle = false
+            cropBatchTotalCount = 0
             return
         }
         didApplyCropForCurrentAngle = false
