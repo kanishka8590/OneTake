@@ -240,6 +240,22 @@ final class HeadshotFramingAndGuidanceTests: XCTestCase {
         XCTAssertEqual(draggedBack.width, switchedOffset.width - 20, accuracy: 0.01)
     }
 
+    func testAspectFittedSizeFits1x1And4x5And16x9StrictlyWithinSlot() {
+        let slot = CGSize(width: 102, height: 112)
+
+        let square = HeadshotCropMath.aspectFittedSize(aspect: 1.0, inside: slot)
+        XCTAssertEqual(square.width, 102, accuracy: 0.01)
+        XCTAssertEqual(square.height, 102, accuracy: 0.01)
+
+        let fourFive = HeadshotCropMath.aspectFittedSize(aspect: 0.8, inside: slot)
+        XCTAssertEqual(fourFive.width, 89.6, accuracy: 0.01)
+        XCTAssertEqual(fourFive.height, 112, accuracy: 0.01)
+
+        let landscape = HeadshotCropMath.aspectFittedSize(aspect: 16.0 / 9.0, inside: slot)
+        XCTAssertEqual(landscape.width, 102, accuracy: 0.01)
+        XCTAssertEqual(landscape.height, 57.375, accuracy: 0.01)
+    }
+
     // MARK: - HeadshotGuidanceService Pure Evaluators & Demo Gating
 
     func testIsEyeLevelPitchRejectsFlatPhoneAndAcceptsUprightPhone() {

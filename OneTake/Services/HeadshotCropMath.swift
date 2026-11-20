@@ -40,6 +40,17 @@ nonisolated enum HeadshotCropMath {
         }
     }
 
+    /// Computes the exact fitted frame inside `bounds` preserving `aspectRatio` so visual clips and strokes align 1:1.
+    static func aspectFittedSize(aspect: CGFloat, inside bounds: CGSize) -> CGSize {
+        guard bounds.width > 0, bounds.height > 0 else { return .zero }
+        let safeAspect = max(0.25, aspect)
+        let heightByWidth = bounds.width / safeAspect
+        if heightByWidth <= bounds.height {
+            return CGSize(width: bounds.width, height: heightByWidth)
+        }
+        return CGSize(width: bounds.height * safeAspect, height: bounds.height)
+    }
+
     static func maxOffset(
         imageSize: CGSize,
         containerSize: CGSize,
