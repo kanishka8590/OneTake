@@ -580,47 +580,25 @@ struct PracticeAuditionCueSelectionView: View {
 
 // MARK: - Script model and memorise levels
 
-private struct CueAudioInlineButton: View {
-    let audioURL: URL
-    @State private var isPlaying = false
-    @State private var player: AVAudioPlayer?
+private struct CueSpeakButton: View {
+    let isSpeaking: Bool
+    let action: () -> Void
 
     var body: some View {
-        Button {
-            togglePlay()
-        } label: {
+        Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemName: isPlaying ? "stop" : "speaker.wave.2")
+                Image(systemName: isSpeaking ? "stop.fill" : "speaker.wave.2.fill")
                     .font(.system(size: 11, weight: .semibold))
-                Text(isPlaying ? "Stop" : "Play Cue")
+                Text(isSpeaking ? "Stop" : "Read Cue")
                     .font(.system(size: 11, weight: .semibold))
             }
-            .foregroundStyle(Theme.Colors.accent)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Theme.Colors.lavenderSurface)
+            .foregroundStyle(isSpeaking ? .white : Theme.Colors.accent)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(isSpeaking ? Theme.Colors.primaryPlum : Theme.Colors.lavenderSurface)
             .clipShape(Capsule())
         }
         .buttonStyle(.plain)
-        .onDisappear {
-            player?.stop()
-            isPlaying = false
-        }
-    }
-
-    private func togglePlay() {
-        if isPlaying {
-            player?.stop()
-            isPlaying = false
-        } else {
-            do {
-                player = try AVAudioPlayer(contentsOf: audioURL)
-                player?.play()
-                isPlaying = true
-            } catch {
-                isPlaying = false
-            }
-        }
     }
 }
 
@@ -633,6 +611,7 @@ struct MemoriseView: View {
     @State private var revealedLineIDs: Set<Int> = []
     @State private var editCues = false
     @State private var navigateToSayItAloud = false
+    @State private var cueSpeaker = PracticeCueSpeaker()
 
     private var scriptModel: PracticeScriptModel {
         PracticeScriptModel(script: script)
@@ -717,44 +696,57 @@ struct MemoriseView: View {
                         clueTokenIDs: .constant([]),
                         allowLinePeek: true,
                         recordRevealAsClue: false,
+                        speakingCueLineID: cueSpeaker.activeCueLineID,
+                        onReadCue: { line in
+                            toggleMemoriseCueSpeech(for: line)
+                        },
                         onClueTokenRequested: { _ in },
                         scriptCues: script.cueLines
                     )
                 }
                 .padding(16)
-                .padding(.bottom, 20)
+                .padding(.bottom, 12)
             }
             .scrollEdgeHaptics()
-
-            // Sticky Bottom Action Bar
-            VStack(spacing: 8) {
-                Divider()
-
-                HStack(spacing: 12) {
-                    Button {
-                        navigateToSayItAloud = true
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "waveform")
-                                .font(.system(size: 16, weight: .bold))
-                            Text("Practice Aloud")
-                                .font(.system(size: 16, weight: .bold))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(Theme.Colors.primaryPlum)
-                        .foregroundStyle(.white)
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            Button {
+                cueSpeaker.stop()
+                navigateToSayItAloud = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 16, weight: .bold))
+                    Text("Practice Aloud")
+                        .font(.system(size: 16, weight: .bold))
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 4)
-                .padding(.bottom, 10)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(Theme.Colors.primaryPlum)
+                .foregroundStyle(.white)
+                .clipShape(Capsule())
+                .shadow(color: Color.black.opacity(0.24), radius: 10, y: 4)
             }
-            .background(Theme.Colors.cardSurface)
+            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 6)
+            .background(
+                LinearGradient(
+                    colors: [
+                        Theme.Colors.canvasBackground.opacity(0),
+                        Theme.Colors.canvasBackground.opacity(0.92),
+                        Theme.Colors.canvasBackground
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
         }
         .background(Theme.Colors.canvasBackground)
+        .onDisappear {
+            cueSpeaker.stop()
+        }
         .navigationTitle(script.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
@@ -795,6 +787,14 @@ struct MemoriseView: View {
             }
         }
     }
+
+    private func toggleMemoriseCueSpeech(for line: PracticeLine) {
+        if cueSpeaker.isSpeaking && cueSpeaker.activeCueLineID == line.id {
+            cueSpeaker.stop()
+        } else {
+            cueSpeaker.speak(text: line.text, lineID: line.id, scriptLanguage: script.language)
+        }
+    }
 }
 
 private struct ScriptPracticeCard: View {
@@ -804,7 +804,11 @@ private struct ScriptPracticeCard: View {
     @Binding var revealedLineIDs: Set<Int>
     @Binding var clueTokenIDs: Set<Int>
     var allowLinePeek: Bool = false
+    var activeLineID: Int? = nil
     let recordRevealAsClue: Bool
+    var speakingCueLineID: Int? = nil
+    var onReadCue: ((PracticeLine) -> Void)? = nil
+    var onLinePeeked: ((Int) -> Void)? = nil
     let onClueTokenRequested: (Int) -> Void
     var scriptCues: [CueLine] = []
 
@@ -815,7 +819,11 @@ private struct ScriptPracticeCard: View {
         revealedLineIDs: Binding<Set<Int>> = .constant([]),
         clueTokenIDs: Binding<Set<Int>>,
         allowLinePeek: Bool = false,
+        activeLineID: Int? = nil,
         recordRevealAsClue: Bool,
+        speakingCueLineID: Int? = nil,
+        onReadCue: ((PracticeLine) -> Void)? = nil,
+        onLinePeeked: ((Int) -> Void)? = nil,
         onClueTokenRequested: @escaping (Int) -> Void,
         scriptCues: [CueLine] = []
     ) {
@@ -825,7 +833,11 @@ private struct ScriptPracticeCard: View {
         self._revealedLineIDs = revealedLineIDs
         self._clueTokenIDs = clueTokenIDs
         self.allowLinePeek = allowLinePeek
+        self.activeLineID = activeLineID
         self.recordRevealAsClue = recordRevealAsClue
+        self.speakingCueLineID = speakingCueLineID
+        self.onReadCue = onReadCue
+        self.onLinePeeked = onLinePeeked
         self.onClueTokenRequested = onClueTokenRequested
         self.scriptCues = scriptCues
     }
@@ -870,10 +882,7 @@ private struct ScriptPracticeCard: View {
     }
 
     private func cueLine(_ line: PracticeLine) -> some View {
-        let matchingCue = scriptCues.first {
-            $0.cueText.trimmingCharacters(in: .whitespacesAndNewlines)
-                .caseInsensitiveCompare(line.text.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
-        }
+        let isThisCueSpeaking = speakingCueLineID == line.id
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 8) {
@@ -884,8 +893,10 @@ private struct ScriptPracticeCard: View {
 
                 Spacer()
 
-                if let cue = matchingCue, let audioURL = cue.audioURL {
-                    CueAudioInlineButton(audioURL: audioURL)
+                if let onReadCue {
+                    CueSpeakButton(isSpeaking: isThisCueSpeaking) {
+                        onReadCue(line)
+                    }
                 }
             }
 
@@ -896,13 +907,17 @@ private struct ScriptPracticeCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.Colors.accent.opacity(0.12))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.Colors.accent.opacity(0.4), lineWidth: 1))
+        .background(Theme.Colors.accent.opacity(isThisCueSpeaking ? 0.22 : 0.12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Theme.Colors.accent.opacity(isThisCueSpeaking ? 0.9 : 0.4), lineWidth: isThisCueSpeaking ? 1.75 : 1)
+        )
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func actorLineBlock(_ line: PracticeLine) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let isActive = activeLineID == line.id
+        return VStack(alignment: .leading, spacing: 4) {
             if !line.speaker.isEmpty && line.speaker != "SCRIPT" {
                 Text("\(line.speaker.uppercased()) · YOU")
                     .font(.system(size: 11, weight: .bold))
@@ -911,11 +926,19 @@ private struct ScriptPracticeCard: View {
             }
             actorLine(line)
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, isActive ? 10 : 0)
+        .padding(.vertical, isActive ? 8 : 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isActive ? Theme.Colors.accent.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(isActive ? Theme.Colors.accent.opacity(0.35) : Color.clear, lineWidth: 1)
+        )
     }
 
     private func hiddenActorLine(_ line: PracticeLine) -> some View {
-        Group {
+        let isActive = activeLineID == line.id
+        return Group {
             if revealedLineIDs.contains(line.id) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
@@ -947,18 +970,21 @@ private struct ScriptPracticeCard: View {
                 .padding(12)
                 .background(Theme.Colors.accent.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.Colors.accent.opacity(0.25), lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.Colors.accent.opacity(isActive ? 0.65 : 0.25), lineWidth: isActive ? 1.5 : 1))
             } else {
                 Button {
                     revealedLineIDs.insert(line.id)
+                    if recordRevealAsClue {
+                        onLinePeeked?(line.id)
+                    }
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "eye.slash")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(Theme.Colors.accent)
-                        Text(line.speaker.isEmpty ? "Tap to reveal your line" : "Tap to reveal \(line.speaker.uppercased()) line")
+                        Text(line.speaker.isEmpty ? "Tap to peek your line" : "Tap to peek \(line.speaker.uppercased()) line")
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(Theme.Colors.textSecondary)
+                            .foregroundStyle(isActive ? Theme.Colors.textPrimary : Theme.Colors.textSecondary)
                         Spacer()
                         Image(systemName: "hand.tap")
                             .font(.system(size: 12))
@@ -966,9 +992,9 @@ private struct ScriptPracticeCard: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
-                    .background(Theme.Colors.surfaceElevated)
+                    .background(isActive ? Theme.Colors.accent.opacity(0.10) : Theme.Colors.surfaceElevated)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.Colors.controlBorder, lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(isActive ? Theme.Colors.accent.opacity(0.45) : Theme.Colors.controlBorder, lineWidth: isActive ? 1.25 : 1))
                 }
                 .buttonStyle(.plain)
             }
@@ -1032,10 +1058,18 @@ struct TestYourselfView: View {
 }
 
 struct SayItAloudView: View {
-    let script: PracticeScript; let appState: AppState; let help: HelpLevel
+    let script: PracticeScript
+    let appState: AppState
+    let help: HelpLevel
+
+    @Environment(\.dismiss) private var dismiss
     @State private var recorder = PracticeSpeechRecorder()
+    @State private var cueSpeaker = PracticeCueSpeaker()
     @State private var clueTracker: PracticeSpeechClueTracker
+    @State private var selectedMode: PracticeDisplayMode
+    @State private var autoReadCues: Bool
     @State private var revealed: Set<Int> = []
+    @State private var revealedLineIDs: Set<Int> = []
     @State private var clueTokenIDs: Set<Int> = []
     @State private var didStart = false
     @State private var paused = false
@@ -1045,113 +1079,156 @@ struct SayItAloudView: View {
     @State private var reviewSession: PracticeSession?
     @State private var showReview = false
     @State private var isFinalizingReview = false
+    @State private var pendingExitAfterReview = false
     @State private var finalizeTask: Task<Void, Never>?
+    @State private var spokenCueLineIDs: Set<Int> = []
+    @State private var pendingCueQueue: [PracticeLine] = []
+    @State private var didCheckOpeningCues = false
+
     private var model: PracticeScriptModel { clueTracker.model }
-    private var mode: Int { help == .nothing ? 0 : help == .fullScript ? 1 : help == .gaps ? 2 : 3 }
-    private var nextActorLine: PracticeLine? { clueTracker.nextSentence.flatMap { range in model.actorLines.first(where: { $0.id == range.lineID }) } }
+    private var activeHelp: HelpLevel { selectedMode.helpLevel }
+    private var mode: Int {
+        switch selectedMode {
+        case .hideLines: return 0
+        case .full: return 1
+        case .gaps: return 2
+        case .firstLetters: return 3
+        }
+    }
+    private var hasCueLines: Bool {
+        model.lines.contains(where: \.isCue)
+    }
+    private var nextActorLine: PracticeLine? {
+        clueTracker.nextSentence.flatMap { range in
+            model.actorLines.first(where: { $0.id == range.lineID })
+        }
+    }
 
     init(script: PracticeScript, appState: AppState, help: HelpLevel) {
         self.script = script
         self.appState = appState
         self.help = help
         _clueTracker = State(initialValue: PracticeSpeechClueTracker(script: script))
+        let initialMode: PracticeDisplayMode = switch help {
+        case .fullScript: .full
+        case .gaps: .gaps
+        case .letters: .firstLetters
+        case .nothing: .hideLines
+        }
+        _selectedMode = State(initialValue: initialMode)
+        _autoReadCues = State(initialValue: !script.cueLines.isEmpty)
     }
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 0) {
+            topControlHeader
+
             if !appState.isDemoMode && recorder.permissionDenied {
                 permissionDeniedCard
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
             }
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    ScriptPracticeCard(
-                        model: model,
-                        mode: mode,
-                        revealedTokenIDs: $revealed,
-                        revealedLineIDs: .constant([]),
-                        clueTokenIDs: $clueTokenIDs,
-                        allowLinePeek: false,
-                        recordRevealAsClue: didStart,
-                        onClueTokenRequested: requestClueForToken,
-                        scriptCues: script.cueLines
-                    )
-                        .padding(.horizontal, 2)
+                    VStack(spacing: 12) {
+                        ScriptPracticeCard(
+                            model: model,
+                            mode: mode,
+                            revealedTokenIDs: $revealed,
+                            revealedLineIDs: $revealedLineIDs,
+                            clueTokenIDs: $clueTokenIDs,
+                            allowLinePeek: true,
+                            activeLineID: didStart ? nextActorLine?.id : nil,
+                            recordRevealAsClue: didStart,
+                            speakingCueLineID: cueSpeaker.activeCueLineID,
+                            onReadCue: { line in
+                                handleManualCueTap(line)
+                            },
+                            onLinePeeked: { lineID in
+                                requestClueForLine(lineID)
+                            },
+                            onClueTokenRequested: requestClueForToken,
+                            scriptCues: script.cueLines
+                        )
+
+                        if let hintText {
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "lightbulb.fill")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(Theme.Colors.accent)
+                                    .padding(.top, 2)
+                                Text(hintText)
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                Spacer(minLength: 4)
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.15)) {
+                                        self.hintText = nil
+                                        self.hintLineID = nil
+                                    }
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(Theme.Colors.textSecondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(12)
+                            .background(Theme.Colors.lavenderSurface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                    }
+                    .padding(16)
+                    .padding(.bottom, 12)
                 }
                 .scrollEdgeHaptics()
                 .scrollIndicators(.visible)
                 .frame(maxHeight: .infinity)
-                .onChange(of: clueTracker.currentActorLineIndex) { _, _ in
-                    if let id = nextActorLine?.id {
-                        withAnimation(.easeInOut(duration: 0.5)) { proxy.scrollTo(id, anchor: .center) }
+                .onChange(of: clueTracker.currentActorLineIndex) { oldIndex, newIndex in
+                    if let activeID = nextActorLine?.id {
+                        withAnimation(.easeInOut(duration: 0.45)) {
+                            proxy.scrollTo(activeID, anchor: .center)
+                        }
+                    }
+                    if let hintLineID, clueTracker.nextSentence?.lineID != hintLineID {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            self.hintText = nil
+                            self.hintLineID = nil
+                        }
+                    }
+                    triggerAutomaticCueLinesIfNeeded(previousActorIndex: oldIndex, newActorIndex: newIndex, proxy: proxy)
+                }
+                .onChange(of: recorder.isRecording) { wasRecording, isNowRecording in
+                    if !wasRecording && isNowRecording && !didCheckOpeningCues {
+                        didCheckOpeningCues = true
+                        triggerOpeningCuesIfNeeded(proxy: proxy)
                     }
                 }
             }
-            if help != .fullScript {
-                Button { requestNextSentence() } label: { Label("Need a clue?", systemImage: "lightbulb").secondaryLavenderButton() }
-                if let hintText {
-                    Text("Next sentence: \"\(hintText)\"")
-                        .font(.caption)
-                        .foregroundStyle(Theme.Colors.accent)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else if let hintLineID, let line = model.actorLines.first(where: { $0.id == hintLineID }) {
-                    Text("Next sentence: \"\(line.text)\"")
-                        .font(.caption)
-                        .foregroundStyle(Theme.Colors.accent)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            bottomTransportDock
+        }
+        .background(Theme.Colors.canvasBackground)
+        .navigationTitle(script.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(statusDotColor)
+                        .frame(width: 7, height: 7)
+                    Text(formattedElapsedTime)
+                        .font(.caption.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.Colors.textPrimary)
                 }
-            }
-            ZStack {
-                Circle().fill(Theme.Colors.primaryPlum.opacity(0.16)).frame(width: 148, height: 148)
-                Circle().fill(Theme.Colors.primaryPlum.opacity(0.28)).frame(width: 112, height: 112)
-                Button {
-                    didStart ? togglePause() : toggleStart()
-                } label: {
-                    Image(systemName: paused ? "pause" : "mic")
-                        .font(.system(size: 42))
-                        .foregroundStyle(.white)
-                        .frame(width: 82, height: 82)
-                        .background(Theme.Colors.primaryPlum)
-                        .clipShape(Circle())
-                }
-                .disabled(isFinalizingReview)
-                .accessibilityLabel(didStart ? (paused ? "Resume recording" : "Pause recording") : "Start recording")
-            }
-            WaveformBars(level: recorder.audioLevel).frame(height: 28)
-            if !appState.isDemoMode, let errorMessage = recorder.errorMessage, !recorder.permissionDenied {
-                Text(errorMessage)
-                    .font(.caption)
-                    .foregroundStyle(Theme.Colors.warningAmber)
-                    .multilineTextAlignment(.center)
-            }
-            if isFinalizingReview {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Analyzing delivery…")
-                        .font(.caption)
-                        .foregroundStyle(Theme.Colors.textSecondary)
-                }
-            } else {
-                Text(recorder.transcript.isEmpty ? recorder.statusText : recorder.transcript)
-                    .font(.caption)
-                    .foregroundStyle(Theme.Colors.textSecondary)
-                    .lineLimit(2)
-            }
-            HStack {
-                Button(didStart ? (paused ? "Resume" : "Pause") : "Start") {
-                    didStart ? togglePause() : toggleStart()
-                }
-                .secondaryLavenderButton()
-                .disabled(isFinalizingReview)
-                Button(isFinalizingReview ? "Analyzing…" : "Stop") { stopAndReview() }
-                    .primaryCapsuleButton()
-                    .disabled(!didStart || isFinalizingReview)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(Theme.Colors.lavenderSurface, in: Capsule())
             }
         }
-        .padding(16)
-        .background(Theme.Colors.canvasBackground)
-        .toolbar(.hidden, for: .tabBar)
         .onChange(of: recorder.recognizedWords) { _, segments in
             clueTracker.processRecognizedSpeech(segments: segments)
         }
@@ -1169,13 +1246,19 @@ struct SayItAloudView: View {
         .onChange(of: showReview) { wasShowing, isShowing in
             if wasShowing && !isShowing {
                 deleteDiscardedAudioIfUnsaved()
+                let shouldExit = pendingExitAfterReview
+                pendingExitAfterReview = false
                 resetSessionState()
+                if shouldExit {
+                    dismiss()
+                }
             }
         }
         .onDisappear {
             if !showReview {
                 finalizeTask?.cancel()
                 finalizeTask = nil
+                stopCuePlaybackAndUnmute()
                 recorder.stop()
             }
         }
@@ -1186,15 +1269,191 @@ struct SayItAloudView: View {
                     session: reviewSession,
                     appState: appState,
                     onRetake: {
+                        pendingExitAfterReview = false
                         deleteDiscardedAudioIfUnsaved()
-                        resetSessionState()
                     },
                     onDone: {
-                        resetSessionState()
+                        pendingExitAfterReview = true
                     }
                 )
             }
         }
+    }
+
+    private var topControlHeader: some View {
+        VStack(spacing: 8) {
+            Picker("Visibility", selection: $selectedMode) {
+                ForEach(PracticeDisplayMode.allCases) { item in
+                    Text(item.shortTitle).tag(item)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(isFinalizingReview)
+            .onChange(of: selectedMode) { _, _ in
+                Haptics.selectionTick()
+            }
+
+            if hasCueLines {
+                HStack(spacing: 8) {
+                    Label(
+                        autoReadCues ? "Synthetic cue voice active" : "Synthetic cue voice off",
+                        systemImage: autoReadCues ? "speaker.wave.2.fill" : "speaker.slash"
+                    )
+                    .font(Theme.Typography.captionBadge)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+
+                    Spacer()
+
+                    Button {
+                        Haptics.selectionTick()
+                        autoReadCues.toggle()
+                        if !autoReadCues {
+                            stopCuePlaybackAndUnmute()
+                        }
+                    } label: {
+                        Text(autoReadCues ? "Auto Cues On" : "Auto Cues Off")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(autoReadCues ? .white : Theme.Colors.textSecondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(autoReadCues ? Theme.Colors.primaryPlum : Theme.Colors.lavenderSurface, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isFinalizingReview)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Theme.Colors.cardSurface)
+        .overlay(Divider(), alignment: .bottom)
+    }
+
+    private var bottomTransportDock: some View {
+        VStack(spacing: 10) {
+            Divider()
+
+            // Fixed-height live feedback strip so the layout stays rock steady.
+            HStack(spacing: 10) {
+                if isFinalizingReview {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Analyzing delivery…")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                    Spacer()
+                } else if cueSpeaker.isSpeaking {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.Colors.accent)
+                    Text("Cue: “\(cueSpeaker.currentCueText)”")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.accent)
+                        .lineLimit(1)
+                    Spacer()
+                } else if !appState.isDemoMode, let errorMessage = recorder.errorMessage, !recorder.permissionDenied {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.warningAmber)
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.warningAmber)
+                        .lineLimit(1)
+                    Spacer()
+                } else {
+                    CompactWaveformBars(level: didStart && !paused ? recorder.audioLevel : 0.08)
+                        .frame(width: 44, height: 18)
+
+                    Text(recorder.transcript.isEmpty ? recorder.statusText : recorder.transcript)
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+
+                    Spacer(minLength: 0)
+                }
+            }
+            .frame(height: 24)
+
+            if !didStart {
+                Button {
+                    toggleStart()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "mic.fill")
+                            .font(.system(size: 16, weight: .bold))
+                        Text("Start Run")
+                            .font(.system(size: 16, weight: .bold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Theme.Colors.primaryPlum)
+                    .foregroundStyle(.white)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(isFinalizingReview)
+            } else {
+                HStack(spacing: 10) {
+                    if activeHelp != .fullScript {
+                        Button {
+                            requestNextSentence()
+                        } label: {
+                            Image(systemName: "lightbulb.fill")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(Theme.Colors.accent)
+                                .frame(width: 48, height: 48)
+                                .background(Theme.Colors.lavenderSurface, in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isFinalizingReview)
+                        .accessibilityLabel("Need a clue")
+                    }
+
+                    Button {
+                        togglePause()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: paused ? "play.fill" : "pause.fill")
+                                .font(.system(size: 14, weight: .bold))
+                            Text(paused ? "Resume" : "Pause")
+                                .font(.system(size: 15, weight: .semibold))
+                        }
+                    }
+                    .secondaryLavenderButton()
+                    .disabled(isFinalizingReview)
+                    .accessibilityLabel(paused ? "Resume recording" : "Pause recording")
+
+                    Button {
+                        stopAndReview()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "stop.fill")
+                                .font(.system(size: 12, weight: .bold))
+                            Text(isFinalizingReview ? "Analyzing…" : "Finish")
+                                .font(.system(size: 15, weight: .bold))
+                        }
+                    }
+                    .primaryCapsuleButton()
+                    .disabled(isFinalizingReview)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
+        .background(Theme.Colors.cardSurface)
+    }
+
+    private var statusDotColor: Color {
+        if isFinalizingReview { return Theme.Colors.accent }
+        if !didStart { return Theme.Colors.textSecondary.opacity(0.45) }
+        return paused ? Theme.Colors.warningAmber : Theme.Colors.studioGreen
+    }
+
+    private var formattedElapsedTime: String {
+        let total = max(0, Int(recorder.duration.rounded(.down)))
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 
     private var permissionDeniedCard: some View {
@@ -1216,20 +1475,106 @@ struct SayItAloudView: View {
     }
 
     private func toggleStart() {
-        guard !didStart else { return }
+        guard !didStart && !isFinalizingReview else { return }
+        Haptics.selectionTick()
         didStart = true
         paused = false
+        didCheckOpeningCues = false
+        spokenCueLineIDs = []
+        pendingCueQueue = []
         recorder.start(language: script.language, script: script, isDemoMode: appState.isDemoMode)
     }
 
     private func togglePause() {
-        guard didStart else { return }
+        guard didStart && !isFinalizingReview else { return }
+        Haptics.selectionTick()
         paused.toggle()
         if paused {
+            stopCuePlaybackAndUnmute()
             recorder.pause()
         } else {
             recorder.resume()
         }
+    }
+
+    private func handleManualCueTap(_ line: PracticeLine) {
+        if cueSpeaker.isSpeaking && cueSpeaker.activeCueLineID == line.id {
+            stopCuePlaybackAndUnmute()
+            return
+        }
+        speakCueLinesSequentially([line], proxy: nil, allowReplay: true)
+    }
+
+    private func triggerOpeningCuesIfNeeded(proxy: ScrollViewProxy) {
+        guard autoReadCues, didStart, !paused,
+              let firstActorLineID = model.actorLines.first?.id else { return }
+        let openingCues = model.lines.filter {
+            $0.isCue && $0.id < firstActorLineID && !spokenCueLineIDs.contains($0.id)
+        }
+        guard !openingCues.isEmpty else { return }
+        speakCueLinesSequentially(openingCues, proxy: proxy)
+    }
+
+    private func triggerAutomaticCueLinesIfNeeded(previousActorIndex: Int, newActorIndex: Int, proxy: ScrollViewProxy) {
+        guard autoReadCues, didStart, !paused, newActorIndex > previousActorIndex else { return }
+        let actorLines = model.actorLines
+        guard actorLines.indices.contains(previousActorIndex) else { return }
+        let prevLineID = actorLines[previousActorIndex].id
+        let nextLineID = actorLines.indices.contains(newActorIndex) ? actorLines[newActorIndex].id : Int.max
+
+        let dueCues = model.lines.filter {
+            $0.isCue && $0.id > prevLineID && $0.id < nextLineID && !spokenCueLineIDs.contains($0.id)
+        }
+        guard !dueCues.isEmpty else { return }
+        speakCueLinesSequentially(dueCues, proxy: proxy)
+    }
+
+    private func speakCueLinesSequentially(
+        _ lines: [PracticeLine],
+        proxy: ScrollViewProxy?,
+        allowReplay: Bool = false
+    ) {
+        let filtered = allowReplay ? lines : lines.filter { !spokenCueLineIDs.contains($0.id) }
+        guard !filtered.isEmpty else { return }
+        pendingCueQueue.append(contentsOf: filtered)
+        if !cueSpeaker.isSpeaking {
+            speakNextQueuedCue(proxy: proxy)
+        }
+    }
+
+    private func speakNextQueuedCue(proxy: ScrollViewProxy?) {
+        guard !pendingCueQueue.isEmpty else {
+            recorder.setCuePlaybackMuted(false)
+            return
+        }
+        let nextCue = pendingCueQueue.removeFirst()
+        spokenCueLineIDs.insert(nextCue.id)
+        if let proxy {
+            withAnimation(.easeInOut(duration: 0.35)) {
+                proxy.scrollTo(nextCue.id, anchor: .center)
+            }
+        }
+        if didStart && !paused {
+            recorder.setCuePlaybackMuted(true)
+        }
+        cueSpeaker.speak(
+            text: nextCue.text,
+            lineID: nextCue.id,
+            scriptLanguage: script.language,
+            ensureAudioSession: !didStart || paused
+        ) {
+            if self.pendingCueQueue.isEmpty {
+                self.recorder.setCuePlaybackMuted(false)
+            } else {
+                self.speakNextQueuedCue(proxy: proxy)
+            }
+        }
+    }
+
+    private func stopCuePlaybackAndUnmute() {
+        pendingCueQueue.removeAll()
+        cueSpeaker.stop()
+        recorder.setCuePlaybackMuted(false)
     }
 
     private func requestNextSentence() {
@@ -1238,6 +1583,16 @@ struct SayItAloudView: View {
         hintLineID = range.lineID
         hintText = range.text
         clueTokenIDs.formUnion(range.tokenIDs)
+        if selectedMode == .hideLines {
+            revealedLineIDs.insert(range.lineID)
+        }
+    }
+
+    private func requestClueForLine(_ lineID: Int) {
+        guard let range = model.range(forLineID: lineID) else { return }
+        Haptics.selectionTick()
+        clueTokenIDs.formUnion(range.tokenIDs)
+        clueTracker.requestClue(containingTokenID: range.tokenIDs.first ?? -1)
     }
 
     private func requestClueForToken(_ tokenID: Int) {
@@ -1249,6 +1604,7 @@ struct SayItAloudView: View {
     private func stopAndReview() {
         guard !isFinalizingReview else { return }
         isFinalizingReview = true
+        stopCuePlaybackAndUnmute()
         Haptics.success()
 
         finalizeTask?.cancel()
@@ -1265,7 +1621,7 @@ struct SayItAloudView: View {
                 words: capture.words,
                 clueRequestedRanges: clueTracker.clueRequestedRanges,
                 duration: capture.duration,
-                help: help,
+                help: activeHelp,
                 audioURL: capture.audioURL,
                 silenceIntervals: capture.silenceIntervals
             )
@@ -1295,11 +1651,16 @@ struct SayItAloudView: View {
     private func resetSessionState() {
         finalizeTask?.cancel()
         finalizeTask = nil
+        stopCuePlaybackAndUnmute()
         isFinalizingReview = false
         didStart = false
         paused = false
+        didCheckOpeningCues = false
+        spokenCueLineIDs = []
+        pendingCueQueue = []
         clueTracker = PracticeSpeechClueTracker(script: script)
         revealed = []
+        revealedLineIDs = []
         clueTokenIDs = []
         hintLineID = nil
         hintText = nil
@@ -1309,17 +1670,17 @@ struct SayItAloudView: View {
     }
 }
 
-private struct WaveformBars: View {
+private struct CompactWaveformBars: View {
     let level: CGFloat
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(0..<12, id: \.self) { index in
-                RoundedRectangle(cornerRadius: 2)
+        HStack(spacing: 3) {
+            ForEach(0..<8, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 1.5)
                     .fill(Theme.Colors.primaryPlum)
-                    .frame(width: 4, height: max(6, 8 + CGFloat((index % 4) + 1) * level * 22))
+                    .frame(width: 3, height: max(4, 5 + CGFloat((index % 4) + 1) * level * 4))
             }
         }
-        .animation(.easeInOut(duration: 0.15), value: level)
+        .animation(.easeInOut(duration: 0.12), value: level)
     }
 }
 

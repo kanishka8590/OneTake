@@ -527,4 +527,21 @@ final class PracticeSpeechPipelineTests: XCTestCase {
         XCTAssertEqual(session.notInScriptCount, 2)
         XCTAssertTrue(session.annotations.contains { $0.kind == .notInScript && $0.text == "मेरा मतलब" })
     }
+
+    func testSyntheticCueSpeakerVoiceSelectionAndCueIntervalFiltering() {
+        XCTAssertEqual(PracticeCueSpeaker.preferredVoiceLanguage(for: "What's your name?", scriptLanguage: .english), "en-US")
+        XCTAssertEqual(PracticeCueSpeaker.preferredVoiceLanguage(for: "to kya Naina?", scriptLanguage: .hindi), "en-IN")
+        XCTAssertEqual(PracticeCueSpeaker.preferredVoiceLanguage(for: "तो क्या नैना?", scriptLanguage: .hindi), "hi-IN")
+
+        let words: [RecognizedPracticeWord] = [
+            RecognizedPracticeWord(text: "Tum", timestamp: 0.1, duration: 0.2),
+            RecognizedPracticeWord(text: "to", timestamp: 2.2, duration: 0.15),
+            RecognizedPracticeWord(text: "kya", timestamp: 2.5, duration: 0.15),
+            RecognizedPracticeWord(text: "Naina", timestamp: 2.8, duration: 0.2),
+            RecognizedPracticeWord(text: "Hoga", timestamp: 4.1, duration: 0.2)
+        ]
+        let cueIntervals = [PracticeSilenceInterval(start: 2.0, end: 3.3)]
+        let filtered = PracticeSpeechRecorder.filterWords(words, excludingCueIntervals: cueIntervals)
+        XCTAssertEqual(filtered.map(\.text), ["Tum", "Hoga"])
+    }
 }
