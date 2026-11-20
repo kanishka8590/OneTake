@@ -405,4 +405,25 @@ final class HeadshotFramingAndGuidanceTests: XCTestCase {
         XCTAssertFalse(service.isVoiceListening)
         XCTAssertEqual(service.voiceStatus, .idle)
     }
+
+    @MainActor
+    func testRouteChangeDoesNotRestartAudioEngineWhenVoiceTriggersDisabled() async {
+        let service = HeadshotGuidanceService.shared
+        defer {
+            service.stopSession()
+        }
+
+        service.startSession(for: .front, isDemoMode: true)
+        service.disableVoiceTriggers()
+
+        NotificationCenter.default.post(
+            name: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            userInfo: [AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.categoryChange.rawValue]
+        )
+
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertFalse(service.isVoiceListening)
+        XCTAssertEqual(service.voiceStatus, .idle)
+    }
 }

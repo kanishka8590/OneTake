@@ -270,7 +270,7 @@ struct HeadshotGuidanceView: View {
                         .frame(width: 24, height: 24)
                 }
                 .nativeGlassCircleButton()
-                .disabled(guidanceService.isCapturing)
+                .background(Color.black.opacity(0.32), in: Circle())
                 .accessibilityLabel("Close camera")
 
                 Spacer(minLength: 4)
@@ -282,16 +282,14 @@ struct HeadshotGuidanceView: View {
                 Button {
                     showingMatchGuide = true
                 } label: {
-                    HStack(spacing: 4) {
-                        Text("Match this")
-                            .font(.system(size: 12, weight: .semibold))
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .bold))
-                    }
-                    .foregroundStyle(Theme.Colors.cameraGuideGold)
+                    Image(systemName: "info")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 24, height: 24)
                 }
-                .nativeGlassCapsuleButton()
+                .nativeGlassCircleButton()
+                .background(Color.black.opacity(0.32), in: Circle())
                 .disabled(guidanceService.isCapturing)
+                .accessibilityLabel("Headshot guide")
             }
 
             HStack(spacing: 8) {
@@ -307,6 +305,7 @@ struct HeadshotGuidanceView: View {
                 .nativeGlassCapsuleButton(
                     tint: guidanceService.gesturesEnabled ? Theme.Colors.cameraGuideGold : nil
                 )
+                .background(Color.black.opacity(0.32), in: Capsule())
                 .accessibilityLabel(guidanceService.gesturesEnabled ? "Disable open palm gesture capture" : "Enable open palm gesture capture")
 
                 Button {
@@ -325,6 +324,7 @@ struct HeadshotGuidanceView: View {
                 .nativeGlassCapsuleButton(
                     tint: guidanceService.isVoiceListening ? .green : (guidanceService.voiceStatus == .starting ? Theme.Colors.cameraGuideGold : nil)
                 )
+                .background(Color.black.opacity(0.32), in: Capsule())
                 .accessibilityLabel(guidanceService.isVoiceListening ? "Disable voice command activation" : "Enable voice command activation")
 
                 Button {
@@ -339,8 +339,17 @@ struct HeadshotGuidanceView: View {
                 .nativeGlassCapsuleButton(
                     tint: guidanceService.autoCaptureEnabled ? .green : nil
                 )
+                .background(Color.black.opacity(0.32), in: Capsule())
                 .accessibilityLabel(guidanceService.autoCaptureEnabled ? "Disable automatic capture when aligned" : "Enable automatic capture when aligned")
             }
+        }
+    }
+
+    private func hasCapturedAngle(_ angle: HeadshotAngle) -> Bool {
+        switch angle {
+        case .front: return frontOriginal != nil
+        case .left: return leftOriginal != nil
+        case .right: return rightOriginal != nil
         }
     }
 
@@ -360,26 +369,50 @@ struct HeadshotGuidanceView: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
+                .background(Color.black.opacity(0.32), in: Capsule())
                 .nativeGlassCapsuleSurface()
         } else {
-            Picker("Angle", selection: Binding(
-                get: { currentAngle },
-                set: { newAngle in
-                    guard !guidanceService.isCapturing,
-                          let idx = sequence.firstIndex(of: newAngle),
-                          idx != currentStepIndex else { return }
-                    currentStepIndex = idx
-                    guidanceService.startSession(for: newAngle, isDemoMode: appState.isDemoMode)
-                    guidanceService.announceAngle(newAngle)
-                }
-            )) {
+            HStack(spacing: 2) {
                 ForEach(sequence, id: \.self) { angle in
-                    Text(angle.rawValue).tag(angle)
+                    let isSelected = (currentAngle == angle)
+                    let isCaptured = hasCapturedAngle(angle)
+
+                    Button {
+                        guard !guidanceService.isCapturing,
+                              let idx = sequence.firstIndex(of: angle),
+                              idx != currentStepIndex else { return }
+                        withAnimation(.snappy(duration: 0.2)) {
+                            currentStepIndex = idx
+                        }
+                        guidanceService.startSession(for: angle, isDemoMode: appState.isDemoMode)
+                        guidanceService.announceAngle(angle)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(angle.rawValue)
+                                .font(.system(size: 12.5, weight: isSelected ? .bold : .semibold))
+                                .foregroundStyle(isSelected ? .white : Color.white.opacity(0.74))
+
+                            if isCaptured {
+                                Circle()
+                                    .fill(Color.green)
+                                    .frame(width: 5, height: 5)
+                            }
+                        }
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .fill(isSelected ? Color.white.opacity(0.22) : Color.clear)
+                        )
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(guidanceService.isCapturing)
                 }
             }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 190)
-            .disabled(guidanceService.isCapturing)
+            .padding(3)
+            .background(Color.black.opacity(0.38), in: Capsule())
+            .nativeGlassCapsuleSurface()
         }
     }
 
@@ -496,7 +529,7 @@ struct HeadshotGuidanceView: View {
             let centerY = h * 0.43
             let isAligned = guidanceService.feedback.allChecksPassed
 
-            let strokeColor = isAligned ? Color.green : Theme.Colors.cameraGuideGoldStroke.opacity(0.75)
+            let strokeColor = isAligned ? Color.green : Theme.Colors.cameraGuideGoldStroke.opacity(0.78)
 
             ZStack {
                 Path { path in
@@ -507,27 +540,30 @@ struct HeadshotGuidanceView: View {
                 .fill(Color.black.opacity(0.38), style: FillStyle(eoFill: true))
 
                 Ellipse()
-                    .stroke(strokeColor, lineWidth: 2.5)
+                    .stroke(strokeColor, lineWidth: isAligned ? 3 : 2.5)
                     .frame(width: ovalW, height: ovalH)
+                    .shadow(color: isAligned ? Color.green.opacity(0.55) : .clear, radius: 10)
                     .position(x: centerX, y: centerY)
 
                 let eyeY = centerY - ovalH * 0.08
-                let notchLength: CGFloat = 18
+                let notchInnerGap: CGFloat = 4
+                let notchLength: CGFloat = 12
 
                 Path { path in
                     let leftX = centerX - ovalW / 2.0
-                    path.move(to: CGPoint(x: leftX - 4, y: eyeY))
-                    path.addLine(to: CGPoint(x: leftX + notchLength, y: eyeY))
+                    path.move(to: CGPoint(x: leftX - notchInnerGap - notchLength, y: eyeY))
+                    path.addLine(to: CGPoint(x: leftX - notchInnerGap, y: eyeY))
                 }
-                .stroke(strokeColor, lineWidth: 2)
+                .stroke(strokeColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
 
                 Path { path in
                     let rightX = centerX + ovalW / 2.0
-                    path.move(to: CGPoint(x: rightX + 4, y: eyeY))
-                    path.addLine(to: CGPoint(x: rightX - notchLength, y: eyeY))
+                    path.move(to: CGPoint(x: rightX + notchInnerGap, y: eyeY))
+                    path.addLine(to: CGPoint(x: rightX + notchInnerGap + notchLength, y: eyeY))
                 }
-                .stroke(strokeColor, lineWidth: 2)
+                .stroke(strokeColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
             }
+            .animation(.easeInOut(duration: 0.2), value: isAligned)
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
@@ -548,37 +584,8 @@ struct HeadshotGuidanceView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
+                .background(Color.black.opacity(0.36), in: Capsule())
                 .nativeGlassCapsuleSurface()
-
-                HStack(spacing: 5) {
-                    Circle()
-                        .fill(guidanceService.feedback.isAngleCorrect ? Color.green : Color.orange)
-                        .frame(width: 6, height: 6)
-                    Text(anglePillTitle)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .nativeGlassCapsuleSurface()
-
-                Button {
-                    if guidanceService.isVoiceListening || guidanceService.voiceStatus == .starting {
-                        guidanceService.disableVoiceTriggers()
-                    } else {
-                        guidanceService.enableVoiceTriggers()
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(guidanceService.isVoiceListening ? Color.green : Color.orange)
-                            .frame(width: 6, height: 6)
-                        Text(guidanceService.isVoiceListening ? guidanceService.voiceStatus.label : "Voice")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                }
-                .nativeGlassCapsuleButton()
-                .accessibilityLabel("Voice command status")
 
                 if guidanceService.openPalmDetected && guidanceService.gesturesEnabled {
                     HStack(spacing: 5) {
@@ -591,6 +598,7 @@ struct HeadshotGuidanceView: View {
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
+                    .background(Color.black.opacity(0.36), in: Capsule())
                     .nativeGlassCapsuleSurface()
                 }
             }
@@ -672,22 +680,21 @@ struct HeadshotGuidanceView: View {
     }
 
     private var captureTriggerSubtitle: String {
-        var triggers = ["Tap shutter"]
+        if guidanceService.autoCaptureEnabled && guidanceService.feedback.allChecksPassed && !guidanceService.isCapturing {
+            return "Hold steady — capturing automatically"
+        }
+        var triggers: [String] = []
+        if guidanceService.autoCaptureEnabled {
+            triggers.append("Auto when aligned")
+        }
+        triggers.append(guidanceService.autoCaptureEnabled ? "tap shutter" : "Tap shutter")
         if guidanceService.gesturesEnabled {
-            triggers.append("hold open palm")
+            triggers.append(guidanceService.autoCaptureEnabled ? "hold palm" : "hold open palm")
         }
         if guidanceService.isVoiceListening {
-            triggers.append("say \"Now\" or \"Action\"")
+            triggers.append("say \"Action\"")
         }
-        return triggers.joined(separator: ", ")
-    }
-
-    private var anglePillTitle: String {
-        switch currentAngle {
-        case .front: return "Face forward"
-        case .left: return "Turn left"
-        case .right: return "Turn right"
-        }
+        return triggers.joined(separator: " · ")
     }
 
     private var liveCoachingHeadline: String {
@@ -907,7 +914,10 @@ struct HeadshotGuidanceView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Color.white.opacity(0.7))
             }
+
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, minHeight: 82, alignment: .topLeading)
         .padding(14)
         .background(Color.white.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 12))
