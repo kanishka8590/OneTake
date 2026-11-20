@@ -622,8 +622,42 @@ final class Audition {
         hasDeadline && deadline < Date.now && status == .active
     }
 
+    func daysUntilDeadline(from referenceDate: Date = .now) -> Int {
+        Calendar.current.dateComponents(
+            [.day],
+            from: Calendar.current.startOfDay(for: referenceDate),
+            to: Calendar.current.startOfDay(for: deadline)
+        ).day ?? 0
+    }
+
     var daysUntilDeadline: Int {
-        Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: .now), to: Calendar.current.startOfDay(for: deadline)).day ?? 0
+        daysUntilDeadline(from: .now)
+    }
+
+    func deadlineUrgencyLabel(referenceDate: Date = .now) -> String {
+        if status == .sent {
+            return "Submitted"
+        }
+        if !hasDeadline {
+            return "No Deadline"
+        }
+        let diff = deadline.timeIntervalSince(referenceDate)
+        if diff < 0 {
+            return "Overdue"
+        }
+        let calendarDays = daysUntilDeadline(from: referenceDate)
+        if calendarDays == 0 {
+            if diff < 3600 {
+                let mins = max(1, Int(diff / 60))
+                return "Due in \(mins)m"
+            }
+            let hours = max(1, Int(diff / 3600))
+            return "Due in \(hours)h"
+        }
+        if calendarDays == 1 {
+            return "Due Tomorrow"
+        }
+        return "\(calendarDays) Days Left"
     }
 
     var selectedSlateTake: VideoTake? {

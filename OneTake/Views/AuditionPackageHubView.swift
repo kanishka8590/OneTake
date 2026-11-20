@@ -598,29 +598,7 @@ struct AuditionPackageHubView: View {
     }
 
     private var cleanDeadlineString: String {
-        if audition.status == .sent {
-            return "Submitted"
-        }
-        if !audition.hasDeadline {
-            return "No Deadline"
-        }
-        let diff = audition.deadline.timeIntervalSince(Date.now)
-        if diff < 0 {
-            return "Overdue"
-        }
-        if diff < 3600 {
-            let mins = max(1, Int(diff / 60))
-            return "Due in \(mins)m"
-        }
-        if diff < 86400 {
-            let hours = max(1, Int(diff / 3600))
-            return "Due in \(hours)h"
-        }
-        let days = max(1, Int(diff / 86400))
-        if Calendar.current.isDateInTomorrow(audition.deadline) || days == 1 {
-            return "Due Tomorrow"
-        }
-        return "\(days) Days Left"
+        audition.deadlineUrgencyLabel()
     }
 
     // MARK: - PACKAGE Progress Bar Section

@@ -328,4 +328,29 @@ final class MediaStorageAndModelsTests: XCTestCase {
         MediaStorage.cleanupFiles(for: audition)
         XCTAssertFalse(MediaStorage.fileExists(at: heroRelPath))
     }
+
+    func testAuditionDeadlineUrgencyLabelUsesCalendarDaysConsistently() throws {
+        let cal = Calendar.current
+        let now = try XCTUnwrap(cal.date(from: DateComponents(year: 2026, month: 11, day: 20, hour: 9, minute: 0)))
+
+        // Same day 5h ahead -> hours
+        let sameDay = try XCTUnwrap(cal.date(byAdding: .hour, value: 5, to: now))
+        XCTAssertEqual(Audition(deadline: sameDay).deadlineUrgencyLabel(referenceDate: now), "Due in 5h")
+
+        // Next calendar day even if <24h away (e.g. tomorrow 6 AM vs today 9 AM = 21h) -> Due Tomorrow
+        let tomorrowEarly = try XCTUnwrap(cal.date(from: DateComponents(year: 2026, month: 11, day: 21, hour: 6, minute: 0)))
+        XCTAssertEqual(Audition(deadline: tomorrowEarly).deadlineUrgencyLabel(referenceDate: now), "Due Tomorrow")
+
+        // 3 calendar days ahead even if <72h away (e.g. Nov 23 6 AM vs Nov 20 9 AM) -> 3 Days Left
+        let threeDaysEarly = try XCTUnwrap(cal.date(from: DateComponents(year: 2026, month: 11, day: 23, hour: 6, minute: 0)))
+        let audition = Audition(deadline: threeDaysEarly)
+        XCTAssertEqual(audition.daysUntilDeadline(from: now), 3)
+        XCTAssertEqual(audition.deadlineUrgencyLabel(referenceDate: now), "3 Days Left")
+
+        // Past deadline -> Overdue; no deadline -> No Deadline; sent -> Submitted
+        let past = try XCTUnwrap(cal.date(byAdding: .hour, value: -1, to: now))
+        XCTAssertEqual(Audition(deadline: past).deadlineUrgencyLabel(referenceDate: now), "Overdue")
+        XCTAssertEqual(Audition(hasDeadline: false).deadlineUrgencyLabel(referenceDate: now), "No Deadline")
+        XCTAssertEqual(Audition(deadline: past, statusRaw: AuditionStatus.sent.rawValue).deadlineUrgencyLabel(referenceDate: now), "Submitted")
+    }
 }
