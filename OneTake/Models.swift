@@ -123,6 +123,57 @@ nonisolated enum VideoQuality: String, Codable, Hashable, CaseIterable, Sendable
     case p1080 = "1080p"
 }
 
+nonisolated enum HapticFeedbackLevel: String, Codable, Hashable, CaseIterable, Sendable {
+    case selective = "Selective"
+    case rich = "Rich"
+    case off = "Off"
+}
+
+nonisolated enum PackageDeliverable: String, CaseIterable, Identifiable, Sendable {
+    case headshots
+    case slate
+    case audition
+
+    var id: String { rawValue }
+
+    var stepNumber: Int {
+        switch self {
+        case .headshots: return 1
+        case .slate: return 2
+        case .audition: return 3
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .headshots: return "Headshot"
+        case .slate: return "Slate"
+        case .audition: return "Audition Clip"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .headshots: return "person.crop.rectangle.badge.plus"
+        case .slate: return "person.badge.shield.checkmark"
+        case .audition: return "movieclapper"
+        }
+    }
+
+    var requirementKeywords: [String] {
+        switch self {
+        case .headshots: return ["headshot"]
+        case .slate: return ["slate", "intro"]
+        case .audition: return ["self-tape", "self tape", "audition", "monologue", "scene"]
+        }
+    }
+
+    func matches(_ requirement: SubmissionRequirement) -> Bool {
+        let lower = requirement.title.lowercased()
+        return requirementKeywords.contains { lower.contains($0) }
+    }
+}
+
 // MARK: - Codable Structs
 
 nonisolated struct SubmissionRequirement: Codable, Sendable, Hashable, Identifiable {
@@ -394,19 +445,35 @@ nonisolated struct PrivateShareLink: Codable, Sendable, Hashable {
     }
 }
 
+nonisolated struct PracticeSilenceInterval: Codable, Sendable, Hashable {
+    var start: Double
+    var end: Double
+
+    var duration: Double { max(0, end - start) }
+}
+
 nonisolated struct DeliveryAnnotation: Codable, Sendable, Hashable, Identifiable {
     var id: UUID = UUID()
     var text: String
     var kind: AnnotationKind = .normal
+    var lineID: Int? = nil
+    var tokenIDs: [Int] = []
+    var timestamp: Double? = nil
 
     init(
         id: UUID = UUID(),
         text: String,
-        kind: AnnotationKind = .normal
+        kind: AnnotationKind = .normal,
+        lineID: Int? = nil,
+        tokenIDs: [Int] = [],
+        timestamp: Double? = nil
     ) {
         self.id = id
         self.text = text
         self.kind = kind
+        self.lineID = lineID
+        self.tokenIDs = tokenIDs
+        self.timestamp = timestamp
     }
 
     init(from decoder: Decoder) throws {
@@ -414,6 +481,9 @@ nonisolated struct DeliveryAnnotation: Codable, Sendable, Hashable, Identifiable
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
         kind = try c.decodeIfPresent(AnnotationKind.self, forKey: .kind) ?? .normal
+        lineID = try c.decodeIfPresent(Int.self, forKey: .lineID)
+        tokenIDs = try c.decodeIfPresent([Int].self, forKey: .tokenIDs) ?? []
+        timestamp = try c.decodeIfPresent(Double.self, forKey: .timestamp)
     }
 }
 
@@ -423,17 +493,23 @@ nonisolated struct RecognizedPracticeWord: Codable, Sendable, Hashable, Identifi
     var text: String
     var timestamp: Double
     var duration: Double
+    var confidence: Float? = nil
+    var alternativeSubstrings: [String] = []
 
     init(
         id: UUID = UUID(),
         text: String,
         timestamp: Double,
-        duration: Double
+        duration: Double,
+        confidence: Float? = nil,
+        alternativeSubstrings: [String] = []
     ) {
         self.id = id
         self.text = text
         self.timestamp = timestamp
         self.duration = duration
+        self.confidence = confidence
+        self.alternativeSubstrings = alternativeSubstrings
     }
 
     init(from decoder: Decoder) throws {
@@ -442,6 +518,8 @@ nonisolated struct RecognizedPracticeWord: Codable, Sendable, Hashable, Identifi
         text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
         timestamp = try c.decodeIfPresent(Double.self, forKey: .timestamp) ?? 0
         duration = try c.decodeIfPresent(Double.self, forKey: .duration) ?? 0
+        confidence = try c.decodeIfPresent(Float.self, forKey: .confidence)
+        alternativeSubstrings = try c.decodeIfPresent([String].self, forKey: .alternativeSubstrings) ?? []
     }
 }
 
@@ -573,6 +651,8 @@ final class Audition {
     var requirements: [SubmissionRequirement] = []
     var scriptText: String? = nil
     var scriptFileName: String? = nil
+    var heroArtworkName: String? = nil
+    var heroImagePath: String? = nil
 
     /// When audition.scriptText (trimmed) is empty, scriptLines is strictly empty ([]).
     /// No fallback to rawCastingCallText, casting call notes, or character descriptions.
@@ -614,8 +694,42 @@ final class Audition {
         hasDeadline && deadline < Date.now && status == .active
     }
 
+    func daysUntilDeadline(from referenceDate: Date = .now) -> Int {
+        Calendar.current.dateComponents(
+            [.day],
+            from: Calendar.current.startOfDay(for: referenceDate),
+            to: Calendar.current.startOfDay(for: deadline)
+        ).day ?? 0
+    }
+
     var daysUntilDeadline: Int {
-        Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: .now), to: Calendar.current.startOfDay(for: deadline)).day ?? 0
+        daysUntilDeadline(from: .now)
+    }
+
+    func deadlineUrgencyLabel(referenceDate: Date = .now) -> String {
+        if status == .sent {
+            return "Submitted"
+        }
+        if !hasDeadline {
+            return "No Deadline"
+        }
+        let diff = deadline.timeIntervalSince(referenceDate)
+        if diff < 0 {
+            return "Overdue"
+        }
+        let calendarDays = daysUntilDeadline(from: referenceDate)
+        if calendarDays == 0 {
+            if diff < 3600 {
+                let mins = max(1, Int(diff / 60))
+                return "Due in \(mins)m"
+            }
+            let hours = max(1, Int(diff / 3600))
+            return "Due in \(hours)h"
+        }
+        if calendarDays == 1 {
+            return "Due Tomorrow"
+        }
+        return "\(calendarDays) Days Left"
     }
 
     var selectedSlateTake: VideoTake? {
@@ -649,12 +763,37 @@ final class Audition {
         return MediaStorage.fileExists(at: take.filePath)
     }
 
+    func isDeliverableRequired(_ deliverable: PackageDeliverable) -> Bool {
+        guard !requirements.isEmpty else { return true }
+        return requirements.contains { deliverable.matches($0) }
+    }
+
+    var requiresHeadshots: Bool { isDeliverableRequired(.headshots) }
+    var requiresSlate: Bool { isDeliverableRequired(.slate) }
+    var requiresAudition: Bool { isDeliverableRequired(.audition) }
+
+    var requiredDeliverables: [PackageDeliverable] {
+        PackageDeliverable.allCases.filter { isDeliverableRequired($0) }
+    }
+
+    func isDeliverableReady(_ deliverable: PackageDeliverable) -> Bool {
+        switch deliverable {
+        case .headshots: return isHeadshotsReady
+        case .slate: return isSlateReady
+        case .audition: return isAuditionReady
+        }
+    }
+
+    var packageTotalCount: Int {
+        requiredDeliverables.count
+    }
+
     var packageReadyCount: Int {
-        var count = 0
-        if isHeadshotsReady { count += 1 }
-        if isSlateReady { count += 1 }
-        if isAuditionReady { count += 1 }
-        return count
+        requiredDeliverables.filter { isDeliverableReady($0) }.count
+    }
+
+    var isPackageComplete: Bool {
+        packageTotalCount > 0 && packageReadyCount == packageTotalCount
     }
 
     init(
@@ -680,7 +819,9 @@ final class Audition {
         validationRules: ValidationRules = ValidationRules(),
         privateShareLink: PrivateShareLink? = nil,
         sentDate: Date? = nil,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        heroArtworkName: String? = nil,
+        heroImagePath: String? = nil
     ) {
         self.id = id
         self.projectName = projectName
@@ -705,6 +846,8 @@ final class Audition {
         self.privateShareLink = privateShareLink
         self.sentDate = sentDate
         self.createdAt = createdAt
+        self.heroArtworkName = heroArtworkName
+        self.heroImagePath = heroImagePath
     }
 }
 
@@ -770,7 +913,8 @@ final class AppSettings {
         "notifySubmissions",
         "notifyPractice",
         "framingTipsOutLoud",
-        "countdownOutLoud"
+        "countdownOutLoud",
+        "hapticFeedbackLevelRaw"
     ]
 
     // MARK: Private Helpers
@@ -808,6 +952,10 @@ final class AppSettings {
         self.notifyPractice = Self.readValue("notifyPractice", from: defaults, prefix: p, fallback: true)
         self.framingTipsOutLoud = Self.readValue("framingTipsOutLoud", from: defaults, prefix: p, fallback: false)
         self.countdownOutLoud = Self.readValue("countdownOutLoud", from: defaults, prefix: p, fallback: false)
+        self.hapticFeedbackLevelRaw = Self.readValue("hapticFeedbackLevelRaw", from: defaults, prefix: p, fallback: HapticFeedbackLevel.selective.rawValue)
+        if defaults === UserDefaults.standard {
+            Haptics.setLevel(HapticFeedbackLevel(rawValue: hapticFeedbackLevelRaw) ?? .selective)
+        }
     }
 
     func resetToDefaults() {
@@ -827,6 +975,7 @@ final class AppSettings {
         notifyPractice = true
         framingTipsOutLoud = false
         countdownOutLoud = false
+        hapticFeedbackLevelRaw = HapticFeedbackLevel.selective.rawValue
 
         for name in Self.settingKeys {
             defaults.removeObject(forKey: key(name))
@@ -922,5 +1071,21 @@ final class AppSettings {
 
     var countdownOutLoud: Bool {
         didSet { setValue("countdownOutLoud", value: countdownOutLoud) }
+    }
+
+    // MARK: Feedback & Haptics
+
+    var hapticFeedbackLevelRaw: String {
+        didSet {
+            setValue("hapticFeedbackLevelRaw", value: hapticFeedbackLevelRaw)
+            if defaults === UserDefaults.standard {
+                Haptics.setLevel(hapticFeedbackLevel)
+            }
+        }
+    }
+
+    var hapticFeedbackLevel: HapticFeedbackLevel {
+        get { HapticFeedbackLevel(rawValue: hapticFeedbackLevelRaw) ?? .selective }
+        set { hapticFeedbackLevelRaw = newValue.rawValue }
     }
 }

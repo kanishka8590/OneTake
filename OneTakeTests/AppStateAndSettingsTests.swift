@@ -1,6 +1,8 @@
 import AVFoundation
 import Observation
 import SwiftData
+import SwiftUI
+import UIKit
 import XCTest
 @testable import OneTake
 
@@ -408,5 +410,156 @@ final class AppStateAndSettingsTests: XCTestCase {
         let asset = AVURLAsset(url: clipURL)
         let tracks = try await asset.load(.tracks)
         XCTAssertFalse(tracks.isEmpty)
+    }
+
+    func testCanvasBackgroundIsPureBlackInDarkModeAndLightInLightMode() throws {
+        let dynamicColor = UIColor(Theme.Colors.canvasBackground)
+
+        let darkResolved = dynamicColor.resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
+        var dr: CGFloat = -1, dg: CGFloat = -1, db: CGFloat = -1, da: CGFloat = -1
+        XCTAssertTrue(darkResolved.getRed(&dr, green: &dg, blue: &db, alpha: &da))
+        XCTAssertEqual(dr, 0.0, accuracy: 0.001)
+        XCTAssertEqual(dg, 0.0, accuracy: 0.001)
+        XCTAssertEqual(db, 0.0, accuracy: 0.001)
+        XCTAssertEqual(da, 1.0, accuracy: 0.001)
+
+        let lightResolved = dynamicColor.resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
+        var lr: CGFloat = -1, lg: CGFloat = -1, lb: CGFloat = -1, la: CGFloat = -1
+        XCTAssertTrue(lightResolved.getRed(&lr, green: &lg, blue: &lb, alpha: &la))
+        XCTAssertGreaterThan(lr, 0.9)
+        XCTAssertGreaterThan(lg, 0.9)
+        XCTAssertGreaterThan(lb, 0.9)
+        XCTAssertEqual(la, 1.0, accuracy: 0.001)
+    }
+
+    func testHapticFeedbackLevelDefaultsPersistenceAndGating() {
+        let defaults = makeIsolatedDefaults()
+        let settings = AppSettings(defaults: defaults)
+        XCTAssertEqual(settings.hapticFeedbackLevel, .selective)
+
+        settings.hapticFeedbackLevel = .rich
+        let reloaded = AppSettings(defaults: defaults)
+        XCTAssertEqual(reloaded.hapticFeedbackLevel, .rich)
+
+        settings.resetToDefaults()
+        XCTAssertEqual(settings.hapticFeedbackLevel, .selective)
+
+        // Mode & mic-capture gating
+        XCTAssertTrue(Haptics.shouldPlay(.essential, level: .selective, isMicActive: false))
+        XCTAssertFalse(Haptics.shouldPlay(.tactile, level: .selective, isMicActive: false))
+        XCTAssertTrue(Haptics.shouldPlay(.essential, level: .rich, isMicActive: false))
+        XCTAssertTrue(Haptics.shouldPlay(.tactile, level: .rich, isMicActive: false))
+        XCTAssertFalse(Haptics.shouldPlay(.essential, level: .off, isMicActive: false))
+        XCTAssertFalse(Haptics.shouldPlay(.tactile, level: .off, isMicActive: false))
+
+        // Active mic capture must suppress all haptics across every level
+        XCTAssertFalse(Haptics.shouldPlay(.essential, level: .selective, isMicActive: true))
+        XCTAssertFalse(Haptics.shouldPlay(.essential, level: .rich, isMicActive: true))
+        XCTAssertFalse(Haptics.shouldPlay(.tactile, level: .rich, isMicActive: true))
+
+        Haptics.resetMicCaptureStateForTesting()
+        defer { Haptics.resetMicCaptureStateForTesting() }
+        XCTAssertFalse(Haptics.isMicCaptureActive)
+        Haptics.setMicCaptureActive(true, source: "teleprompter")
+        Haptics.setMicCaptureActive(true, source: "teleprompter")
+        Haptics.setMicCaptureActive(true, source: "cue")
+        XCTAssertTrue(Haptics.isMicCaptureActive)
+        Haptics.setMicCaptureActive(false, source: "teleprompter")
+        XCTAssertTrue(Haptics.isMicCaptureActive)
+        Haptics.setMicCaptureActive(false, source: "cue")
+        XCTAssertFalse(Haptics.isMicCaptureActive)
+    }
+
+    func testScrollEdgeTrackerFiresOncePerBoundaryAndOverscroll() {
+        var tracker = ScrollEdgeTracker()
+        let t0 = Date(timeIntervalSince1970: 1_000)
+
+        // Initial idle layout at top never triggers.
+        XCTAssertFalse(tracker.update(offsetY: 0, topEdge: 0, bottomEdge: 400, phase: .idle, now: t0))
+
+        // Scroll down past top rearm distance, then reach bottom -> fires once.
+        XCTAssertFalse(tracker.update(offsetY: 120, topEdge: 0, bottomEdge: 400, phase: .interacting, now: t0.addingTimeInterval(0.3)))
+        XCTAssertTrue(tracker.update(offsetY: 400, topEdge: 0, bottomEdge: 400, phase: .decelerating, now: t0.addingTimeInterval(0.6)))
+        // Continuing past bottom immediately on the same fling stays latched.
+        XCTAssertFalse(tracker.update(offsetY: 416, topEdge: 0, bottomEdge: 400, phase: .decelerating, now: t0.addingTimeInterval(0.8)))
+
+        // Scroll back up into middle, then hit top -> fires once.
+        XCTAssertFalse(tracker.update(offsetY: 200, topEdge: 0, bottomEdge: 400, phase: .interacting, now: t0.addingTimeInterval(1.1)))
+        XCTAssertTrue(tracker.update(offsetY: 0, topEdge: 0, bottomEdge: 400, phase: .decelerating, now: t0.addingTimeInterval(1.4)))
+        XCTAssertFalse(tracker.update(offsetY: -14, topEdge: 0, bottomEdge: 400, phase: .decelerating, now: t0.addingTimeInterval(1.6)))
+
+        // Catch bounce mid-flight BEFORE returning to 0 and immediately pull again -> fires right away!
+        XCTAssertFalse(tracker.update(offsetY: -12, topEdge: 0, bottomEdge: 400, phase: .interacting, now: t0.addingTimeInterval(1.8)))
+        XCTAssertTrue(tracker.update(offsetY: -18, topEdge: 0, bottomEdge: 400, phase: .interacting, now: t0.addingTimeInterval(2.0)))
+
+        // Settle to idle, then pull down from rest at top -> fires once per pull.
+        XCTAssertFalse(tracker.update(offsetY: 0, topEdge: 0, bottomEdge: 400, phase: .idle, now: t0.addingTimeInterval(2.3)))
+        XCTAssertTrue(tracker.update(offsetY: -10, topEdge: 0, bottomEdge: 400, phase: .interacting, now: t0.addingTimeInterval(2.6)))
+        XCTAssertFalse(tracker.update(offsetY: -20, topEdge: 0, bottomEdge: 400, phase: .interacting, now: t0.addingTimeInterval(2.8)))
+
+        // Non-scrollable short screen fires when pulled past overscroll threshold.
+        var shortTracker = ScrollEdgeTracker()
+        XCTAssertFalse(shortTracker.update(offsetY: 0, topEdge: 0, bottomEdge: 0, phase: .idle, now: t0))
+        XCTAssertFalse(shortTracker.update(offsetY: -4, topEdge: 0, bottomEdge: 0, phase: .interacting, now: t0.addingTimeInterval(0.3)))
+        XCTAssertTrue(shortTracker.update(offsetY: -10, topEdge: 0, bottomEdge: 0, phase: .interacting, now: t0.addingTimeInterval(0.6)))
+        XCTAssertFalse(shortTracker.update(offsetY: -12, topEdge: 0, bottomEdge: 0, phase: .interacting, now: t0.addingTimeInterval(0.8)))
+    }
+
+    func testAuditionListFilterDefaultsToAllAndPersistsSelection() {
+        let defaults = makeIsolatedDefaults()
+
+        // Default is `.all` when no prior preference exists
+        let initialState = AppState(settings: AppSettings(defaults: defaults), defaults: defaults)
+        XCTAssertEqual(initialState.auditionListFilter, .all)
+
+        // Changing to `.active` persists across AppState relaunches
+        initialState.auditionListFilter = .active
+        let relaunchedActive = AppState(settings: AppSettings(defaults: defaults), defaults: defaults)
+        XCTAssertEqual(relaunchedActive.auditionListFilter, .active)
+
+        // Changing to `.sent` locks in `.sent`
+        relaunchedActive.auditionListFilter = .sent
+        let relaunchedSent = AppState(settings: AppSettings(defaults: defaults), defaults: defaults)
+        XCTAssertEqual(relaunchedSent.auditionListFilter, .sent)
+
+        // Unknown raw value falls back safely to `.all`
+        defaults.set("UnknownValue", forKey: "onetake.auditionListFilter")
+        let fallbackState = AppState(settings: AppSettings(defaults: defaults), defaults: defaults)
+        XCTAssertEqual(fallbackState.auditionListFilter, .all)
+    }
+
+    func testSlateScriptTemplateHandlesSelfRepresentedAndAgencyRepresentation() {
+        let selfRepScript = SlateScriptTemplate.build(
+            name: "Meow",
+            height: "128 cm",
+            age: "20",
+            basedIn: "",
+            representation: "Self-represented",
+            previousWork: [],
+            roleName: "Female Lead",
+            projectName: "Heer Ranjha"
+        )
+        XCTAssertTrue(selfRepScript.contains("I am self-represented."))
+        XCTAssertFalse(selfRepScript.contains("represented by Self-represented"))
+
+        let agencyScript = SlateScriptTemplate.build(
+            name: "Avery Vance",
+            height: "5'8\"",
+            age: "27",
+            basedIn: "Mumbai",
+            representation: "Bramwell Talent",
+            previousWork: [],
+            roleName: "Heer",
+            projectName: "Heer Ranjha"
+        )
+        XCTAssertTrue(agencyScript.contains("I am represented by Bramwell Talent."))
+        XCTAssertTrue(agencyScript.contains("I am based in Mumbai."))
+    }
+
+    func testHeadshotCropViewNavigationTitleIncludesAngleWhenProvided() {
+        XCTAssertEqual(HeadshotCropView.navigationTitle(for: .front), "Crop Front")
+        XCTAssertEqual(HeadshotCropView.navigationTitle(for: .left), "Crop Left Profile")
+        XCTAssertEqual(HeadshotCropView.navigationTitle(for: .right), "Crop Right Profile")
+        XCTAssertEqual(HeadshotCropView.navigationTitle(for: nil), "Adjust Crop")
     }
 }

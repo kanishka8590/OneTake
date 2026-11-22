@@ -11,7 +11,7 @@ struct PackageValidationAndExportView: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var audition: Audition
 
-    @State private var stage: Stage = .checking
+    @State private var stage: Stage
     @State private var compressorRoute: CompressorRoute?
     @State private var compressionFeedbackMessage: String?
     @State private var showingShareChoices = false
@@ -27,12 +27,18 @@ struct PackageValidationAndExportView: View {
     @State private var cropRoute: CropRoute?
     @State private var isCyclingHeadshotCrops = false
     @State private var didApplyCropForCurrentAngle = false
+    @State private var cropBatchTotalCount = 0
     @State private var slateMetadata: VideoMetadata?
     @State private var clipMetadata: VideoMetadata?
 
     private typealias VideoMetadata = (isPortrait: Bool, aspectRatioString: String, durationSeconds: Double, fileSizeMB: Double)
 
-    private enum Stage { case checking, ready }
+    enum Stage { case checking, ready }
+
+    init(audition: Audition, initialStage: Stage = .checking) {
+        self.audition = audition
+        self._stage = State(initialValue: initialStage)
+    }
     private enum ReviewRoute: Identifiable {
         case slate(VideoTake)
         case audition(VideoTake)
@@ -46,6 +52,8 @@ struct PackageValidationAndExportView: View {
         let id = UUID()
         let angle: HeadshotAngle
         let image: UIImage
+        let stepIndex: Int
+        let totalCount: Int
     }
     private struct CompressorRoute: Identifiable {
         let id = UUID()
@@ -90,11 +98,22 @@ struct PackageValidationAndExportView: View {
         return take.fileSizeMB
     }
 
+    private var requiredVideoTakes: [VideoTake] {
+        [
+            audition.requiresSlate ? slate : nil,
+            audition.requiresAudition ? clip : nil
+        ].compactMap { $0 }
+    }
+
+    private var requiresAnyVideo: Bool {
+        audition.requiresSlate || audition.requiresAudition
+    }
+
     private var oversizedTake: VideoTake? {
-        if let slate, actualSizeMB(for: slate, metadata: slateMetadata) > rules.maxPerClipSizeMB {
+        if audition.requiresSlate, let slate, actualSizeMB(for: slate, metadata: slateMetadata) > rules.maxPerClipSizeMB {
             return slate
         }
-        if let clip, actualSizeMB(for: clip, metadata: clipMetadata) > rules.maxPerClipSizeMB {
+        if audition.requiresAudition, let clip, actualSizeMB(for: clip, metadata: clipMetadata) > rules.maxPerClipSizeMB {
             return clip
         }
         return nil
@@ -135,6 +154,7 @@ struct PackageValidationAndExportView: View {
                     let label = route.isSlate ? "Slate" : "Audition Clip"
                     compressionFeedbackMessage = "\(label) compressed: \(formattedSizeString(originalMB)) → \(formattedSizeString(compressedMB))"
                 }
+                .presentationBackground(Theme.Colors.canvasBackground)
             }
             .fullScreenCover(item: $reviewRoute) { route in
                 switch route {
@@ -143,7 +163,12 @@ struct PackageValidationAndExportView: View {
                 }
             }
             .fullScreenCover(item: $cropRoute, onDismiss: { handleCropDismiss() }) { route in
-                HeadshotCropView(originalImage: route.image, defaultRatio: rules.requiredHeadshotRatio) { image, ratio, preset in
+                HeadshotCropView(
+                    originalImage: route.image,
+                    defaultRatio: rules.requiredHeadshotRatio,
+                    angle: route.angle,
+                    batchProgress: (current: route.stepIndex, total: route.totalCount)
+                ) { image, ratio, preset in
                     saveCrop(image, ratio: ratio, preset: preset, angle: route.angle)
                 }
             }
@@ -153,6 +178,7 @@ struct PackageValidationAndExportView: View {
                 }
             }) {
                 shareChoices
+                    .presentationBackground(Theme.Colors.canvasBackground)
             }
             .fullScreenCover(isPresented: $showingCelebration) {
                 DeliveryCelebrationView(audition: audition) { dismiss() }
@@ -170,6 +196,12 @@ struct PackageValidationAndExportView: View {
             }
             .onAppear { seedNamesIfNeeded() }
             .onDisappear { cleanupTempPackageDirectory() }
+            .onChange(of: exportErrorMessage) { _, msg in
+                if msg != nil { Haptics.error() }
+            }
+            .onChange(of: shareSheetErrorMessage) { _, msg in
+                if msg != nil { Haptics.error() }
+            }
             .task(id: videoInspectionKey) {
                 await refreshVideoMetadata()
             }
@@ -191,41 +223,49 @@ struct PackageValidationAndExportView: View {
                     .font(Theme.Typography.sectionHeader)
                     .accessibilityAddTraits(.isHeader)
 
-                validationCard(
-                    "Headshots \(rules.requiredHeadshotRatio.rawValue)",
-                    detail: headshotValidationDetail,
-                    passed: headshotsPass,
-                    action: hasMissingHeadshotFiles ? nil : "Fix crops"
-                ) {
-                    presentHeadshotCrop()
-                }
-                validationCard(
-                    "Slate under \(Int(rules.maxSlateSeconds))s",
-                    detail: durationDetail(slate, metadata: slateMetadata, cap: rules.maxSlateSeconds),
-                    passed: slateDurationPass,
-                    action: (slate != nil && MediaStorage.fileExists(at: slate?.filePath)) ? "Open Slate Trimmer" : nil
-                ) {
-                    if let slate, MediaStorage.fileExists(at: slate.filePath) {
-                        reviewRoute = .slate(slate)
+                if audition.requiresHeadshots {
+                    validationCard(
+                        "Headshots \(rules.requiredHeadshotRatio.rawValue)",
+                        detail: headshotValidationDetail,
+                        passed: headshotsPass,
+                        action: hasMissingHeadshotFiles ? nil : "Fix crops"
+                    ) {
+                        presentHeadshotCrop()
                     }
                 }
-                validationCard(
-                    clipDurationTitle,
-                    detail: durationDetail(clip, metadata: clipMetadata, cap: rules.maxClipSeconds),
-                    passed: clipDurationPass,
-                    action: (clip != nil && MediaStorage.fileExists(at: clip?.filePath)) ? "Open Audition Trimmer" : nil
-                ) {
-                    if let clip, MediaStorage.fileExists(at: clip.filePath) {
-                        reviewRoute = .audition(clip)
+                if audition.requiresSlate {
+                    validationCard(
+                        "Slate under \(Int(rules.maxSlateSeconds))s",
+                        detail: durationDetail(slate, metadata: slateMetadata, cap: rules.maxSlateSeconds),
+                        passed: slateDurationPass,
+                        action: (slate != nil && MediaStorage.fileExists(at: slate?.filePath)) ? "Open Slate Trimmer" : nil
+                    ) {
+                        if let slate, MediaStorage.fileExists(at: slate.filePath) {
+                            reviewRoute = .slate(slate)
+                        }
                     }
                 }
-                validationCard(
-                    "Video orientation & ratio",
-                    detail: "Consistent \(expectedOrientation) across both clips",
-                    passed: orientationPass,
-                    action: nil,
-                    actionHandler: {}
-                )
+                if audition.requiresAudition {
+                    validationCard(
+                        clipDurationTitle,
+                        detail: durationDetail(clip, metadata: clipMetadata, cap: rules.maxClipSeconds),
+                        passed: clipDurationPass,
+                        action: (clip != nil && MediaStorage.fileExists(at: clip?.filePath)) ? "Open Audition Trimmer" : nil
+                    ) {
+                        if let clip, MediaStorage.fileExists(at: clip.filePath) {
+                            reviewRoute = .audition(clip)
+                        }
+                    }
+                }
+                if requiresAnyVideo {
+                    validationCard(
+                        "Video orientation & ratio",
+                        detail: orientationDetailText,
+                        passed: orientationPass,
+                        action: nil,
+                        actionHandler: {}
+                    )
+                }
                 validationCard(
                     "File Name",
                     detail: "Auto-formatted as \(formattedFilePrefix)",
@@ -233,14 +273,16 @@ struct PackageValidationAndExportView: View {
                     action: nil,
                     actionHandler: {}
                 )
-                validationCard(
-                    "File Size",
-                    detail: fileSizeValidationDetail,
-                    passed: fileSizePass,
-                    action: oversizedTake.map { "Compress \($0.id == clip?.id ? "Audition Clip" : "Slate")" }
-                ) {
-                    if let oversizedTake {
-                        openCompressor(for: oversizedTake)
+                if requiresAnyVideo {
+                    validationCard(
+                        "File Size",
+                        detail: fileSizeValidationDetail,
+                        passed: fileSizePass,
+                        action: oversizedTake.map { "Compress \($0.id == clip?.id ? "Audition Clip" : "Slate")" }
+                    ) {
+                        if let oversizedTake {
+                            openCompressor(for: oversizedTake)
+                        }
                     }
                 }
 
@@ -291,13 +333,16 @@ struct PackageValidationAndExportView: View {
                     }
                     .padding(16).cardStyle()
                 }
-
-                Button { stage = .ready } label: {
-                    Text("Review Your Package").primaryCapsuleButton()
-                }
-                .accessibilityHint("Continues even when an advisory item needs review")
             }
             .padding(16)
+        }
+        .scrollEdgeHaptics()
+        .floatingBottomActionBar(horizontalPadding: 16) {
+            Button { stage = .ready } label: {
+                Text("Review Your Package").primaryCapsuleButton()
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Continues even when an advisory item needs review")
         }
     }
 
@@ -339,13 +384,15 @@ struct PackageValidationAndExportView: View {
 
                 Text("Bundle summary").font(Theme.Typography.sectionHeader)
                 ForEach(bundleItems) { item in bundleFileRow(item) }
-
-                Button { showingShareChoices = true } label: {
-                    Label("Share Package", systemImage: "square.and.arrow.up").primaryCapsuleButton()
-                }
-                .padding(.top, 8)
             }
             .padding(16)
+        }
+        .scrollEdgeHaptics()
+        .floatingBottomActionBar(horizontalPadding: 16) {
+            Button { showingShareChoices = true } label: {
+                Label("Share Package", systemImage: "square.and.arrow.up").primaryCapsuleButton()
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -360,47 +407,55 @@ struct PackageValidationAndExportView: View {
 
     private var bundleItems: [BundleItem] {
         let prefix = formattedFilePrefix
-        let heads = HeadshotAngle.allCases.map { angle -> BundleItem in
-            let headshot = audition.headshot(for: angle)
-            let path = headshot.map { PackageExportHelper.effectiveHeadshotPath(for: $0) } ?? ""
-            let exists = MediaStorage.fileExists(at: path)
-            let sizeMB = exists ? MediaStorage.fileSizeMB(at: path) : 0
-            let ratioText = headshot?.aspectRatio.rawValue ?? rules.requiredHeadshotRatio.rawValue
-            let meta = exists ? "JPG · \(ratioText) · \(formattedSizeString(sizeMB))" : "JPG · Missing on disk"
-            return BundleItem(
-                id: "headshot-\(angle.rawValue)",
-                title: "\(prefix)_\(angle.rawValue)",
-                metadata: meta,
-                path: path,
-                fallbackExtension: "jpg",
-                existsOnDisk: exists
-            )
+        var result: [BundleItem] = []
+
+        if audition.requiresHeadshots {
+            let heads = HeadshotAngle.allCases.map { angle -> BundleItem in
+                let headshot = audition.headshot(for: angle)
+                let path = headshot.map { PackageExportHelper.effectiveHeadshotPath(for: $0) } ?? ""
+                let exists = MediaStorage.fileExists(at: path)
+                let sizeMB = exists ? MediaStorage.fileSizeMB(at: path) : 0
+                let ratioText = headshot?.aspectRatio.rawValue ?? rules.requiredHeadshotRatio.rawValue
+                let meta = exists ? "JPG · \(ratioText) · \(formattedSizeString(sizeMB))" : "JPG · Missing on disk"
+                return BundleItem(
+                    id: "headshot-\(angle.rawValue)",
+                    title: "\(prefix)_\(angle.rawValue)",
+                    metadata: meta,
+                    path: path,
+                    fallbackExtension: "jpg",
+                    existsOnDisk: exists
+                )
+            }
+            result.append(contentsOf: heads)
         }
 
-        let slatePath = slate?.filePath ?? ""
-        let slateExists = MediaStorage.fileExists(at: slatePath)
-        let slateMeta: String = {
-            guard let slate else { return "MP4 · Not recorded" }
-            guard slateExists else { return "MP4 · Missing on disk" }
-            let dur = slateMetadata?.durationSeconds ?? slate.durationSeconds
-            let size = actualSizeMB(for: slate, metadata: slateMetadata)
-            return "MP4 · \(Int(dur.rounded()))s · \(formattedSizeString(size))"
-        }()
+        if audition.requiresSlate {
+            let slatePath = slate?.filePath ?? ""
+            let slateExists = MediaStorage.fileExists(at: slatePath)
+            let slateMeta: String = {
+                guard let slate else { return "MP4 · Not recorded" }
+                guard slateExists else { return "MP4 · Missing on disk" }
+                let dur = slateMetadata?.durationSeconds ?? slate.durationSeconds
+                let size = actualSizeMB(for: slate, metadata: slateMetadata)
+                return "MP4 · \(Int(dur.rounded()))s · \(formattedSizeString(size))"
+            }()
+            result.append(BundleItem(id: "slate", title: "\(prefix)_Slate", metadata: slateMeta, path: slatePath, fallbackExtension: "mp4", existsOnDisk: slateExists))
+        }
 
-        let clipPath = clip?.filePath ?? ""
-        let clipExists = MediaStorage.fileExists(at: clipPath)
-        let clipMeta: String = {
-            guard let clip else { return "MP4 · Not recorded" }
-            guard clipExists else { return "MP4 · Missing on disk" }
-            let dur = clipMetadata?.durationSeconds ?? clip.durationSeconds
-            let size = actualSizeMB(for: clip, metadata: clipMetadata)
-            return "MP4 · \(Int(dur.rounded()))s · \(formattedSizeString(size))"
-        }()
+        if audition.requiresAudition {
+            let clipPath = clip?.filePath ?? ""
+            let clipExists = MediaStorage.fileExists(at: clipPath)
+            let clipMeta: String = {
+                guard let clip else { return "MP4 · Not recorded" }
+                guard clipExists else { return "MP4 · Missing on disk" }
+                let dur = clipMetadata?.durationSeconds ?? clip.durationSeconds
+                let size = actualSizeMB(for: clip, metadata: clipMetadata)
+                return "MP4 · \(Int(dur.rounded()))s · \(formattedSizeString(size))"
+            }()
+            result.append(BundleItem(id: "audition", title: "\(prefix)_Audition", metadata: clipMeta, path: clipPath, fallbackExtension: "mp4", existsOnDisk: clipExists))
+        }
 
-        return heads + [
-            BundleItem(id: "slate", title: "\(prefix)_Slate", metadata: slateMeta, path: slatePath, fallbackExtension: "mp4", existsOnDisk: slateExists),
-            BundleItem(id: "audition", title: "\(prefix)_Audition", metadata: clipMeta, path: clipPath, fallbackExtension: "mp4", existsOnDisk: clipExists)
-        ]
+        return result
     }
 
     private var availableBundleItems: [BundleItem] {
@@ -527,6 +582,7 @@ struct PackageValidationAndExportView: View {
                 }
                 .padding(20)
             }
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Send it your way")
             .navigationBarTitleDisplayMode(.inline)
@@ -598,14 +654,32 @@ struct PackageValidationAndExportView: View {
         return dur > 0 && dur <= rules.maxClipSeconds
     }
 
+    private var orientationDetailText: String {
+        if audition.requiresSlate && audition.requiresAudition {
+            return "Consistent \(expectedOrientation) across both clips"
+        }
+        return "Matches required \(expectedOrientation)"
+    }
+
     private var orientationPass: Bool {
-        let slateInfo = slateMetadata.map { ($0.isPortrait, $0.aspectRatioString) }
-        let clipInfo = clipMetadata.map { ($0.isPortrait, $0.aspectRatioString) }
-        return PackageExportHelper.validateOrientation(
-            slate: slateInfo,
-            clip: clipInfo,
-            requiredPortrait: rules.requiredPortrait
-        )
+        if audition.requiresSlate && audition.requiresAudition {
+            let slateInfo = slateMetadata.map { ($0.isPortrait, $0.aspectRatioString) }
+            let clipInfo = clipMetadata.map { ($0.isPortrait, $0.aspectRatioString) }
+            return PackageExportHelper.validateOrientation(
+                slate: slateInfo,
+                clip: clipInfo,
+                requiredPortrait: rules.requiredPortrait
+            )
+        }
+        if audition.requiresSlate {
+            guard let slateMetadata else { return false }
+            return rules.requiredPortrait.map { slateMetadata.isPortrait == $0 } ?? true
+        }
+        if audition.requiresAudition {
+            guard let clipMetadata else { return false }
+            return rules.requiredPortrait.map { clipMetadata.isPortrait == $0 } ?? true
+        }
+        return true
     }
 
     private var actorFileStem: String {
@@ -631,14 +705,14 @@ struct PackageValidationAndExportView: View {
     }
 
     private var fileSizePass: Bool {
-        let takes = [slate, clip].compactMap { $0 }
+        let takes = requiredVideoTakes
         guard !takes.isEmpty else { return false }
         let allExist = takes.allSatisfy { MediaStorage.fileExists(at: $0.filePath) }
         return allExist && oversizedTake == nil
     }
 
     private var fileSizeValidationDetail: String {
-        let takes = [slate, clip].compactMap { $0 }
+        let takes = requiredVideoTakes
         if takes.isEmpty {
             return "No video clips recorded yet · limit \(Int(rules.maxPerClipSizeMB)) MB each"
         }
@@ -646,10 +720,10 @@ struct PackageValidationAndExportView: View {
             return "One or more clip files missing on disk · limit \(Int(rules.maxPerClipSizeMB)) MB each"
         }
         var parts: [String] = []
-        if let slate {
+        if audition.requiresSlate, let slate {
             parts.append("Slate \(formattedSizeString(actualSizeMB(for: slate, metadata: slateMetadata)))")
         }
-        if let clip {
+        if audition.requiresAudition, let clip {
             parts.append("Clip \(formattedSizeString(actualSizeMB(for: clip, metadata: clipMetadata)))")
         }
         return "\(parts.joined(separator: " · ")) (limit \(Int(rules.maxPerClipSizeMB)) MB)"
@@ -897,20 +971,35 @@ struct PackageValidationAndExportView: View {
     }
 
     private func presentHeadshotCrop() {
+        let mismatched = mismatchedHeadshotAssets()
+        cropBatchTotalCount = mismatched.count
         isCyclingHeadshotCrops = true
         didApplyCropForCurrentAngle = false
-        presentNextMismatchedHeadshotIfNeeded()
+        presentNextMismatchedHeadshotIfNeeded(mismatched: mismatched)
     }
 
-    private func presentNextMismatchedHeadshotIfNeeded() {
-        guard let asset = HeadshotAngle.allCases
-            .compactMap({ audition.headshot(for: $0) })
-            .first(where: { $0.aspectRatio != rules.requiredHeadshotRatio }),
+    private func mismatchedHeadshotAssets() -> [HeadshotAsset] {
+        HeadshotAngle.allCases
+            .compactMap { audition.headshot(for: $0) }
+            .filter { $0.aspectRatio != rules.requiredHeadshotRatio }
+    }
+
+    private func presentNextMismatchedHeadshotIfNeeded(mismatched: [HeadshotAsset]? = nil) {
+        let remaining = mismatched ?? mismatchedHeadshotAssets()
+        guard let asset = remaining.first,
               let image = loadHeadshotImage(for: asset) else {
             isCyclingHeadshotCrops = false
+            cropBatchTotalCount = 0
             return
         }
-        cropRoute = CropRoute(angle: asset.angle, image: image)
+        let total = max(cropBatchTotalCount, remaining.count)
+        let step = min(total, max(1, total - remaining.count + 1))
+        cropRoute = CropRoute(
+            angle: asset.angle,
+            image: image,
+            stepIndex: step,
+            totalCount: total
+        )
     }
 
     private func loadHeadshotImage(for asset: HeadshotAsset) -> UIImage? {
@@ -929,6 +1018,7 @@ struct PackageValidationAndExportView: View {
         guard isCyclingHeadshotCrops, didApplyCropForCurrentAngle else {
             isCyclingHeadshotCrops = false
             didApplyCropForCurrentAngle = false
+            cropBatchTotalCount = 0
             return
         }
         didApplyCropForCurrentAngle = false
@@ -953,10 +1043,11 @@ struct PackageValidationAndExportView: View {
         audition.headshots[index].aspectRatio = ratio
         audition.headshots[index].cropPreset = preset
         appState.saveChanges()
+        Haptics.success()
     }
 }
 
-private struct VideoCompressorView: View {
+struct VideoCompressorView: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var audition: Audition
     let take: VideoTake
@@ -1118,22 +1209,22 @@ private struct VideoCompressorView: View {
                 }
 
                 Spacer()
-
-                if !isCompressing {
-                    Button {
-                        if completed {
-                            dismiss()
-                        } else {
-                            compress()
-                        }
-                    } label: {
-                        Text(completed ? "Done" : "Compress \(clipLabel)")
-                            .primaryCapsuleButton()
-                    }
-                    .accessibilityLabel(completed ? "Done" : "Compress \(clipLabel)")
-                }
             }
             .padding(20)
+            .floatingBottomActionBar(isPresented: !isCompressing) {
+                Button {
+                    if completed {
+                        dismiss()
+                    } else {
+                        compress()
+                    }
+                } label: {
+                    Text(completed ? "Done" : "Compress \(clipLabel)")
+                        .primaryCapsuleButton()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(completed ? "Done" : "Compress \(clipLabel)")
+            }
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Compress your \(clipLabel)")
             .navigationBarTitleDisplayMode(.inline)
@@ -1295,7 +1386,7 @@ private struct VideoCompressorView: View {
                 audition.auditionTakes[index].fileSizeMB = sizeMB
             }
         }
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        Haptics.success()
         onCompressed(originalSizeMB, sizeMB)
     }
 }
@@ -1390,81 +1481,86 @@ private struct DeliveryCelebrationView: View {
     let audition: Audition
     let done: () -> Void
 
+    @State private var clapSequenceID = 0
+    @State private var headlineVisible = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private let charcoal = Theme.Colors.textPrimary
     private let forestGreen = Theme.Colors.successGreen
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                Theme.Colors.canvasBackground.ignoresSafeArea()
+        NavigationStack {
+            GeometryReader { geo in
+                ZStack {
+                    Theme.Colors.canvasBackground.ignoresSafeArea()
 
-                // Top-right curved filmstrip
-                Image("filmstripTopRight")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: geo.size.width * 0.42)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .ignoresSafeArea(edges: .top)
-                    .allowsHitTesting(false)
+                    // Animated curved purple 35mm movie reel passing along the right edge
+                    PassingFilmstripOverlay(reduceMotion: reduceMotion)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
 
-                // Bottom-right curved filmstrip
-                Image("filmstripBottomRight")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: geo.size.width * 0.48)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .ignoresSafeArea(edges: .bottom)
-                    .allowsHitTesting(false)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Spacer()
 
-                VStack(alignment: .leading, spacing: 0) {
-                    // Top-left circular close button
-                    Button(action: done) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 18, weight: .regular))
-                            .foregroundStyle(charcoal)
-                            .frame(width: 48, height: 48)
-                            .background(Theme.Colors.cardSurface)
-                            .clipShape(Circle())
-                            .overlay(
-                                Circle()
-                                    .stroke(Theme.Colors.controlBorder.opacity(0.55), lineWidth: 1)
-                            )
-                            .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
-                    }
-                    .accessibilityLabel("Close")
-                    .padding(.top, 4)
-
-                    Spacer()
-
-                    // Clapperboard + sparkles illustration
-                    Image("clapperboardCelebration")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: geo.size.width * 0.78)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.bottom, 26)
-
-                    // Headline & inline status text
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("It’s with casting.")
-                            .font(.system(size: 34, weight: .bold))
-                            .foregroundStyle(charcoal)
-
-                        (
-                            Text(earlyLeadText)
-                                .font(.system(size: 21, weight: .bold))
-                                .foregroundColor(forestGreen)
-                            + Text("  Break a leg.")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(charcoal.opacity(0.8))
+                        CelebrationClapperboardView(
+                            triggerID: clapSequenceID,
+                            width: min(geo.size.width * 0.56, 214),
+                            restingTiltDegrees: -7
                         )
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
+                        .padding(.leading, 12)
+                        .padding(.bottom, 34)
 
-                    Spacer()
-                    Spacer()
+                        // Headline & inline status text
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("It’s with casting.")
+                                .font(.system(size: 34, weight: .bold))
+                                .foregroundStyle(charcoal)
+
+                            (
+                                Text(earlyLeadText)
+                                    .font(.system(size: 21, weight: .bold))
+                                    .foregroundColor(forestGreen)
+                                + Text("  Break a leg.")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(charcoal.opacity(0.8))
+                            )
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .opacity(headlineVisible ? 1 : 0)
+                        .offset(y: headlineVisible ? 0 : 12)
+
+                        Spacer()
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
                 }
-                .padding(.horizontal, 24)
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if #available(iOS 26.0, *) {
+                        Button(role: .close, action: done)
+                            .accessibilityLabel("Close")
+                    } else {
+                        Button(action: done) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 15, weight: .semibold))
+                        }
+                        .accessibilityLabel("Close")
+                    }
+                }
+            }
+            .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
+        }
+        .onAppear {
+            Haptics.success()
+            clapSequenceID += 1
+            if reduceMotion {
+                headlineVisible = true
+            } else {
+                withAnimation(.easeOut(duration: 0.42).delay(0.28)) {
+                    headlineVisible = true
+                }
             }
         }
     }
@@ -1486,6 +1582,430 @@ private struct DeliveryCelebrationView: View {
         } else {
             return "Package sent."
         }
+    }
+}
+
+private struct PassingFilmstripOverlay: View {
+    let reduceMotion: Bool
+    @State private var startDate = Date()
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion)) { timeline in
+            Canvas { context, size in
+                let elapsed = reduceMotion ? 0 : timeline.date.timeIntervalSince(startDate)
+                let framePitch: CGFloat = 104
+                let speed: CGFloat = 46
+                let phase = CGFloat((elapsed * speed).truncatingRemainder(dividingBy: framePitch))
+
+                // Sweeping S-arc hugging the right margin cleanly without covering left-aligned copy.
+                let totalSpan = size.height + 280
+                let steps = Int(ceil(totalSpan / framePitch)) + 3
+
+                for idx in -1..<steps {
+                    let yCenter = CGFloat(idx) * framePitch + phase - 140
+                    let progress = max(0, min(1, yCenter / max(1, size.height)))
+                    let xOffset = rightEdgeX(for: progress, width: size.width)
+                    let angle = tangentAngle(for: progress, width: size.width, height: max(1, size.height))
+
+                    drawFilmFrameSegment(
+                        in: &context,
+                        center: CGPoint(x: xOffset, y: yCenter),
+                        angle: angle,
+                        pitch: framePitch,
+                        frameIndex: idx
+                    )
+                }
+            }
+        }
+        .opacity(0.88)
+    }
+
+    private func rightEdgeX(for progress: CGFloat, width: CGFloat) -> CGFloat {
+        // Gentle inward wave hugging the far right margin cleanly away from left-aligned copy.
+        let wave = sin(progress * .pi * 1.15) * 24
+        return width - 2 - wave
+    }
+
+    private func tangentAngle(for progress: CGFloat, width: CGFloat, height: CGFloat) -> Angle {
+        let eps: CGFloat = 0.01
+        let y0 = (progress - eps) * height
+        let y1 = (progress + eps) * height
+        let x0 = rightEdgeX(for: progress - eps, width: width)
+        let x1 = rightEdgeX(for: progress + eps, width: width)
+        let dx = x1 - x0
+        let dy = max(1, y1 - y0)
+        return .radians(Double(atan2(-dx, dy)))
+    }
+
+    private func drawFilmFrameSegment(
+        in context: inout GraphicsContext,
+        center: CGPoint,
+        angle: Angle,
+        pitch: CGFloat,
+        frameIndex: Int
+    ) {
+        let stripWidth: CGFloat = 104
+        let cellRect = CGRect(x: -stripWidth / 2, y: -pitch / 2 - 1, width: stripWidth, height: pitch + 2)
+
+        context.drawLayer { layer in
+            layer.translateBy(x: center.x, y: center.y)
+            layer.rotate(by: angle)
+
+            // Outer translucent filmstock rail
+            layer.fill(
+                Path(cellRect),
+                with: .color(Color(red: 175 / 255, green: 132 / 255, blue: 222 / 255).opacity(0.24))
+            )
+
+            // Side rails (subtle highlight edge)
+            let railWidth: CGFloat = 20
+            let leftHoleX = -stripWidth / 2 + 5
+            let rightHoleX = stripWidth / 2 - 15
+            let holeSize = CGSize(width: 10, height: 14)
+
+            for holeRow in 0..<3 {
+                let holeY = -pitch / 2 + 12 + CGFloat(holeRow) * 32
+                let leftHole = Path(
+                    roundedRect: CGRect(x: leftHoleX, y: holeY, width: holeSize.width, height: holeSize.height),
+                    cornerRadius: 2.5
+                )
+                let rightHole = Path(
+                    roundedRect: CGRect(x: rightHoleX, y: holeY, width: holeSize.width, height: holeSize.height),
+                    cornerRadius: 2.5
+                )
+                layer.fill(leftHole, with: .color(Theme.Colors.canvasBackground.opacity(0.88)))
+                layer.fill(rightHole, with: .color(Theme.Colors.canvasBackground.opacity(0.88)))
+            }
+
+            // Inner exposed purple film negative frame
+            let windowRect = CGRect(
+                x: -stripWidth / 2 + railWidth,
+                y: -pitch / 2 + 6,
+                width: stripWidth - railWidth * 2,
+                height: pitch - 12
+            )
+            let windowPath = Path(roundedRect: windowRect, cornerRadius: 5)
+            let hueShift = ((frameIndex % 3) + 3) % 3
+            let topTint = hueShift == 0
+                ? Color(red: 162 / 255, green: 98 / 255, blue: 214 / 255).opacity(0.58)
+                : hueShift == 1
+                    ? Color(red: 130 / 255, green: 74 / 255, blue: 190 / 255).opacity(0.52)
+                    : Color(red: 196 / 255, green: 132 / 255, blue: 228 / 255).opacity(0.56)
+            let bottomTint = Color(red: 92 / 255, green: 52 / 255, blue: 146 / 255).opacity(0.65)
+
+            layer.fill(
+                windowPath,
+                with: .linearGradient(
+                    Gradient(colors: [topTint, bottomTint]),
+                    startPoint: CGPoint(x: windowRect.minX, y: windowRect.minY),
+                    endPoint: CGPoint(x: windowRect.maxX, y: windowRect.maxY)
+                )
+            )
+
+            // Soft diagonal emulsion gleam inside each passing frame
+            var gleam = Path()
+            gleam.move(to: CGPoint(x: windowRect.minX + 6, y: windowRect.minY + 10))
+            gleam.addLine(to: CGPoint(x: windowRect.maxX - 18, y: windowRect.minY + 4))
+            gleam.addLine(to: CGPoint(x: windowRect.maxX - 6, y: windowRect.maxY - 12))
+            gleam.addLine(to: CGPoint(x: windowRect.minX + 18, y: windowRect.maxY - 6))
+            gleam.closeSubpath()
+            layer.fill(gleam, with: .color(Color.white.opacity(0.14)))
+        }
+    }
+}
+
+private struct CelebrationClapperboardView: View {
+    let triggerID: Int
+    var width: CGFloat = 214
+    var restingTiltDegrees: Double = -7
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var armAngle: Double = -30
+    @State private var boardRecoilAngle: Double = 0
+    @State private var boardScale: CGFloat = 0.92
+    @State private var impactPulse: CGFloat = 0
+    @State private var sparklesVisible = false
+
+    private var armHeight: CGFloat { width * 0.165 }
+    private var boardHeight: CGFloat { width * 0.56 }
+    private var cornerRadius: CGFloat { max(5, width * 0.045) }
+    private let boardColor = Color(red: 31 / 255, green: 29 / 255, blue: 36 / 255)
+    private let armDarkColor = Color(red: 39 / 255, green: 36 / 255, blue: 45 / 255)
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Theme.Colors.accent.opacity(0.45), lineWidth: 2)
+                .frame(width: width * 0.85, height: width * 0.85)
+                .scaleEffect(0.55 + impactPulse * 0.6)
+                .opacity(impactPulse >= 0.99 ? 0 : max(0, 1 - impactPulse))
+                .allowsHitTesting(false)
+
+            VStack(spacing: 0) {
+                ClapperJawBar(
+                    width: width,
+                    height: armHeight,
+                    darkColor: armDarkColor,
+                    stripeAngle: 26,
+                    isTopArm: true
+                )
+                .rotationEffect(.degrees(armAngle), anchor: UnitPoint(x: 0.09, y: 0.9))
+
+                ClapperJawBar(
+                    width: width,
+                    height: armHeight * 0.92,
+                    darkColor: armDarkColor,
+                    stripeAngle: -26,
+                    isTopArm: false
+                )
+
+                slateBody
+            }
+            .overlay(alignment: .topLeading) {
+                hingePlate
+                    .offset(x: -width * 0.015, y: armHeight * 0.55)
+            }
+            .shadow(color: .black.opacity(0.18), radius: width * 0.08, y: width * 0.04)
+
+            sparkleCluster
+                .opacity(sparklesVisible ? 1 : 0)
+                .scaleEffect(sparklesVisible ? 1 : 0.45)
+        }
+        .scaleEffect(boardScale)
+        .rotationEffect(.degrees(restingTiltDegrees + boardRecoilAngle))
+        .task(id: triggerID) {
+            await runClapSequence()
+        }
+    }
+
+    private var slateBody: some View {
+        ZStack {
+            UnevenRoundedRectangle(
+                topLeadingRadius: 2,
+                bottomLeadingRadius: cornerRadius,
+                bottomTrailingRadius: cornerRadius,
+                topTrailingRadius: 2
+            )
+            .fill(boardColor)
+            .overlay(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 2,
+                    bottomLeadingRadius: cornerRadius,
+                    bottomTrailingRadius: cornerRadius,
+                    topTrailingRadius: 2
+                )
+                .stroke(Color.white.opacity(0.16), lineWidth: 1)
+            )
+
+            slateRuleLines
+                .padding(.horizontal, width * 0.07)
+                .padding(.vertical, boardHeight * 0.12)
+        }
+        .frame(width: width, height: boardHeight)
+    }
+
+    private var slateRuleLines: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
+                slateField("SCENE", alignment: .leading)
+                dividerLine(vertical: true)
+                slateField("CUT", alignment: .center)
+                dividerLine(vertical: true)
+                slateField("TAKE", alignment: .center)
+            }
+            .frame(height: boardHeight * 0.30)
+
+            dividerLine(vertical: false)
+
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    slateField("DATE", alignment: .leading)
+                    dividerLine(vertical: false)
+                    slateField("PROD. CO.", alignment: .leading)
+                }
+                dividerLine(vertical: true)
+                slateField("ROLL", alignment: .topLeading)
+                    .frame(width: width * 0.34)
+            }
+            .frame(height: boardHeight * 0.42)
+
+            dividerLine(vertical: false)
+
+            HStack(spacing: 0) {
+                slateField("DIRECTOR", alignment: .leading)
+                dividerLine(vertical: true)
+                slateField("CAMERA", alignment: .leading)
+            }
+        }
+    }
+
+    private func slateField(_ label: String, alignment: Alignment) -> some View {
+        Text(label)
+            .font(.system(size: max(6, width * 0.038), weight: .bold, design: .monospaced))
+            .foregroundStyle(Color.white.opacity(0.72))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+    }
+
+    private func dividerLine(vertical: Bool) -> some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.28))
+            .frame(width: vertical ? 1 : nil, height: vertical ? nil : 1)
+    }
+
+    private var hingePlate: some View {
+        RoundedRectangle(cornerRadius: max(3, width * 0.025), style: .continuous)
+            .fill(Color(red: 52 / 255, green: 48 / 255, blue: 62 / 255))
+            .frame(width: width * 0.16, height: armHeight * 1.45)
+            .overlay(
+                VStack(spacing: armHeight * 0.28) {
+                    HStack(spacing: width * 0.04) {
+                        Circle().fill(Color.white.opacity(0.45)).frame(width: max(2.5, width * 0.022))
+                        Spacer(minLength: 0)
+                    }
+                    HStack(spacing: width * 0.04) {
+                        Circle().fill(Color.white.opacity(0.45)).frame(width: max(2.5, width * 0.022))
+                        Circle().fill(Color.white.opacity(0.45)).frame(width: max(2.5, width * 0.022))
+                    }
+                }
+                .padding(width * 0.028)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: max(3, width * 0.025), style: .continuous)
+                    .stroke(Color.white.opacity(0.18), lineWidth: 0.75)
+            )
+    }
+
+    private var sparkleCluster: some View {
+        ZStack {
+            sparkleIcon(size: width * 0.13)
+                .offset(x: -width * 0.48, y: -boardHeight * 0.88)
+            sparkleIcon(size: width * 0.085)
+                .offset(x: -width * 0.61, y: -boardHeight * 0.54)
+            sparkleIcon(size: width * 0.12)
+                .offset(x: width * 0.56, y: boardHeight * 0.48)
+            sparkleIcon(size: width * 0.085)
+                .offset(x: width * 0.42, y: boardHeight * 0.78)
+        }
+    }
+
+    private func sparkleIcon(size: CGFloat) -> some View {
+        FourPointSparkle()
+            .fill(Theme.Colors.accent)
+            .frame(width: size, height: size)
+    }
+
+    @MainActor
+    private func runClapSequence() async {
+        if reduceMotion {
+            armAngle = 0
+            boardRecoilAngle = 0
+            boardScale = 1.0
+            impactPulse = 1
+            sparklesVisible = true
+            return
+        }
+
+        armAngle = -28
+        boardRecoilAngle = 0
+        boardScale = 0.88
+        impactPulse = 0
+        sparklesVisible = false
+
+        withAnimation(.easeOut(duration: 0.18)) {
+            boardScale = 1.0
+            armAngle = -34
+        }
+        try? await Task.sleep(for: .milliseconds(190))
+        guard !Task.isCancelled else { return }
+
+        withAnimation(.easeIn(duration: 0.13)) {
+            armAngle = 0
+        }
+        try? await Task.sleep(for: .milliseconds(125))
+        guard !Task.isCancelled else { return }
+
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.55)) {
+            boardRecoilAngle = 3.2
+            boardScale = 0.96
+            sparklesVisible = true
+        }
+        withAnimation(.easeOut(duration: 0.26)) {
+            impactPulse = 1
+        }
+        try? await Task.sleep(for: .milliseconds(110))
+        guard !Task.isCancelled else { return }
+
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.68)) {
+            boardRecoilAngle = 0
+            boardScale = 1.0
+        }
+    }
+}
+
+private struct ClapperJawBar: View {
+    let width: CGFloat
+    let height: CGFloat
+    let darkColor: Color
+    let stripeAngle: CGFloat
+    let isTopArm: Bool
+
+    var body: some View {
+        Canvas { context, size in
+            let stripeWidth = size.width * 0.115
+            let skew = tan(stripeAngle * .pi / 180) * size.height
+
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(darkColor))
+
+            var x = -size.height
+            var index = 0
+            while x < size.width + size.height {
+                if index.isMultiple(of: 2) {
+                    var path = Path()
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x + stripeWidth, y: 0))
+                    path.addLine(to: CGPoint(x: x + stripeWidth + skew, y: size.height))
+                    path.addLine(to: CGPoint(x: x + skew, y: size.height))
+                    path.closeSubpath()
+                    context.fill(path, with: .color(Color.white.opacity(0.92)))
+                }
+                x += stripeWidth
+                index += 1
+            }
+        }
+        .frame(width: width, height: height)
+        .clipShape(
+            UnevenRoundedRectangle(
+                topLeadingRadius: isTopArm ? 4 : 0,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: isTopArm ? 4 : 0
+            )
+        )
+        .overlay(
+            UnevenRoundedRectangle(
+                topLeadingRadius: isTopArm ? 4 : 0,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: isTopArm ? 4 : 0
+            )
+            .stroke(Color.white.opacity(0.18), lineWidth: 0.75)
+        )
+    }
+}
+
+private struct FourPointSparkle: Shape {
+    func path(in rect: CGRect) -> Path {
+        let midX = rect.midX
+        let midY = rect.midY
+        var path = Path()
+        path.move(to: CGPoint(x: midX, y: rect.minY))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX, y: midY), control: CGPoint(x: midX + rect.width * 0.08, y: midY - rect.height * 0.08))
+        path.addQuadCurve(to: CGPoint(x: midX, y: rect.maxY), control: CGPoint(x: midX + rect.width * 0.08, y: midY + rect.height * 0.08))
+        path.addQuadCurve(to: CGPoint(x: rect.minX, y: midY), control: CGPoint(x: midX - rect.width * 0.08, y: midY + rect.height * 0.08))
+        path.addQuadCurve(to: CGPoint(x: midX, y: rect.minY), control: CGPoint(x: midX - rect.width * 0.08, y: midY - rect.height * 0.08))
+        return path
     }
 }
 

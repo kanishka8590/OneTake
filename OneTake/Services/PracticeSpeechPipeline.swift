@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+import AVFoundation
+import Accelerate
+import NaturalLanguage
 
 /// The script representation used by both the live clue UI and final delivery review.
 /// Cue lines deliberately never appear in `actorLines` or `actorTokens`.
@@ -158,18 +161,63 @@ struct PracticeScriptModel {
         return between.contains("(") || between.contains(")")
     }
 
+    struct VerbatimPhrase: Hashable, Sendable {
+        let lineID: Int
+        let tokenIDs: [Int]
+        let text: String
+    }
+
+    var contextualVocabulary: [String] {
+        var seen: Set<String> = []
+        var output: [String] = []
+        for token in actorTokens {
+            let trimmed = token.word.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+            guard trimmed.count >= 2 else { continue }
+            let key = trimmed.lowercased()
+            if seen.insert(key).inserted {
+                output.append(trimmed)
+                if output.count >= 200 { break }
+            }
+        }
+        return output
+    }
+
+    func tokenRanges(forLineID lineID: Int) -> [(tokenID: Int, range: Range<String.Index>)] {
+        guard let line = lines.first(where: { $0.id == lineID }) else { return [] }
+        let lineTokens = tokens.filter { $0.lineID == lineID }
+        let wordSpans = Self.dialogueWordSpans(in: line.text)
+        guard lineTokens.count == wordSpans.count else { return [] }
+        return zip(lineTokens, wordSpans).map { (tokenID: $0.id, range: $1.range) }
+    }
+
+    func hasCueLine(between earlierLineID: Int, and laterLineID: Int) -> Bool {
+        let lower = min(earlierLineID, laterLineID)
+        let upper = max(earlierLineID, laterLineID)
+        guard lower < upper else { return false }
+        return lines.contains { $0.isCue && $0.id > lower && $0.id < upper }
+    }
+
     func verbatimPhrases(for selectedTokens: [PracticeToken]) -> [String] {
+        verbatimPhraseSpans(for: selectedTokens).map(\.text)
+    }
+
+    func verbatimPhraseSpans(for selectedTokens: [PracticeToken]) -> [VerbatimPhrase] {
         let selectedIDs = Set(selectedTokens.map(\.id))
         let actorTokens = self.actorTokens
-        var phrases: [String] = []
+        var phrases: [VerbatimPhrase] = []
         var current: [PracticeToken] = []
         var previousActorIndex: Int?
 
         func finish() {
-            guard let first = current.first,
-                  let text = verbatimText(lineID: first.lineID, tokenIDs: current.map(\.id))
-            else { return }
-            phrases.append(text)
+            guard let first = current.first else {
+                current = []
+                previousActorIndex = nil
+                return
+            }
+            let ids = current.map(\.id)
+            if let text = verbatimText(lineID: first.lineID, tokenIDs: ids) {
+                phrases.append(VerbatimPhrase(lineID: first.lineID, tokenIDs: ids, text: text))
+            }
             current = []
             previousActorIndex = nil
         }
@@ -404,6 +452,7 @@ struct PracticeScriptModel {
 @Observable
 final class PracticeSpeechClueTracker {
     let model: PracticeScriptModel
+    let language: ScriptLanguage
     private let actorSentences: [PracticeScriptRange]
     private(set) var currentActorLineIndex = 0
     private(set) var currentActorSentenceIndex = 0
@@ -412,6 +461,7 @@ final class PracticeSpeechClueTracker {
     init(script: PracticeScript) {
         let builtModel = PracticeScriptModel(script: script)
         model = builtModel
+        language = script.language
         actorSentences = builtModel.sentenceRanges(containing: Set(builtModel.actorTokens.map(\.id)))
     }
 
@@ -424,19 +474,31 @@ final class PracticeSpeechClueTracker {
     /// double-counting when Speech.framework revises a partial transcription.
     func processRecognizedSpeech(segments: [RecognizedPracticeWord]) {
         let coalesced = PracticeSpeechDeliveryAnalyzer.coalesceSplitTokens(segments)
-        let spoken = coalesced.flatMap { PracticeSpeechDeliveryAnalyzer.normalizedComparisonTokens(for: $0.text) }
+        let rawWords = coalesced.map(\.text)
+        let spoken = rawWords.flatMap {
+            PracticeSpeechDeliveryAnalyzer.comparisonTokens(for: $0, language: language)
+        }
         var cursor = 0
         var matchedSentenceCount = 0
 
         for (index, sentence) in actorSentences.enumerated() {
             let sentenceWords = words(in: sentence.text)
             guard !sentenceWords.isEmpty else { continue }
-            guard let end = contiguousMatch(of: sentenceWords, in: spoken, startingAt: cursor)
-                    ?? tolerantForwardMatch(of: sentenceWords, in: spoken, startingAt: cursor) else {
+            if let end = contiguousMatch(of: sentenceWords, in: spoken, startingAt: cursor)
+                ?? tolerantForwardMatch(of: sentenceWords, in: spoken, startingAt: cursor) {
+                cursor = end
+                matchedSentenceCount = index + 1
+            } else if language == .hindi,
+                      let rawEnd = hindiCompoundMatchEnd(
+                          ofRawSentence: PracticeScriptModel.dialogueWords(in: sentence.text),
+                          inRawSpoken: rawWords,
+                          startingAtNormalizedCursor: cursor
+                      ) {
+                cursor = rawEnd
+                matchedSentenceCount = index + 1
+            } else {
                 break
             }
-            cursor = end
-            matchedSentenceCount = index + 1
         }
 
         currentActorSentenceIndex = min(matchedSentenceCount, actorSentences.count)
@@ -475,7 +537,65 @@ final class PracticeSpeechClueTracker {
 
     private func words(in text: String) -> [String] {
         PracticeScriptModel.dialogueWords(in: text)
-            .flatMap(PracticeSpeechDeliveryAnalyzer.normalizedComparisonTokens)
+            .flatMap { PracticeSpeechDeliveryAnalyzer.comparisonTokens(for: $0, language: language) }
+    }
+
+    /// Coalesces adjacent hi-IN split compound words matching the target sentence
+    /// (for example `"हो" + "जाएगा"` -> `"hojaayega"`) and re-runs tolerant matching
+    /// so stumbles or inserted words alongside compound splits still advance cleanly.
+    private func hindiCompoundMatchEnd(
+        ofRawSentence rawSentenceWords: [String],
+        inRawSpoken rawSpoken: [String],
+        startingAtNormalizedCursor normCursor: Int
+    ) -> Int? {
+        guard !rawSentenceWords.isEmpty, !rawSpoken.isEmpty else { return nil }
+        var rawStart = 0
+        var countSoFar = 0
+        while rawStart < rawSpoken.count && countSoFar < normCursor {
+            countSoFar += PracticeSpeechDeliveryAnalyzer.comparisonTokens(for: rawSpoken[rawStart], language: language).count
+            rawStart += 1
+        }
+        guard rawStart < rawSpoken.count else { return nil }
+
+        let expectedKeys = rawSentenceWords.flatMap {
+            PracticeSpeechDeliveryAnalyzer.comparisonTokens(for: $0, language: language)
+        }
+        let expectedSet = Set(expectedKeys)
+        guard !expectedKeys.isEmpty else { return nil }
+
+        // Build merged spoken keys from rawStart forward alongside how many raw tokens each entry consumed.
+        var mergedKeys: [String] = []
+        var rawEndAfterMerged: [Int] = []
+        var u = rawStart
+        while u < rawSpoken.count {
+            if u + 1 < rawSpoken.count {
+                let compound = PracticeSpeechDeliveryAnalyzer.hindiCompoundKey(rawSpoken[u], rawSpoken[u + 1])
+                if !compound.isEmpty && expectedSet.contains(compound) {
+                    mergedKeys.append(compound)
+                    rawEndAfterMerged.append(u + 2)
+                    u += 2
+                    continue
+                }
+            }
+            let pieces = PracticeSpeechDeliveryAnalyzer.comparisonTokens(for: rawSpoken[u], language: language)
+            for piece in pieces {
+                mergedKeys.append(piece)
+                rawEndAfterMerged.append(u + 1)
+            }
+            u += 1
+        }
+
+        guard let localEnd = contiguousMatch(of: expectedKeys, in: mergedKeys, startingAt: 0)
+                ?? tolerantForwardMatch(of: expectedKeys, in: mergedKeys, startingAt: 0),
+              localEnd > 0,
+              localEnd - 1 < rawEndAfterMerged.count else {
+            return nil
+        }
+
+        let rawConsumedEnd = rawEndAfterMerged[localEnd - 1]
+        return rawSpoken[0..<rawConsumedEnd].reduce(0) { sum, token in
+            sum + PracticeSpeechDeliveryAnalyzer.comparisonTokens(for: token, language: language).count
+        }
     }
 
     private func contiguousMatch(of expected: [String], in spoken: [String], startingAt start: Int) -> Int? {
@@ -535,7 +655,133 @@ final class PracticeSpeechClueTracker {
     }
 }
 
+enum PracticeAudioSilenceAnalyzer {
+    /// Measures true acoustic silence intervals (> minimumDuration) from a recorded audio file
+    /// using Accelerate (`vDSP_rmsqv`) and an adaptive noise-floor threshold.
+    nonisolated static func detectSilences(
+        in url: URL,
+        minimumDuration: Double = PracticeSpeechDeliveryAnalyzer.hesitationPauseThresholdSeconds
+    ) -> [PracticeSilenceInterval] {
+        guard let file = try? AVAudioFile(forReading: url) else { return [] }
+        let format = file.processingFormat
+        let sampleRate = format.sampleRate
+        let totalFrames = AVAudioFrameCount(max(0, file.length))
+        guard sampleRate > 0, totalFrames > 0 else { return [] }
+
+        let windowDuration = 0.02 // 20 ms
+        let windowFrames = max(1, Int((sampleRate * windowDuration).rounded()))
+        let readChunkSize: AVAudioFrameCount = 8192
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: readChunkSize) else {
+            return []
+        }
+
+        let channelCount = Int(format.channelCount)
+        guard channelCount > 0 else { return [] }
+
+        var windowDBs: [Float] = []
+        windowDBs.reserveCapacity(Int(totalFrames) / windowFrames + 1)
+        var pendingRMSMax: Float = 0
+        var pendingFrames = 0
+
+        while true {
+            buffer.frameLength = 0
+            do {
+                try file.read(into: buffer)
+            } catch {
+                break
+            }
+            let frameCount = Int(buffer.frameLength)
+            if frameCount == 0 { break }
+            guard let channelData = buffer.floatChannelData else { break }
+
+            var offset = 0
+            while offset < frameCount {
+                let take = min(windowFrames - pendingFrames, frameCount - offset)
+                var blockMaxRMS: Float = 0
+                for ch in 0..<channelCount {
+                    var chRMS: Float = 0
+                    vDSP_rmsqv(channelData[ch].advanced(by: offset), 1, &chRMS, vDSP_Length(take))
+                    if chRMS > blockMaxRMS { blockMaxRMS = chRMS }
+                }
+                pendingRMSMax = max(pendingRMSMax, blockMaxRMS)
+                pendingFrames += take
+                offset += take
+
+                if pendingFrames >= windowFrames {
+                    let db = 20.0 * log10f(max(pendingRMSMax, 1e-6))
+                    windowDBs.append(db)
+                    pendingRMSMax = 0
+                    pendingFrames = 0
+                }
+            }
+        }
+        if pendingFrames > 0 {
+            let db = 20.0 * log10f(max(pendingRMSMax, 1e-6))
+            windowDBs.append(db)
+        }
+
+        guard windowDBs.count >= 10 else { return [] }
+        let sorted = windowDBs.sorted()
+        let noiseFloorDB = sorted[max(0, Int(Double(sorted.count - 1) * 0.15))]
+        let speechPeakDB = sorted[min(sorted.count - 1, Int(Double(sorted.count - 1) * 0.92))]
+        guard speechPeakDB - noiseFloorDB >= 8.0 else { return [] }
+
+        let thresholdDB = max(noiseFloorDB + 6.0, min(-32.0, speechPeakDB - 18.0))
+        var isSilent = windowDBs.map { $0 < thresholdDB }
+
+        // Smooth brief (< 0.24s) consonant closures or dips inside active speech.
+        let maxSpeechBridgeWindows = Int((0.24 / windowDuration).rounded())
+        var idx = 0
+        while idx < isSilent.count {
+            if isSilent[idx] {
+                var end = idx + 1
+                while end < isSilent.count && isSilent[end] { end += 1 }
+                let touchesSpeechOnBothSides = idx > 0 && end < isSilent.count
+                if touchesSpeechOnBothSides && (end - idx) <= maxSpeechBridgeWindows {
+                    for fill in idx..<end { isSilent[fill] = false }
+                }
+                idx = end
+            } else {
+                idx += 1
+            }
+        }
+
+        var intervals: [PracticeSilenceInterval] = []
+        idx = 0
+        while idx < isSilent.count {
+            if isSilent[idx] {
+                var end = idx + 1
+                while end < isSilent.count && isSilent[end] { end += 1 }
+                let startSec = Double(idx) * windowDuration
+                let endSec = min(Double(totalFrames) / sampleRate, Double(end) * windowDuration)
+                if endSec - startSec > minimumDuration {
+                    intervals.append(PracticeSilenceInterval(start: startSec, end: endSec))
+                }
+                idx = end
+            } else {
+                idx += 1
+            }
+        }
+        return intervals
+    }
+
+    nonisolated static func audioDuration(of url: URL) -> Double? {
+        guard let file = try? AVAudioFile(forReading: url),
+              file.processingFormat.sampleRate > 0 else { return nil }
+        return Double(file.length) / file.processingFormat.sampleRate
+    }
+}
+
 enum PracticeSpeechDeliveryAnalyzer {
+    nonisolated static let hesitationPauseThresholdSeconds: Double = 1.2
+
+    private nonisolated static let fillerWords: Set<String> = [
+        "uh", "um", "uhh", "umm", "er", "err", "erm", "ah", "ahh", "hmm", "hm", "mm", "mhm"
+    ]
+    private nonisolated static let contractionSuffixNoise: Set<String> = [
+        "s", "t", "ll", "re", "ve", "d", "m", "nt"
+    ]
+
     static func makeSession(
         script: PracticeScript,
         transcript: String,
@@ -543,44 +789,83 @@ enum PracticeSpeechDeliveryAnalyzer {
         clueRequestedRanges: [PracticeScriptRange],
         duration: Double,
         help: HelpLevel,
-        audioURL: URL?
+        audioURL: URL?,
+        silenceIntervals: [PracticeSilenceInterval] = []
     ) -> PracticeSession {
         let model = PracticeScriptModel(script: script)
+        let language = script.language
         let rawSpokenWords = words.isEmpty
             ? recognizedWords(from: transcript)
             : words
         let spokenWords = coalesceSplitTokens(rawSpokenWords)
-        let alignment = align(scriptTokens: model.actorTokens, spokenWords: spokenWords)
+        let primaryAlignment = align(scriptTokens: model.actorTokens, spokenWords: spokenWords, language: language)
+        let alternativeAlignment = recoverAlternativeMatches(
+            in: primaryAlignment,
+            scriptTokens: model.actorTokens,
+            spokenWords: spokenWords,
+            language: language
+        )
+        let alignment = (language == .hindi || containsDevanagari(in: spokenWords) || containsDevanagari(in: model.actorTokens))
+            ? recoverHindiCompoundMatches(
+                in: alternativeAlignment,
+                scriptTokens: model.actorTokens,
+                spokenWords: spokenWords
+            )
+            : alternativeAlignment
+
+        // All omitted script words count as Skipped (Yellow), eliminating redundant Forgot (Blue).
         let clueTokenIDs = Set(clueRequestedRanges.flatMap(\.tokenIDs))
-        let actorTokenIDs = Set(model.actorTokens.map(\.id))
-        let forgotTokenIDs = clueTokenIDs.intersection(actorTokenIDs)
         let skipped = model.actorTokens.enumerated().compactMap { index, token in
-            !alignment.matchedScriptIndexes.contains(index) && !clueTokenIDs.contains(token.id) ? token : nil
+            !alignment.matchedScriptIndexes.contains(index) ? token : nil
         }
-        let forgotRanges = model.sentenceRanges(containing: forgotTokenIDs)
-        let hesitatedIndexes = hesitatedScriptIndexes(
+
+        let estimatedScriptTimestamps = estimateScriptTimestamps(
+            actorTokens: model.actorTokens,
+            alignment: alignment,
+            spokenWords: spokenWords,
+            duration: duration
+        )
+
+        let outcome = analyzeHesitationsAndImprovisations(
             in: spokenWords,
             alignment: alignment,
-            actorTokens: model.actorTokens,
-            clueTokenIDs: clueTokenIDs
+            model: model,
+            language: language,
+            silenceIntervals: silenceIntervals
         )
-        let additions = improvisedPhrases(from: spokenWords, unmatchedIndexes: alignment.unmatchedSpokenIndexes)
 
         var annotations: [DeliveryAnnotation] = []
-        for range in forgotRanges {
-            annotations.append(DeliveryAnnotation(text: range.text, kind: .forgot))
+        for phrase in model.verbatimPhraseSpans(for: skipped) {
+            let firstActorIdx = phrase.tokenIDs.first.flatMap { tokenID in
+                model.actorTokens.firstIndex(where: { $0.id == tokenID })
+            }
+            let timestamp = firstActorIdx.flatMap { estimatedScriptTimestamps[$0] }
+            annotations.append(DeliveryAnnotation(
+                text: phrase.text,
+                kind: .skipped,
+                lineID: phrase.lineID,
+                tokenIDs: phrase.tokenIDs,
+                timestamp: timestamp
+            ))
         }
-        for phrase in model.verbatimPhrases(for: skipped) {
-            annotations.append(DeliveryAnnotation(text: phrase, kind: .skipped))
-        }
-        for index in hesitatedIndexes {
-            let token = model.actorTokens[index]
+        for hit in outcome.hesitations {
+            let token = model.actorTokens[hit.scriptIndex]
             if let text = model.verbatimText(lineID: token.lineID, tokenIDs: [token.id]) {
-                annotations.append(DeliveryAnnotation(text: text, kind: .hesitated))
+                annotations.append(DeliveryAnnotation(
+                    text: text,
+                    kind: .hesitated,
+                    lineID: token.lineID,
+                    tokenIDs: [token.id],
+                    timestamp: hit.timestamp
+                ))
             }
         }
-        for phrase in additions {
-            annotations.append(DeliveryAnnotation(text: phrase, kind: .notInScript))
+        for addition in outcome.additions {
+            annotations.append(DeliveryAnnotation(
+                text: addition.text,
+                kind: .notInScript,
+                timestamp: addition.timestamp
+            ))
         }
 
         return PracticeSession(
@@ -588,9 +873,9 @@ enum PracticeSpeechDeliveryAnalyzer {
             durationSeconds: duration,
             helpLevelRaw: help.rawValue,
             skippedCount: skipped.count,
-            forgotCount: forgotTokenIDs.count,
-            hesitatedCount: hesitatedIndexes.count,
-            notInScriptCount: additions.reduce(0) { $0 + $1.split(whereSeparator: { $0.isWhitespace }).count },
+            forgotCount: 0,
+            hesitatedCount: outcome.hesitations.count,
+            notInScriptCount: outcome.additions.reduce(0) { $0 + $1.wordCount },
             annotations: annotations,
             transcript: transcript,
             recognizedWords: spokenWords,
@@ -602,7 +887,7 @@ enum PracticeSpeechDeliveryAnalyzer {
     static func hesitationGaps(in words: [RecognizedPracticeWord]) -> [Double] {
         zip(words, words.dropFirst()).compactMap { previous, next in
             let gap = next.timestamp - (previous.timestamp + previous.duration)
-            return gap > 1.5 ? gap : nil
+            return gap > hesitationPauseThresholdSeconds ? gap : nil
         }
     }
 
@@ -624,11 +909,19 @@ enum PracticeSpeechDeliveryAnalyzer {
             let isNT = normalizedSuffix.lowercased() == "n't"
             if (isApostropheSuffix || isNT), let last = result.popLast() {
                 let mergedEnd = max(last.timestamp + last.duration, word.timestamp + word.duration)
+                let combinedConfidence: Float? = switch (last.confidence, word.confidence) {
+                case let (lhs?, rhs?): min(lhs, rhs)
+                case let (lhs?, nil): lhs
+                case let (nil, rhs?): rhs
+                case (nil, nil): nil
+                }
                 result.append(RecognizedPracticeWord(
                     id: last.id,
                     text: last.text + normalizedSuffix,
                     timestamp: last.timestamp,
-                    duration: max(0, mergedEnd - last.timestamp)
+                    duration: max(0, mergedEnd - last.timestamp),
+                    confidence: combinedConfidence,
+                    alternativeSubstrings: last.alternativeSubstrings
                 ))
             } else {
                 result.append(word)
@@ -650,6 +943,156 @@ enum PracticeSpeechDeliveryAnalyzer {
             } else {
                 result.append(word)
             }
+        }
+        return result
+    }
+
+    nonisolated static func comparisonTokens(for word: String, language: ScriptLanguage = .english) -> [String] {
+        let baseTokens = normalizedComparisonTokens(for: word)
+        guard language == .hindi || containsDevanagari(word) else {
+            return baseTokens
+        }
+        return baseTokens.compactMap { piece in
+            let key = hindiPhoneticKey(for: piece)
+            return key.isEmpty ? nil : key
+        }
+    }
+
+    nonisolated static func containsDevanagari(_ text: String) -> Bool {
+        text.unicodeScalars.contains { (0x0900...0x097F).contains($0.value) }
+    }
+
+    private nonisolated static func containsDevanagari(in words: [RecognizedPracticeWord]) -> Bool {
+        words.contains { containsDevanagari($0.text) }
+    }
+
+    private nonisolated static func containsDevanagari(in tokens: [PracticeToken]) -> Bool {
+        tokens.contains { containsDevanagari($0.word) }
+    }
+
+    private nonisolated static func transliterateHindiToLatin(_ raw: String) -> (latin: String, hadDevanagari: Bool) {
+        let trimmed = raw
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+            .lowercased()
+        guard !trimmed.isEmpty else { return ("", false) }
+        let hasDevanagari = containsDevanagari(trimmed)
+        guard hasDevanagari else { return (trimmed, false) }
+
+        var s = trimmed.applyingTransform(.toLatin, reverse: false) ?? trimmed
+        s = s
+            .replacingOccurrences(of: "cch", with: "ch")
+            .replacingOccurrences(of: "ā", with: "A")
+            .replacingOccurrences(of: "ī", with: "I")
+            .replacingOccurrences(of: "ū", with: "U")
+            .replacingOccurrences(of: "ē", with: "E")
+            .replacingOccurrences(of: "ō", with: "O")
+            .replacingOccurrences(of: "ś", with: "sh")
+            .replacingOccurrences(of: "ṣ", with: "sh")
+            .replacingOccurrences(of: "ḵẖ", with: "kh")
+            .replacingOccurrences(of: "ġ", with: "gh")
+            .replacingOccurrences(of: "ṛ", with: "r")
+            .replacingOccurrences(of: "m̐", with: "N")
+            .replacingOccurrences(of: "ṁ", with: "N")
+        s = s.applyingTransform(.stripDiacritics, reverse: false) ?? s
+        // ICU emits 'c' for च and 'ch' for छ; fold standalone 'c' -> 'ch' after cch/chh.
+        s = s.replacingOccurrences(of: "cch", with: "ch")
+            .replacingOccurrences(of: "ch(h)?", with: "ch", options: .regularExpression)
+            .replacingOccurrences(of: "c(?!h)", with: "ch", options: .regularExpression)
+            .replacingOccurrences(of: "'", with: "")
+        return (s, true)
+    }
+
+    /// Maps both Devanagari (`hi-IN` Speech output) and Romanized Hinglish words
+    /// into a shared phonetic key powered by Foundation's `StringTransform.toLatin`.
+    nonisolated static func hindiPhoneticKey(for raw: String) -> String {
+        let (trans, hadDevanagari) = transliterateHindiToLatin(raw)
+        return finalizeHindiPhoneticKey(fromLatin: trans, hadDevanagari: hadDevanagari)
+    }
+
+    nonisolated static func hindiCompoundKey(_ first: String, _ second: String) -> String {
+        let lhs = transliterateHindiToLatin(first)
+        let rhs = transliterateHindiToLatin(second)
+        guard !lhs.latin.isEmpty, !rhs.latin.isEmpty else { return "" }
+        return finalizeHindiPhoneticKey(
+            fromLatin: lhs.latin + rhs.latin,
+            hadDevanagari: lhs.hadDevanagari || rhs.hadDevanagari
+        )
+    }
+
+    private nonisolated static func finalizeHindiPhoneticKey(fromLatin rawLatin: String, hadDevanagari: Bool) -> String {
+        guard !rawLatin.isEmpty else { return "" }
+        var s = rawLatin
+            .replacingOccurrences(of: "ph", with: "f")
+            .replacingOccurrences(of: "w", with: "v")
+            .replacingOccurrences(of: "q", with: "k")
+            .replacingOccurrences(of: "x", with: "ks")
+            .replacingOccurrences(of: "cch", with: "ch")
+            .replacingOccurrences(of: "chh", with: "ch")
+            .replacingOccurrences(of: "c(?!h)", with: "k", options: .regularExpression)
+            .replacingOccurrences(of: "iy", with: "i")
+            .replacingOccurrences(of: "ye", with: "e")
+            .replacingOccurrences(of: "ey", with: "e")
+            .replacingOccurrences(of: "ee", with: "I")
+            .replacingOccurrences(of: "oo", with: "U")
+            .replacingOccurrences(of: "aa", with: "A")
+
+        var collapsed = ""
+        for ch in s where collapsed.last != ch {
+            collapsed.append(ch)
+        }
+        s = collapsed
+
+        // Drop final anusvara / Hinglish trailing nasal 'n' after vowels (मैं/main, नहीं/nahin, रहें/rahein, क्यों/kyun).
+        if s.hasSuffix("N") {
+            s.removeLast()
+        } else if !hadDevanagari && s.hasSuffix("n") && s.count >= 3 {
+            let beforeN = s[s.index(before: s.index(before: s.endIndex))]
+            if "aeiouAEIOU".contains(beforeN) {
+                s.removeLast()
+            }
+        }
+        s = s.replacingOccurrences(of: "N", with: "n")
+
+        // Devanagari final short 'a' is silent schwa (तुम tuma -> tum), whereas long ā ('A') stays.
+        if hadDevanagari && s.hasSuffix("a") {
+            s.removeLast()
+        }
+        // Strip silent English trailing 'e' only on V + [tdnl] + e loanwords (e.g. minute), preserving CC+e (samajhte, tumse).
+        if !hadDevanagari && s.count >= 5 && s.hasSuffix("e") {
+            let idxC = s.index(s.endIndex, offsetBy: -2)
+            let idxV = s.index(s.endIndex, offsetBy: -3)
+            if "tdnl".contains(s[idxC]) && "aeiouAEIOU".contains(s[idxV]) {
+                s.removeLast()
+            }
+        }
+        if s.count >= 3 && s.hasSuffix("y") {
+            s.removeLast()
+            s.append("i")
+        }
+
+        let chars = Array(s)
+        guard chars.count > 2 else { return s.lowercased() }
+        let isVowel: (Character) -> Bool = { "aeiouAEIOU".contains($0) }
+        var out: [Character] = [chars[0]]
+        for i in 1..<(chars.count - 1) {
+            let ch = chars[i]
+            let prev = chars[i - 1]
+            let next = chars[i + 1]
+            if isVowel(ch) && !isVowel(prev) && !isVowel(next) {
+                continue
+            }
+            if (ch == "a" || ch == "y" || ch == "A") && isVowel(prev) && isVowel(next) {
+                continue
+            }
+            out.append(ch)
+        }
+        out.append(chars[chars.count - 1])
+
+        var result = String(out).lowercased()
+            .replacingOccurrences(of: "ae", with: "e")
+            .replacingOccurrences(of: "ei", with: "e")
+        if result == "kyo" || result == "kyu" {
+            result = "kyu"
         }
         return result
     }
@@ -726,12 +1169,24 @@ enum PracticeSpeechDeliveryAnalyzer {
         let sourceIndex: Int
     }
 
+    private struct HesitationHit {
+        let scriptIndex: Int
+        let timestamp: Double
+    }
+
+    private struct AdditionPhrase {
+        let text: String
+        let timestamp: Double
+        let wordCount: Int
+    }
+
     private static func align(
         scriptTokens: [PracticeToken],
-        spokenWords: [RecognizedPracticeWord]
+        spokenWords: [RecognizedPracticeWord],
+        language: ScriptLanguage
     ) -> Alignment {
-        let scriptResult = comparisonTokensWithCounts(from: scriptTokens.map(\.word))
-        let spokenResult = comparisonTokensWithCounts(from: spokenWords.map(\.text))
+        let scriptResult = comparisonTokensWithCounts(from: scriptTokens.map(\.word), language: language)
+        let spokenResult = comparisonTokensWithCounts(from: spokenWords.map(\.text), language: language)
         let script = scriptResult.tokens
         let spoken = spokenResult.tokens
         var table = Array(repeating: Array(repeating: 0, count: spoken.count + 1), count: script.count + 1)
@@ -741,9 +1196,9 @@ enum PracticeSpeechDeliveryAnalyzer {
         if !script.isEmpty && !spoken.isEmpty {
             for scriptIndex in 1...script.count {
                 for spokenIndex in 1...spoken.count {
-                table[scriptIndex][spokenIndex] = script[scriptIndex - 1].value == spoken[spokenIndex - 1].value
-                    ? table[scriptIndex - 1][spokenIndex - 1] + 1
-                    : max(table[scriptIndex - 1][spokenIndex], table[scriptIndex][spokenIndex - 1])
+                    table[scriptIndex][spokenIndex] = script[scriptIndex - 1].value == spoken[spokenIndex - 1].value
+                        ? table[scriptIndex - 1][spokenIndex - 1] + 1
+                        : max(table[scriptIndex - 1][spokenIndex], table[scriptIndex][spokenIndex - 1])
                 }
             }
         }
@@ -762,9 +1217,11 @@ enum PracticeSpeechDeliveryAnalyzer {
                 spokenMatchedCounts[spokenSourceIndex, default: 0] += 1
                 scriptIndex -= 1
                 spokenIndex -= 1
-            } else if table[scriptIndex - 1][spokenIndex] >= table[scriptIndex][spokenIndex - 1] {
+            } else if table[scriptIndex - 1][spokenIndex] > table[scriptIndex][spokenIndex - 1] {
                 scriptIndex -= 1
             } else {
+                // On tie while walking backwards, prefer advancing through spoken first
+                // so earlier spoken script phrases anchor earlier script tokens cleanly.
                 spokenIndex -= 1
             }
         }
@@ -794,11 +1251,156 @@ enum PracticeSpeechDeliveryAnalyzer {
         )
     }
 
-    private static func comparisonTokensWithCounts(from words: [String]) -> (tokens: [ComparisonToken], partCounts: [Int: Int]) {
+    /// Uses Apple Speech's `alternativeSubstrings` inside unmatched gaps between
+    /// aligned anchors so homophones (for example `"for"` vs `"four"`) resolve to
+    /// the script word instead of causing false Skipped + Not in Script pairs.
+    private static func recoverAlternativeMatches(
+        in alignment: Alignment,
+        scriptTokens: [PracticeToken],
+        spokenWords: [RecognizedPracticeWord],
+        language: ScriptLanguage
+    ) -> Alignment {
+        guard !alignment.unmatchedSpokenIndexes.isEmpty else { return alignment }
+
+        var matchedScript = alignment.matchedScriptIndexes
+        var unmatchedSpoken = alignment.unmatchedSpokenIndexes
+        var matchedBySpoken = alignment.matchedScriptIndexesBySpokenIndex
+
+        let matchedSpokenSorted = matchedBySpoken.keys.sorted()
+        var scriptCursorFloor = 0
+
+        for spokenIndex in spokenWords.indices where unmatchedSpoken.contains(spokenIndex) {
+            let alternatives = spokenWords[spokenIndex].alternativeSubstrings
+            guard !alternatives.isEmpty else { continue }
+
+            let altTokenSets = Set(alternatives.map { comparisonTokens(for: $0, language: language) }).filter { !$0.isEmpty }
+            guard !altTokenSets.isEmpty else { continue }
+
+            let prevMatchedSpoken = matchedSpokenSorted.last(where: { $0 < spokenIndex })
+            let nextMatchedSpoken = matchedSpokenSorted.first(where: { $0 > spokenIndex })
+
+            let leftScriptBound = max(
+                scriptCursorFloor,
+                prevMatchedSpoken.flatMap { matchedBySpoken[$0]?.max().map { $0 + 1 } } ?? 0
+            )
+            let rightScriptBound = nextMatchedSpoken.flatMap { matchedBySpoken[$0]?.min() } ?? scriptTokens.count
+            guard leftScriptBound < rightScriptBound else { continue }
+
+            for candidateScriptIndex in leftScriptBound..<rightScriptBound where !matchedScript.contains(candidateScriptIndex) {
+                let expected = comparisonTokens(for: scriptTokens[candidateScriptIndex].word, language: language)
+                if altTokenSets.contains(expected) {
+                    matchedScript.insert(candidateScriptIndex)
+                    unmatchedSpoken.remove(spokenIndex)
+                    matchedBySpoken[spokenIndex, default: []].insert(candidateScriptIndex)
+                    scriptCursorFloor = candidateScriptIndex + 1
+                    break
+                }
+            }
+        }
+
+        return Alignment(
+            matchedScriptIndexes: matchedScript,
+            unmatchedSpokenIndexes: unmatchedSpoken,
+            matchedScriptIndexesBySpokenIndex: matchedBySpoken
+        )
+    }
+
+    /// Recovers compound Hindi/Hinglish word splits across adjacent tokens in unmatched gaps,
+    /// such as `"हो" + "जाएगा"` matching `"hojaayega"` or `"फिर" + "से"` matching `"firse"`.
+    private static func recoverHindiCompoundMatches(
+        in alignment: Alignment,
+        scriptTokens: [PracticeToken],
+        spokenWords: [RecognizedPracticeWord]
+    ) -> Alignment {
+        guard !alignment.unmatchedSpokenIndexes.isEmpty else { return alignment }
+
+        var matchedScript = alignment.matchedScriptIndexes
+        var unmatchedSpoken = alignment.unmatchedSpokenIndexes
+        var matchedBySpoken = alignment.matchedScriptIndexesBySpokenIndex
+
+        var spokenIndex = 0
+        var scriptCursorFloor = 0
+        while spokenIndex < spokenWords.count {
+            guard unmatchedSpoken.contains(spokenIndex) else {
+                if let maxS = matchedBySpoken[spokenIndex]?.max() {
+                    scriptCursorFloor = max(scriptCursorFloor, maxS + 1)
+                }
+                spokenIndex += 1
+                continue
+            }
+
+            let prevMatchedSpoken = matchedBySpoken.keys.filter { $0 < spokenIndex }.max()
+            let nextMatchedSpoken = matchedBySpoken.keys.filter { $0 > spokenIndex }.min()
+            let leftScriptBound = max(
+                scriptCursorFloor,
+                prevMatchedSpoken.flatMap { matchedBySpoken[$0]?.max().map { $0 + 1 } } ?? 0
+            )
+            let rightScriptBound = nextMatchedSpoken.flatMap { matchedBySpoken[$0]?.min() } ?? scriptTokens.count
+            guard leftScriptBound < rightScriptBound else {
+                spokenIndex += 1
+                continue
+            }
+
+            var didRecover = false
+            // Case 1: 2 adjacent unmatched spoken tokens -> 1 unmatched script token
+            if spokenIndex + 1 < spokenWords.count && unmatchedSpoken.contains(spokenIndex + 1) {
+                let joinedKey = hindiCompoundKey(spokenWords[spokenIndex].text, spokenWords[spokenIndex + 1].text)
+                if !joinedKey.isEmpty {
+                    for sIdx in leftScriptBound..<rightScriptBound where !matchedScript.contains(sIdx) {
+                        if hindiPhoneticKey(for: scriptTokens[sIdx].word) == joinedKey {
+                            matchedScript.insert(sIdx)
+                            unmatchedSpoken.remove(spokenIndex)
+                            unmatchedSpoken.remove(spokenIndex + 1)
+                            matchedBySpoken[spokenIndex, default: []].insert(sIdx)
+                            matchedBySpoken[spokenIndex + 1, default: []].insert(sIdx)
+                            scriptCursorFloor = sIdx + 1
+                            spokenIndex += 2
+                            didRecover = true
+                            break
+                        }
+                    }
+                }
+            }
+            if didRecover { continue }
+
+            // Case 2: 1 unmatched spoken token -> 2 adjacent unmatched script tokens
+            let singleKey = hindiPhoneticKey(for: spokenWords[spokenIndex].text)
+            if !singleKey.isEmpty && leftScriptBound + 1 < rightScriptBound {
+                for sIdx in leftScriptBound..<(rightScriptBound - 1)
+                where !matchedScript.contains(sIdx) && !matchedScript.contains(sIdx + 1) {
+                    if hindiCompoundKey(scriptTokens[sIdx].word, scriptTokens[sIdx + 1].word) == singleKey {
+                        matchedScript.insert(sIdx)
+                        matchedScript.insert(sIdx + 1)
+                        unmatchedSpoken.remove(spokenIndex)
+                        matchedBySpoken[spokenIndex, default: []].insert(sIdx)
+                        matchedBySpoken[spokenIndex, default: []].insert(sIdx + 1)
+                        scriptCursorFloor = sIdx + 2
+                        spokenIndex += 1
+                        didRecover = true
+                        break
+                    }
+                }
+            }
+            if !didRecover {
+                spokenIndex += 1
+            }
+        }
+
+        return Alignment(
+            matchedScriptIndexes: matchedScript,
+            unmatchedSpokenIndexes: unmatchedSpoken,
+            matchedScriptIndexesBySpokenIndex: matchedBySpoken
+        )
+    }
+
+    private static func comparisonTokensWithCounts(
+        from words: [String],
+        language: ScriptLanguage
+    ) -> (tokens: [ComparisonToken], partCounts: [Int: Int]) {
         var tokens: [ComparisonToken] = []
         var partCounts: [Int: Int] = [:]
         for (index, word) in words.enumerated() {
-            let expanded = normalizedComparisonTokens(for: word)
+            let expanded = comparisonTokens(for: word, language: language)
             partCounts[index] = expanded.count
             for value in expanded {
                 tokens.append(ComparisonToken(value: value, sourceIndex: index))
@@ -808,75 +1410,287 @@ enum PracticeSpeechDeliveryAnalyzer {
     }
 
     private static func recognizedWords(from transcript: String) -> [RecognizedPracticeWord] {
-        transcript
-            .split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "'" && $0 != "’" })
-            .enumerated()
-            .map {
-                RecognizedPracticeWord(text: String($0.element), timestamp: Double($0.offset) * 0.2, duration: 0.18)
+        let tokenizer = NLTokenizer(unit: .word)
+        tokenizer.string = transcript
+        var tokens: [String] = []
+        tokenizer.enumerateTokens(in: transcript.startIndex..<transcript.endIndex) { range, _ in
+            let token = String(transcript[range])
+            if token.contains(where: { $0.isLetter || $0.isNumber }) {
+                tokens.append(token)
             }
+            return true
+        }
+        return tokens.enumerated().map {
+            RecognizedPracticeWord(text: $0.element, timestamp: Double($0.offset) * 0.2, duration: 0.18)
+        }
     }
 
-    private static func hesitatedScriptIndexes(
+    private static func estimateScriptTimestamps(
+        actorTokens: [PracticeToken],
+        alignment: Alignment,
+        spokenWords: [RecognizedPracticeWord],
+        duration: Double
+    ) -> [Int: Double] {
+        var matchedTimeByScript: [Int: Double] = [:]
+        for (spokenIndex, scriptSet) in alignment.matchedScriptIndexesBySpokenIndex {
+            guard spokenWords.indices.contains(spokenIndex) else { continue }
+            let ts = spokenWords[spokenIndex].timestamp
+            for sIdx in scriptSet {
+                matchedTimeByScript[sIdx] = min(matchedTimeByScript[sIdx] ?? ts, ts)
+            }
+        }
+        var result: [Int: Double] = matchedTimeByScript
+        let sortedAnchors = matchedTimeByScript.sorted { $0.key < $1.key }
+        let safeDuration = max(1.0, duration, spokenWords.last.map { $0.timestamp + $0.duration } ?? 1.0)
+
+        for scriptIndex in actorTokens.indices where result[scriptIndex] == nil {
+            let prev = sortedAnchors.last(where: { $0.key < scriptIndex })
+            let next = sortedAnchors.first(where: { $0.key > scriptIndex })
+            switch (prev, next) {
+            case let (p?, n?):
+                let frac = Double(scriptIndex - p.key) / Double(max(1, n.key - p.key))
+                result[scriptIndex] = p.value + (n.value - p.value) * frac
+            case let (p?, nil):
+                let remaining = Double(max(1, actorTokens.count - p.key))
+                let frac = Double(scriptIndex - p.key) / remaining
+                result[scriptIndex] = p.value + max(0, safeDuration - p.value) * frac * 0.85
+            case let (nil, n?):
+                let frac = Double(scriptIndex) / Double(max(1, n.key))
+                result[scriptIndex] = n.value * frac
+            case (nil, nil):
+                result[scriptIndex] = safeDuration * (Double(scriptIndex) / Double(max(1, actorTokens.count)))
+            }
+        }
+        return result
+    }
+
+    private static func analyzeHesitationsAndImprovisations(
         in spokenWords: [RecognizedPracticeWord],
         alignment: Alignment,
-        actorTokens: [PracticeToken],
-        clueTokenIDs: Set<Int>
-    ) -> [Int] {
-        var indexes: [Int] = []
-        var seen: Set<Int> = []
-
-        for spokenIndex in spokenWords.indices.dropFirst() {
-            let previous = spokenWords[spokenIndex - 1]
-            let current = spokenWords[spokenIndex]
-            guard current.timestamp - (previous.timestamp + previous.duration) > 1.5 else { continue }
-
-            let matchingIndex = alignment.matchedScriptIndexesBySpokenIndex[spokenIndex]?.min()
-            let priorIndex = alignment.matchedScriptIndexesBySpokenIndex[spokenIndex - 1]?.max().flatMap { candidate -> Int? in
-                let next = candidate + 1
-                guard next < actorTokens.count,
-                      alignment.matchedScriptIndexes.contains(next) else { return nil }
-                return next
-            }
-            guard let target = matchingIndex ?? priorIndex,
-                  actorTokens.indices.contains(target),
-                  !clueTokenIDs.contains(actorTokens[target].id),
-                  seen.insert(target).inserted else { continue }
-            indexes.append(target)
+        model: PracticeScriptModel,
+        language: ScriptLanguage,
+        silenceIntervals: [PracticeSilenceInterval]
+    ) -> (hesitations: [HesitationHit], additions: [AdditionPhrase]) {
+        let actorTokens = model.actorTokens
+        var matchedOrder: [Int] = []
+        matchedOrder.reserveCapacity(spokenWords.count)
+        for index in spokenWords.indices where !alignment.unmatchedSpokenIndexes.contains(index) {
+            matchedOrder.append(index)
         }
-        return indexes
-    }
 
-    private static func improvisedPhrases(
-        from spokenWords: [RecognizedPracticeWord],
-        unmatchedIndexes: Set<Int>
-    ) -> [String] {
-        var phrases: [String] = []
-        var current: [String] = []
+        var hesitations: [HesitationHit] = []
+        var seenHesitatedScriptIndexes: Set<Int> = []
+        var consumedStumbleSpokenIndexes: Set<Int> = []
 
-        func finish() {
-            guard !current.isEmpty else { return }
-            phrases.append(current.joined(separator: " "))
-            current = []
+        var prevMatchedSpokenIndex: Int?
+        var prevMatchedScriptIndex: Int?
+
+        for spokenIndex in matchedOrder {
+            guard let targetScriptIndex = alignment.matchedScriptIndexesBySpokenIndex[spokenIndex]?.min(),
+                  actorTokens.indices.contains(targetScriptIndex) else {
+                prevMatchedSpokenIndex = spokenIndex
+                continue
+            }
+
+            let targetToken = actorTokens[targetScriptIndex]
+            let isAcrossCueBoundary: Bool = {
+                guard let prevScript = prevMatchedScriptIndex,
+                      actorTokens.indices.contains(prevScript) else { return false }
+                return model.hasCueLine(between: actorTokens[prevScript].lineID, and: targetToken.lineID)
+            }()
+
+            let gapStart = prevMatchedSpokenIndex.map { $0 + 1 } ?? 0
+
+            // Walk backward immediately before the matched word to absorb fillers and
+            // false-start repetitions ("I— I cannot" or "um spoken") as hesitations
+            // rather than emitting them as Not in Script ad-libs.
+            var hasFillerOrStumble = false
+            var genuineAdditionInBetween = false
+            var localConsumed: Set<Int> = []
+
+            var backIndex = spokenIndex - 1
+            while backIndex >= gapStart {
+                let candidateText = spokenWords[backIndex].text
+                if isFillerDisfluency(candidateText) {
+                    hasFillerOrStumble = true
+                    localConsumed.insert(backIndex)
+                    backIndex -= 1
+                } else if isFalseStartStumble(
+                    candidateText,
+                    spokenTarget: spokenWords[spokenIndex].text,
+                    scriptTarget: targetToken.word,
+                    language: language
+                ) {
+                    hasFillerOrStumble = true
+                    localConsumed.insert(backIndex)
+                    backIndex -= 1
+                } else {
+                    break
+                }
+            }
+
+            // Check any remaining unmatched tokens earlier in the gap before the stumble run.
+            if backIndex >= gapStart {
+                for earlierIndex in gapStart...backIndex {
+                    let wordText = spokenWords[earlierIndex].text
+                    if isFillerDisfluency(wordText) {
+                        localConsumed.insert(earlierIndex)
+                    } else if isMeaningfulImprovisation(wordText) {
+                        genuineAdditionInBetween = true
+                    }
+                }
+            }
+
+            consumedStumbleSpokenIndexes.formUnion(localConsumed)
+
+            var hasLongPause = false
+            if let prevSpoken = prevMatchedSpokenIndex,
+               !isAcrossCueBoundary,
+               !genuineAdditionInBetween {
+                hasLongPause = hasPauseExceedingThreshold(
+                    from: prevSpoken,
+                    to: spokenIndex,
+                    in: spokenWords,
+                    silenceIntervals: silenceIntervals,
+                    threshold: hesitationPauseThresholdSeconds
+                )
+            }
+
+            let hasLowConfidenceElongation: Bool = {
+                guard !isAcrossCueBoundary,
+                      let confidence = spokenWords[spokenIndex].confidence,
+                      confidence > 0 else { return false }
+                return confidence < 0.25 && spokenWords[spokenIndex].duration > 0.75
+            }()
+
+            if (hasLongPause || hasFillerOrStumble || hasLowConfidenceElongation),
+               seenHesitatedScriptIndexes.insert(targetScriptIndex).inserted {
+                hesitations.append(HesitationHit(
+                    scriptIndex: targetScriptIndex,
+                    timestamp: spokenWords[spokenIndex].timestamp
+                ))
+            }
+
+            prevMatchedSpokenIndex = spokenIndex
+            prevMatchedScriptIndex = alignment.matchedScriptIndexesBySpokenIndex[spokenIndex]?.max() ?? targetScriptIndex
+        }
+
+        var additions: [AdditionPhrase] = []
+        var currentWords: [String] = []
+        var firstTimestamp: Double?
+
+        func finishPhrase() {
+            guard !currentWords.isEmpty, let ts = firstTimestamp else {
+                currentWords = []
+                firstTimestamp = nil
+                return
+            }
+            additions.append(AdditionPhrase(
+                text: currentWords.joined(separator: " "),
+                timestamp: ts,
+                wordCount: currentWords.count
+            ))
+            currentWords = []
+            firstTimestamp = nil
         }
 
         for index in spokenWords.indices {
-            guard unmatchedIndexes.contains(index) else {
-                finish()
+            guard alignment.unmatchedSpokenIndexes.contains(index) else {
+                finishPhrase()
                 continue
             }
+            guard !consumedStumbleSpokenIndexes.contains(index) else { continue }
             let word = spokenWords[index].text.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
-            if isMeaningfulImprovisation(word) { current.append(word) }
+            if isMeaningfulImprovisation(word) {
+                if firstTimestamp == nil {
+                    firstTimestamp = spokenWords[index].timestamp
+                }
+                currentWords.append(word)
+            }
         }
-        finish()
-        return phrases
+        finishPhrase()
+
+        return (hesitations, additions)
+    }
+
+    private static func hasPauseExceedingThreshold(
+        from startSpokenIndex: Int,
+        to endSpokenIndex: Int,
+        in spokenWords: [RecognizedPracticeWord],
+        silenceIntervals: [PracticeSilenceInterval],
+        threshold: Double
+    ) -> Bool {
+        guard startSpokenIndex < endSpokenIndex else { return false }
+        for idx in (startSpokenIndex + 1)...endSpokenIndex {
+            let previous = spokenWords[idx - 1]
+            let current = spokenWords[idx]
+            if current.timestamp - (previous.timestamp + previous.duration) > threshold {
+                return true
+            }
+        }
+
+        guard !silenceIntervals.isEmpty else { return false }
+        let spanStart = spokenWords[startSpokenIndex].timestamp - 0.05
+        let spanEnd = spokenWords[endSpokenIndex].timestamp + 0.15
+        for interval in silenceIntervals where interval.duration > threshold {
+            let overlap = min(interval.end, spanEnd) - max(interval.start, spanStart)
+            if overlap > threshold {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func isFalseStartStumble(
+        _ rawWord: String,
+        spokenTarget: String,
+        scriptTarget: String,
+        language: ScriptLanguage
+    ) -> Bool {
+        let candidate = normalize(rawWord)
+        guard !candidate.isEmpty else { return false }
+        let spokenNorm = normalize(spokenTarget)
+        let scriptNorm = normalize(scriptTarget)
+
+        if candidate == spokenNorm || candidate == scriptNorm {
+            return true
+        }
+        if candidate.count >= 2 {
+            if spokenNorm.count > candidate.count && spokenNorm.hasPrefix(candidate) {
+                return true
+            }
+            if scriptNorm.count > candidate.count && scriptNorm.hasPrefix(candidate) {
+                return true
+            }
+        }
+        if language == .hindi || containsDevanagari(rawWord) || containsDevanagari(spokenTarget) {
+            let candKey = hindiPhoneticKey(for: rawWord)
+            let spokenKey = hindiPhoneticKey(for: spokenTarget)
+            let scriptKey = hindiPhoneticKey(for: scriptTarget)
+            if !candKey.isEmpty && (candKey == spokenKey || candKey == scriptKey) {
+                return true
+            }
+            if candKey.count >= 2 {
+                if (spokenKey.count > candKey.count && spokenKey.hasPrefix(candKey)) ||
+                    (scriptKey.count > candKey.count && scriptKey.hasPrefix(candKey)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private static func isFillerDisfluency(_ word: String) -> Bool {
+        fillerWords.contains(normalize(word))
     }
 
     private static func isMeaningfulImprovisation(_ word: String) -> Bool {
         let normalized = normalize(word)
         guard !normalized.isEmpty else { return false }
-        let noise: Set<String> = ["s", "t", "ll", "re", "ve", "d", "m", "nt", "uh", "um", "er", "erm", "ah", "mm", "hmm", "hm"]
-        if noise.contains(normalized) { return false }
-        if normalized.count == 1 {
+        if fillerWords.contains(normalized) || contractionSuffixNoise.contains(normalized) {
+            return false
+        }
+        if normalized.count == 1 && normalized.allSatisfy(\.isASCII) {
             return normalized == "i" || normalized == "a"
         }
         return true

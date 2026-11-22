@@ -21,7 +21,7 @@ enum Theme {
         static let onAction = Color.white
         static let lavenderSurface = adaptive(light: UIColor(red: 237 / 255, green: 232 / 255, blue: 245 / 255, alpha: 1), dark: UIColor(red: 54 / 255, green: 43 / 255, blue: 67 / 255, alpha: 1))
         static let lavenderTint = adaptive(light: UIColor(red: 245 / 255, green: 242 / 255, blue: 250 / 255, alpha: 1), dark: UIColor(red: 38 / 255, green: 31 / 255, blue: 48 / 255, alpha: 1))
-        static let canvasBackground = adaptive(light: UIColor(red: 247 / 255, green: 246 / 255, blue: 249 / 255, alpha: 1), dark: UIColor(red: 18 / 255, green: 16 / 255, blue: 22 / 255, alpha: 1))
+        static let canvasBackground = adaptive(light: UIColor(red: 247 / 255, green: 246 / 255, blue: 249 / 255, alpha: 1), dark: UIColor.black)
         static let cardSurface = adaptive(light: .white, dark: UIColor(red: 31 / 255, green: 28 / 255, blue: 36 / 255, alpha: 1))
         /// General-purpose adaptive surfaces for sheets, form controls, and
         /// elevated content. These deliberately never resolve to white in dark mode.
@@ -91,6 +91,8 @@ enum Theme {
 // MARK: - View Modifiers
 
 struct PrimaryCapsuleButtonModifier: ViewModifier {
+    var disabled: Bool = false
+
     func body(content: Content) -> some View {
         content
             .font(Theme.Typography.cardTitle)
@@ -98,6 +100,7 @@ struct PrimaryCapsuleButtonModifier: ViewModifier {
             .frame(maxWidth: .infinity, minHeight: 50)
             .background(Theme.Colors.primaryPlum)
             .clipShape(Capsule())
+            .opacity(disabled ? 0.45 : 1.0)
     }
 }
 
@@ -136,15 +139,95 @@ struct CardStyleModifier: ViewModifier {
     }
 }
 
+struct CompactListCardModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .frame(minHeight: Theme.Layout.minTapTarget)
+            .background(Theme.Colors.cardSurface)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Theme.Colors.controlBorder.opacity(0.28), lineWidth: 0.8)
+            )
+    }
+}
+
+struct CompactProgressRing: View {
+    let progress: Double
+    let label: String
+    let tint: Color
+    var labelColor: Color = Theme.Colors.textPrimary
+    var diameter: CGFloat = 28
+    var fontSize: CGFloat = 11
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Theme.Colors.lavenderSurface, lineWidth: 3)
+            if progress > 0 {
+                Circle()
+                    .trim(from: 0, to: min(1, max(0, progress)))
+                    .stroke(
+                        tint,
+                        style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+            }
+            Text(label)
+                .font(.system(size: fontSize, weight: .bold))
+                .monospacedDigit()
+                .minimumScaleFactor(0.75)
+                .lineLimit(1)
+                .foregroundStyle(labelColor)
+                .padding(.horizontal, 3)
+        }
+        .frame(width: diameter, height: diameter)
+    }
+}
+
 // MARK: - View Extensions
 
 extension View {
-    func primaryCapsuleButton() -> some View {
-        modifier(PrimaryCapsuleButtonModifier())
+    func primaryCapsuleButton(disabled: Bool = false) -> some View {
+        modifier(PrimaryCapsuleButtonModifier(disabled: disabled))
     }
 
     func secondaryLavenderButton() -> some View {
         modifier(SecondaryCapsuleButtonModifier())
+    }
+
+    /// Pins action controls cleanly to the bottom safe area over a soft canvas fade.
+    @ViewBuilder
+    func floatingBottomActionBar<Bar: View>(
+        isPresented: Bool = true,
+        horizontalPadding: CGFloat = Theme.Layout.screenHPadding,
+        @ViewBuilder content: () -> Bar
+    ) -> some View {
+        if isPresented {
+            safeAreaInset(edge: .bottom, spacing: 0) {
+                content()
+                    .shadow(color: Color.black.opacity(0.24), radius: 10, y: 4)
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.top, 10)
+                    .padding(.bottom, 6)
+                    .background(
+                        LinearGradient(
+                            colors: [
+                                Theme.Colors.canvasBackground.opacity(0),
+                                Theme.Colors.canvasBackground.opacity(0.92),
+                                Theme.Colors.canvasBackground
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .ignoresSafeArea(edges: .bottom)
+                    )
+            }
+        } else {
+            self
+        }
     }
 
     func statusBadge(color: Color) -> some View {
@@ -153,6 +236,10 @@ extension View {
 
     func cardStyle() -> some View {
         modifier(CardStyleModifier())
+    }
+
+    func compactListCardStyle() -> some View {
+        modifier(CompactListCardModifier())
     }
 
     func studioPill(_ color: Color) -> some View {

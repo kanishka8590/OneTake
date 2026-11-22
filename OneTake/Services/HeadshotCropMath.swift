@@ -40,6 +40,17 @@ nonisolated enum HeadshotCropMath {
         }
     }
 
+    /// Computes the exact fitted frame inside `bounds` preserving `aspectRatio` so visual clips and strokes align 1:1.
+    static func aspectFittedSize(aspect: CGFloat, inside bounds: CGSize) -> CGSize {
+        guard bounds.width > 0, bounds.height > 0 else { return .zero }
+        let safeAspect = max(0.25, aspect)
+        let heightByWidth = bounds.width / safeAspect
+        if heightByWidth <= bounds.height {
+            return CGSize(width: bounds.width, height: heightByWidth)
+        }
+        return CGSize(width: bounds.height * safeAspect, height: bounds.height)
+    }
+
     static func maxOffset(
         imageSize: CGSize,
         containerSize: CGSize,
@@ -72,6 +83,35 @@ nonisolated enum HeadshotCropMath {
         return CGSize(
             width: min(limit.width, max(-limit.width, offset.width)),
             height: min(limit.height, max(-limit.height, offset.height))
+        )
+    }
+
+    /// Clamps `baseRatio * containerSize` to the active frame bounds before applying `translation`,
+    /// preventing pan dead-zones after switching aspect ratios while preserving reversible framing.
+    static func adjustedOffset(
+        baseRatio: CGSize,
+        translation: CGSize = .zero,
+        imageSize: CGSize,
+        containerSize: CGSize,
+        scale: CGFloat
+    ) -> CGSize {
+        let clampedBase = clampedOffset(
+            CGSize(
+                width: baseRatio.width * containerSize.width,
+                height: baseRatio.height * containerSize.height
+            ),
+            imageSize: imageSize,
+            containerSize: containerSize,
+            scale: scale
+        )
+        return clampedOffset(
+            CGSize(
+                width: clampedBase.width + translation.width,
+                height: clampedBase.height + translation.height
+            ),
+            imageSize: imageSize,
+            containerSize: containerSize,
+            scale: scale
         )
     }
 

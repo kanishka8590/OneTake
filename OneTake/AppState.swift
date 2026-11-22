@@ -32,6 +32,17 @@ final class AppState {
     var selectedTab: AppTab = .auditions
     var globalSearchQuery: String = ""
 
+    var auditionListFilterRaw: String {
+        didSet {
+            defaults.set(auditionListFilterRaw, forKey: "onetake.auditionListFilter")
+        }
+    }
+
+    var auditionListFilter: AuditionListFilter {
+        get { AuditionListFilter(rawValue: auditionListFilterRaw) ?? .all }
+        set { auditionListFilterRaw = newValue.rawValue }
+    }
+
     // MARK: - Data Collections (loaded from SwiftData)
     var auditions: [Audition] = []
     var practiceScripts: [PracticeScript] = []
@@ -56,6 +67,12 @@ final class AppState {
         self.hasCompletedOnboarding = defaults.bool(forKey: "hasCompletedOnboarding")
         self.isAuthenticated = defaults.bool(forKey: "isAuthenticated")
         self.isDemoMode = defaults.bool(forKey: "onetake.isDemoMode")
+        if let savedFilterRaw = defaults.string(forKey: "onetake.auditionListFilter"),
+           AuditionListFilter(rawValue: savedFilterRaw) != nil {
+            self.auditionListFilterRaw = savedFilterRaw
+        } else {
+            self.auditionListFilterRaw = AuditionListFilter.all.rawValue
+        }
         if ProcessInfo.processInfo.arguments.contains("-PracticeTab") {
             self.selectedTab = .practice
         }

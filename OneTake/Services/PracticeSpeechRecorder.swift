@@ -11,6 +11,11 @@ private nonisolated final class PracticeAudioTapState: @unchecked Sendable {
     private var _audioFile: AVAudioFile?
     private var _converter: AVAudioConverter?
     private var _writeFormat: AVAudioFormat?
+    private var _framesWritten: Int64 = 0
+    private var _sampleRate: Double = 0
+    private var _isCueMuted = false
+    private var _activeMuteStartSeconds: Double?
+    private var _cueIntervals: [PracticeSilenceInterval] = []
 
     func setRequest(_ request: SFSpeechAudioBufferRecognitionRequest?) {
         lock.lock()
@@ -27,7 +32,46 @@ private nonisolated final class PracticeAudioTapState: @unchecked Sendable {
         _audioFile = audioFile
         _converter = converter
         _writeFormat = writeFormat
+        if audioFile != nil {
+            _framesWritten = 0
+            _sampleRate = writeFormat?.sampleRate ?? 0
+            _isCueMuted = false
+            _activeMuteStartSeconds = nil
+            _cueIntervals = []
+        }
         lock.unlock()
+    }
+
+    func setCueMuted(_ muted: Bool) {
+        lock.lock()
+        let currentSeconds = _sampleRate > 0 ? Double(_framesWritten) / _sampleRate : 0
+        if muted && !_isCueMuted {
+            _isCueMuted = true
+            _activeMuteStartSeconds = currentSeconds
+        } else if !muted && _isCueMuted {
+            _isCueMuted = false
+            if let start = _activeMuteStartSeconds {
+                _cueIntervals.append(
+                    PracticeSilenceInterval(
+                        start: max(0, start - 0.1),
+                        end: currentSeconds + 0.25
+                    )
+                )
+                _activeMuteStartSeconds = nil
+            }
+        }
+        lock.unlock()
+    }
+
+    func snapshotCueIntervals() -> [PracticeSilenceInterval] {
+        lock.lock()
+        let currentSeconds = _sampleRate > 0 ? Double(_framesWritten) / _sampleRate : 0
+        var intervals = _cueIntervals
+        if _isCueMuted, let start = _activeMuteStartSeconds {
+            intervals.append(PracticeSilenceInterval(start: max(0, start - 0.1), end: currentSeconds + 0.25))
+        }
+        lock.unlock()
+        return intervals
     }
 
     func processBuffer(_ buffer: AVAudioPCMBuffer) -> CGFloat {
@@ -36,9 +80,16 @@ private nonisolated final class PracticeAudioTapState: @unchecked Sendable {
         let audioFile = _audioFile
         let converter = _converter
         let writeFormat = _writeFormat
+        let muted = _isCueMuted
         lock.unlock()
 
-        request?.append(buffer)
+        if let request {
+            if muted, let silenceBuffer = Self.silentCopy(of: buffer) {
+                request.append(silenceBuffer)
+            } else {
+                request.append(buffer)
+            }
+        }
 
         var bufferForFileAndLevel = buffer
         if let converter, let writeFormat,
@@ -49,7 +100,29 @@ private nonisolated final class PracticeAudioTapState: @unchecked Sendable {
         if let audioFile {
             try? audioFile.write(from: bufferForFileAndLevel)
         }
-        return Self.rms(bufferForFileAndLevel)
+
+        lock.lock()
+        if _sampleRate <= 0 {
+            _sampleRate = bufferForFileAndLevel.format.sampleRate
+        }
+        _framesWritten += Int64(bufferForFileAndLevel.frameLength)
+        lock.unlock()
+
+        return muted ? 0.08 : Self.rms(bufferForFileAndLevel)
+    }
+
+    private static func silentCopy(of buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let silent = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
+            return nil
+        }
+        silent.frameLength = buffer.frameLength
+        if let channels = silent.floatChannelData {
+            let count = Int(silent.frameLength) * MemoryLayout<Float>.size
+            for ch in 0..<Int(buffer.format.channelCount) {
+                memset(channels[ch], 0, count)
+            }
+        }
+        return silent
     }
 
     private static func convert(
@@ -105,7 +178,11 @@ private nonisolated final class PracticeAudioTapState: @unchecked Sendable {
 final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
     typealias AccessRequester = (@escaping (Bool) -> Void) -> Void
 
-    var isRecording = false
+    var isRecording = false {
+        didSet {
+            Haptics.setMicCaptureActive(isRecording, source: "practice")
+        }
+    }
     var transcript = ""
     var recognizedWords: [RecognizedPracticeWord] = []
     var audioLevel: CGFloat = 0.12
@@ -137,6 +214,7 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
     @ObservationIgnored private var activeSegmentStartedAt: Date?
     @ObservationIgnored private var accumulatedDuration: Double = 0
     @ObservationIgnored private var activeScript: PracticeScript?
+    @ObservationIgnored private var activeContextualVocabulary: [String] = []
     @ObservationIgnored private var activeLanguage: ScriptLanguage = .english
     @ObservationIgnored private var activeIsDemoMode = false
     @ObservationIgnored private var isSimulationRun = false
@@ -147,6 +225,15 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
     @ObservationIgnored private var simulatedSegments: [RecognizedPracticeWord] = []
     @ObservationIgnored private var simulatedEmissionIndex = 0
     @ObservationIgnored private var sessionObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var liveTaskFinalizationContinuations: [CheckedContinuation<Void, Never>] = []
+
+    struct FinalizedPracticeCapture: Sendable {
+        let transcript: String
+        let words: [RecognizedPracticeWord]
+        let silenceIntervals: [PracticeSilenceInterval]
+        let duration: Double
+        let audioURL: URL?
+    }
 
     init(requestAccess: AccessRequester? = nil) {
         self.requestAccess = requestAccess
@@ -163,6 +250,7 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
     func start(language: ScriptLanguage, script: PracticeScript, isDemoMode: Bool = false) {
         reset()
         activeScript = script
+        activeContextualVocabulary = PracticeScriptModel(script: script).contextualVocabulary
         activeLanguage = language
         activeIsDemoMode = isDemoMode
         statusText = "Preparing microphone…"
@@ -302,17 +390,118 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
             activeTask.finish()
             stopFinalizeWorkItem?.cancel()
             let cleanup = DispatchWorkItem { [weak self] in
-                guard let self, self.task === activeTask else { return }
-                self.activeTaskID = nil
-                activeTask.cancel()
-                self.task = nil
+                guard let self else { return }
+                if self.task === activeTask {
+                    self.activeTaskID = nil
+                    activeTask.cancel()
+                    self.task = nil
+                }
+                self.resumeLiveFinalizationWaiters()
             }
             stopFinalizeWorkItem = cleanup
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: cleanup)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: cleanup)
+        } else {
+            resumeLiveFinalizationWaiters()
         }
 
         isRecording = false
         audioLevel = 0.12
+    }
+
+    func setCuePlaybackMuted(_ muted: Bool) {
+        tapState.setCueMuted(muted)
+    }
+
+    nonisolated static func filterWords(
+        _ words: [RecognizedPracticeWord],
+        excludingCueIntervals intervals: [PracticeSilenceInterval]
+    ) -> [RecognizedPracticeWord] {
+        guard !intervals.isEmpty else { return words }
+        return words.filter { word in
+            let midpoint = word.timestamp + max(0, word.duration) * 0.5
+            return !intervals.contains { interval in
+                midpoint >= interval.start && midpoint <= interval.end
+            }
+        }
+    }
+
+    /// Stops live capture cleanly, waits briefly for final recognizer segments,
+    /// and runs offline `SFSpeechURLRecognitionRequest` + `vDSP` silence analysis
+    /// over the saved WAV file when available.
+    func stopAndFinalizeForAnalysis() async -> FinalizedPracticeCapture {
+        let language = activeLanguage
+        let vocabulary = activeContextualVocabulary
+        let wasSimulation = isSimulationRun
+        let wavURL = recordedAudioURL
+        let hadActiveTask = task != nil
+        let cueIntervals = tapState.snapshotCueIntervals()
+
+        stop()
+
+        if hadActiveTask && !wasSimulation {
+            await waitForLiveTaskFinalization()
+        }
+
+        let liveWords = recognizedWords
+        let liveTranscript = transcript
+        let fallbackDuration = duration
+
+        guard !wasSimulation,
+              let wavURL,
+              FileManager.default.fileExists(atPath: wavURL.path) else {
+            return FinalizedPracticeCapture(
+                transcript: liveTranscript,
+                words: liveWords,
+                silenceIntervals: [],
+                duration: fallbackDuration,
+                audioURL: wavURL
+            )
+        }
+
+        let minimumPause = PracticeSpeechDeliveryAnalyzer.hesitationPauseThresholdSeconds
+        async let acousticTask: (silences: [PracticeSilenceInterval], audioDuration: Double?) = Task.detached(priority: .userInitiated) {
+            let silences = PracticeAudioSilenceAnalyzer.detectSilences(in: wavURL, minimumDuration: minimumPause)
+            let audioDuration = PracticeAudioSilenceAnalyzer.audioDuration(of: wavURL)
+            return (silences, audioDuration)
+        }.value
+
+        async let urlRecognition = recognizeAudioFile(
+            url: wavURL,
+            language: language,
+            contextualStrings: vocabulary,
+            timeoutSeconds: 4.0
+        )
+
+        let (acoustic, urlResult) = await (acousticTask, urlRecognition)
+        let cleanedURLWords = Self.filterWords(urlResult.words, excludingCueIntervals: cueIntervals)
+        let shouldPreferURLWords = !cleanedURLWords.isEmpty && cleanedURLWords.count >= max(1, liveWords.count / 2)
+        let finalWords = shouldPreferURLWords ? cleanedURLWords : liveWords
+        let finalTranscript = shouldPreferURLWords
+            ? finalWords.map(\.text).joined(separator: " ")
+            : liveTranscript
+
+        if shouldPreferURLWords {
+            processRecognizedSpeech(segments: finalWords)
+        }
+        let resolvedDuration = acoustic.audioDuration ?? fallbackDuration
+        if resolvedDuration > 0 {
+            duration = resolvedDuration
+        }
+
+        let filteredSilences = acoustic.silences.filter { silence in
+            !cueIntervals.contains { cue in
+                let overlap = min(silence.end, cue.end) - max(silence.start, cue.start)
+                return overlap > 0.25
+            }
+        }
+
+        return FinalizedPracticeCapture(
+            transcript: finalTranscript,
+            words: finalWords,
+            silenceIntervals: filteredSilences,
+            duration: resolvedDuration,
+            audioURL: wavURL
+        )
     }
 
     func reset() {
@@ -328,6 +517,7 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
         pausedAt = nil
         pauseDurations = []
         recordedAudioURL = nil
+        activeContextualVocabulary = []
         permissionDenied = false
         errorMessage = nil
         isSimulationRun = false
@@ -338,6 +528,7 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
         activeSessionToken = nil
         stopFinalizeWorkItem?.cancel()
         stopFinalizeWorkItem = nil
+        resumeLiveFinalizationWaiters()
         durationTimer?.invalidate()
         durationTimer = nil
         simulatedTimer?.invalidate()
@@ -484,6 +675,9 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
         let recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         recognitionRequest.shouldReportPartialResults = true
         recognitionRequest.taskHint = .dictation
+        if !activeContextualVocabulary.isEmpty {
+            recognitionRequest.contextualStrings = activeContextualVocabulary
+        }
         request = recognitionRequest
         tapState.setRequest(recognitionRequest)
 
@@ -496,13 +690,10 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
                 guard let self, self.activeTaskID == taskID else { return }
 
                 if let result {
-                    let segments = result.bestTranscription.segments.map {
-                        RecognizedPracticeWord(
-                            text: $0.substring,
-                            timestamp: epochOffset + $0.timestamp,
-                            duration: $0.duration
-                        )
-                    }
+                    let segments = Self.recognizedWords(
+                        from: result.bestTranscription,
+                        timeOffset: epochOffset
+                    )
                     self.currentEpochWords = segments
                     self.processRecognizedSpeech(segments: self.committedWords + segments)
 
@@ -515,6 +706,7 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
                             self.task = nil
                             self.stopFinalizeWorkItem?.cancel()
                             self.stopFinalizeWorkItem = nil
+                            self.resumeLiveFinalizationWaiters()
                         }
                         return
                     }
@@ -527,6 +719,9 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
                     } else {
                         self.activeTaskID = nil
                         self.task = nil
+                        self.stopFinalizeWorkItem?.cancel()
+                        self.stopFinalizeWorkItem = nil
+                        self.resumeLiveFinalizationWaiters()
                     }
                 }
             }
@@ -538,6 +733,114 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
         }
 
         scheduleTaskRolloverTimer()
+    }
+
+    private func waitForLiveTaskFinalization() async {
+        guard task != nil else { return }
+        await withCheckedContinuation { continuation in
+            if task == nil {
+                continuation.resume()
+            } else {
+                liveTaskFinalizationContinuations.append(continuation)
+            }
+        }
+    }
+
+    private func resumeLiveFinalizationWaiters() {
+        guard !liveTaskFinalizationContinuations.isEmpty else { return }
+        let waiters = liveTaskFinalizationContinuations
+        liveTaskFinalizationContinuations.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    private func recognizeAudioFile(
+        url: URL,
+        language: ScriptLanguage,
+        contextualStrings: [String],
+        timeoutSeconds: Double
+    ) async -> (transcript: String, words: [RecognizedPracticeWord]) {
+        let locale = Locale(identifier: language == .hindi ? "hi-IN" : "en-IN")
+        guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
+            return ("", [])
+        }
+
+        let urlRequest = SFSpeechURLRecognitionRequest(url: url)
+        urlRequest.shouldReportPartialResults = false
+        urlRequest.taskHint = .dictation
+        if !contextualStrings.isEmpty {
+            urlRequest.contextualStrings = contextualStrings
+        }
+
+        final class Box: @unchecked Sendable {
+            private let lock = NSLock()
+            private var resolved = false
+            var task: SFSpeechRecognitionTask?
+            var timeoutItem: DispatchWorkItem?
+
+            func finish(
+                continuation: CheckedContinuation<(transcript: String, words: [RecognizedPracticeWord]), Never>,
+                value: (transcript: String, words: [RecognizedPracticeWord])
+            ) {
+                lock.lock()
+                guard !resolved else {
+                    lock.unlock()
+                    return
+                }
+                resolved = true
+                let pendingTask = task
+                let pendingTimeout = timeoutItem
+                task = nil
+                timeoutItem = nil
+                lock.unlock()
+
+                pendingTimeout?.cancel()
+                pendingTask?.cancel()
+                continuation.resume(returning: value)
+            }
+        }
+
+        return await withCheckedContinuation { continuation in
+            let box = Box()
+            let recognitionTask = recognizer.recognitionTask(with: urlRequest) { result, error in
+                if let result, result.isFinal {
+                    let words = Self.recognizedWords(from: result.bestTranscription, timeOffset: 0)
+                    let text = result.bestTranscription.formattedString
+                    box.finish(continuation: continuation, value: (text, words))
+                } else if error != nil {
+                    box.finish(continuation: continuation, value: ("", []))
+                }
+            }
+            box.task = recognitionTask
+
+            let timeout = DispatchWorkItem {
+                box.finish(continuation: continuation, value: ("", []))
+            }
+            box.timeoutItem = timeout
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(
+                deadline: .now() + timeoutSeconds,
+                execute: timeout
+            )
+        }
+    }
+
+    private nonisolated static func recognizedWords(
+        from transcription: SFTranscription,
+        timeOffset: Double
+    ) -> [RecognizedPracticeWord] {
+        transcription.segments.map { segment in
+            let alternatives = segment.alternativeSubstrings.filter {
+                $0.caseInsensitiveCompare(segment.substring) != .orderedSame
+            }
+            return RecognizedPracticeWord(
+                text: segment.substring,
+                timestamp: timeOffset + segment.timestamp,
+                duration: segment.duration,
+                confidence: segment.confidence,
+                alternativeSubstrings: Array(alternatives.prefix(4))
+            )
+        }
     }
 
     private func scheduleTaskRolloverTimer() {
@@ -723,5 +1026,135 @@ final class PracticeSpeechRecorder: NSObject, SFSpeechRecognizerDelegate {
             timestamp += 0.28
         }
         return output
+    }
+}
+
+/// Synthetic partner-cue reader built exclusively on Apple's `AVSpeechSynthesizer`
+/// so practice cue playback stays voice-isolated without recorded-file audio routing.
+@MainActor
+@Observable
+final class PracticeCueSpeaker: NSObject, AVSpeechSynthesizerDelegate {
+    var isSpeaking = false
+    var activeCueLineID: Int?
+    var currentCueText = ""
+
+    @ObservationIgnored private let synthesizer = AVSpeechSynthesizer()
+    @ObservationIgnored private var activeUtterance: AVSpeechUtterance?
+    @ObservationIgnored private var onFinishedCallback: (() -> Void)?
+    @ObservationIgnored private var postSpeechTimer: Timer?
+
+    override init() {
+        super.init()
+        synthesizer.delegate = self
+    }
+
+    static func preferredVoiceLanguage(for text: String, scriptLanguage: ScriptLanguage) -> String {
+        if PracticeSpeechDeliveryAnalyzer.containsDevanagari(text) {
+            return "hi-IN"
+        }
+        return scriptLanguage == .hindi ? "en-IN" : "en-US"
+    }
+
+    func speak(
+        text: String,
+        lineID: Int? = nil,
+        scriptLanguage: ScriptLanguage,
+        ensureAudioSession: Bool = true,
+        onFinished: (() -> Void)? = nil
+    ) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            onFinished?()
+            return
+        }
+
+        stop()
+
+        if ensureAudioSession {
+            VoiceAudioSessionCoordinator.shared.activate()
+        }
+        routeToSpeakerIfNoExternalOutput()
+
+        let voiceLang = Self.preferredVoiceLanguage(for: trimmed, scriptLanguage: scriptLanguage)
+        let utterance = AVSpeechUtterance(string: trimmed)
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.voice = AVSpeechSynthesisVoice(language: voiceLang) ?? AVSpeechSynthesisVoice(language: "en-US")
+
+        activeUtterance = utterance
+        activeCueLineID = lineID
+        currentCueText = trimmed
+        onFinishedCallback = onFinished
+        isSpeaking = true
+        synthesizer.speak(utterance)
+    }
+
+    func stop() {
+        postSpeechTimer?.invalidate()
+        postSpeechTimer = nil
+        activeUtterance = nil
+        onFinishedCallback = nil
+        if synthesizer.isSpeaking {
+            synthesizer.stopSpeaking(at: .immediate)
+        }
+        isSpeaking = false
+        activeCueLineID = nil
+        currentCueText = ""
+    }
+
+    private func routeToSpeakerIfNoExternalOutput() {
+        let session = AVAudioSession.sharedInstance()
+        let externalOutputs: Set<AVAudioSession.Port> = [
+            .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .headphones, .airPlay, .carAudio, .usbAudio
+        ]
+        let hasExternalOutput = session.currentRoute.outputs.contains { externalOutputs.contains($0.portType) }
+        if !hasExternalOutput {
+            try? session.overrideOutputAudioPort(.speaker)
+        }
+    }
+
+    private func completeUtterance(_ utterance: AVSpeechUtterance, cancelled: Bool) {
+        guard activeUtterance == nil || activeUtterance === utterance else { return }
+        activeUtterance = nil
+        let done = onFinishedCallback
+        onFinishedCallback = nil
+
+        if cancelled {
+            postSpeechTimer?.invalidate()
+            postSpeechTimer = nil
+            isSpeaking = false
+            activeCueLineID = nil
+            currentCueText = ""
+            done?()
+            return
+        }
+
+        // Brief speaker-decay tail before unmuting live mic recognition.
+        postSpeechTimer?.invalidate()
+        postSpeechTimer = Timer.scheduledTimer(withTimeInterval: 0.28, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.postSpeechTimer = nil
+                self.isSpeaking = false
+                self.activeCueLineID = nil
+                self.currentCueText = ""
+                done?()
+            }
+        }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { completeUtterance(utterance, cancelled: false) }
+        } else {
+            Task { @MainActor [weak self] in self?.completeUtterance(utterance, cancelled: false) }
+        }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { completeUtterance(utterance, cancelled: true) }
+        } else {
+            Task { @MainActor [weak self] in self?.completeUtterance(utterance, cancelled: true) }
+        }
     }
 }

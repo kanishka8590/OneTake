@@ -46,7 +46,12 @@ nonisolated enum SlateScriptTemplate {
             parts.append("I am based in \(stripDot(trimmedBasedIn)).")
         }
         if !trimmedRep.isEmpty {
-            parts.append("I am represented by \(stripDot(trimmedRep)).")
+            let cleanRep = stripDot(trimmedRep)
+            if cleanRep.caseInsensitiveCompare("Self-represented") == .orderedSame {
+                parts.append("I am self-represented.")
+            } else {
+                parts.append("I am represented by \(cleanRep).")
+            }
         }
 
         let role = trimmedRole.isEmpty ? "this role" : stripDot(trimmedRole)
@@ -124,6 +129,7 @@ struct SlateProfileSetupView: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Slate Preview")
             .navigationBarTitleDisplayMode(.inline)
@@ -132,23 +138,24 @@ struct SlateProfileSetupView: View {
                     Button("Close") { dismiss() }
                 }
 
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Continue") {
-                        persistProfileEdits()
-                        updateGeneratedScript()
-                        finalSlateScriptToRecord = generatedSlateScript
-                        showingBriefing = true
-                    }
-                    .font(Theme.Typography.cardTitle)
-                    .foregroundStyle(Theme.Colors.accent)
-                }
-
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
                     Button("Done") {
                         dismissActiveKeyboard()
                     }
                 }
+            }
+            .floatingBottomActionBar {
+                Button {
+                    persistProfileEdits()
+                    updateGeneratedScript()
+                    finalSlateScriptToRecord = generatedSlateScript
+                    showingBriefing = true
+                } label: {
+                    Text("Continue")
+                        .primaryCapsuleButton()
+                }
+                .buttonStyle(.plain)
             }
             .onAppear {
                 loadProfileDefaults()

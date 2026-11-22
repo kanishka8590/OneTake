@@ -194,6 +194,7 @@ nonisolated enum MediaStorage {
         for cue in audition.cueLines {
             removeFile(at: cue.audioFilePath, documentsDirectory: documentsDirectory)
         }
+        removeFile(at: audition.heroImagePath, documentsDirectory: documentsDirectory)
     }
 
     @MainActor
@@ -241,6 +242,9 @@ nonisolated enum MediaStorage {
                 if migrateOptionalPath(&audition.cueLines[idx].audioFilePath, documentsDirectory: documentsDirectory) {
                     didChange = true
                 }
+            }
+            if migrateOptionalPath(&audition.heroImagePath, documentsDirectory: documentsDirectory) {
+                didChange = true
             }
         }
 

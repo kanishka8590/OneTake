@@ -39,12 +39,20 @@ struct PracticeHubView: View {
         NavigationStack {
             List {
                 ForEach(appState.practiceScripts) { script in
-                    NavigationLink {
-                        MemoriseView(script: script, appState: appState)
-                            .toolbar(.hidden, for: .tabBar)
-                    } label: {
+                    ZStack {
                         PracticeScriptRow(script: script)
+
+                        NavigationLink {
+                            MemoriseView(script: script, appState: appState)
+                                .toolbar(.hidden, for: .tabBar)
+                        } label: {
+                            EmptyView()
+                        }
+                        .opacity(0)
                     }
+                    .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                     .contextMenu {
                         Button {
                             scriptToOpen = script
@@ -92,8 +100,9 @@ struct PracticeHubView: View {
                     }
                 }
             }
-            .listStyle(.insetGrouped)
+            .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .overlay {
                 if appState.practiceScripts.isEmpty {
@@ -243,66 +252,70 @@ struct PracticeScriptRow: View {
         return min(100, max(0, pct))
     }
 
+    private var metadataSummary: String {
+        let cueCount = script.cueLines.count
+        let cueText = cueCount == 1 ? "1 cue" : "\(cueCount) cues"
+        var parts = [script.languageRaw, cueText]
+        if !script.sessions.isEmpty {
+            let runsCount = script.sessions.count
+            parts.append(runsCount == 1 ? "1 run" : "\(runsCount) runs")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var recencyColor: Color {
+        guard let date = script.lastPracticedAt else { return Theme.Colors.textSecondary }
+        let days = Calendar.current.dateComponents(
+            [.day],
+            from: Calendar.current.startOfDay(for: date),
+            to: Calendar.current.startOfDay(for: Date())
+        ).day ?? 0
+        return days <= 0 ? Theme.Colors.accent : Theme.Colors.textSecondary
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center) {
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(script.title)
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(Theme.Colors.textPrimary)
                     .lineLimit(1)
 
-                Spacer()
-
-                if let accuracy = accuracyPercentage {
-                    Text("\(accuracy)% accuracy")
-                        .statusBadge(color: accuracy >= 85 ? Theme.Colors.successGreen : Theme.Colors.accent)
-                } else {
-                    let cueCount = script.cueLines.count
-                    Text(cueCount == 1 ? "1 cue" : "\(cueCount) cues")
-                        .statusBadge(color: Theme.Colors.accent)
+                HStack(spacing: 6) {
+                    Text(metadataSummary)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                    Text("·")
+                        .foregroundStyle(Theme.Colors.textSecondary.opacity(0.6))
+                    Text(lastPracticedText(for: script.lastPracticedAt))
+                        .foregroundStyle(recencyColor)
+                        .fontWeight(.semibold)
                 }
+                .font(.system(size: 13))
+                .lineLimit(1)
             }
 
-            HStack(spacing: 6) {
-                Text(script.languageRaw)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.Colors.textPrimary)
-                    .lineLimit(1)
+            Spacer()
 
-                Text("•")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.Colors.textSecondary)
-
-                let cueCount = script.cueLines.count
-                Text(cueCount == 1 ? "1 Cue" : "\(cueCount) Cues")
-                    .font(.system(size: 13, weight: .medium))
-                    .italic()
-                    .foregroundStyle(Theme.Colors.textSecondary)
-                    .lineLimit(1)
-
-                if !script.sessions.isEmpty {
-                    Text("•")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.Colors.textSecondary)
-
-                    Text(script.sessions.count == 1 ? "1 run" : "\(script.sessions.count) runs")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.Colors.textSecondary)
-                        .lineLimit(1)
-                }
-            }
-
-            HStack(spacing: 5) {
-                Image(systemName: "clock")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(Theme.Colors.textSecondary)
-
-                Text(lastPracticedText(for: script.lastPracticedAt))
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(Theme.Colors.textSecondary)
+            if let accuracy = accuracyPercentage {
+                CompactProgressRing(
+                    progress: Double(accuracy) / 100.0,
+                    label: "\(accuracy)%",
+                    tint: accuracy >= 85 ? Theme.Colors.successGreen : Theme.Colors.accent,
+                    diameter: 32,
+                    fontSize: 9.5
+                )
+            } else {
+                CompactProgressRing(
+                    progress: 0,
+                    label: "—",
+                    tint: Theme.Colors.accent,
+                    labelColor: Theme.Colors.textSecondary,
+                    diameter: 32,
+                    fontSize: 11
+                )
             }
         }
-        .padding(.vertical, 8)
+        .compactListCardStyle()
     }
 
     private func lastPracticedText(for date: Date?) -> String {

@@ -4,11 +4,19 @@ import PhotosUI
 import UniformTypeIdentifiers
 
 enum AuditionListFilter: String, CaseIterable, Identifiable {
+    case all = "All"
     case active = "Active"
     case sent = "Sent"
-    case all = "All"
 
     var id: String { rawValue }
+
+    var tintColor: Color {
+        switch self {
+        case .all: return Theme.Colors.accent
+        case .active: return Theme.Colors.warningAmber
+        case .sent: return Theme.Colors.successGreen
+        }
+    }
 }
 
 private enum PendingAddSource {
@@ -38,7 +46,18 @@ struct AuditionsListView: View {
         explicitAppState ?? envAppState
     }
 
-    @State private var selectedFilter: AuditionListFilter = .active
+    private var selectedFilter: AuditionListFilter {
+        get { appState.auditionListFilter }
+        nonmutating set { appState.auditionListFilter = newValue }
+    }
+
+    private var selectedFilterBinding: Binding<AuditionListFilter> {
+        Binding(
+            get: { appState.auditionListFilter },
+            set: { appState.auditionListFilter = $0 }
+        )
+    }
+
     @State private var showingAddSourceSheet = false
     @State private var pendingAddSource: PendingAddSource?
     @State private var auditionToDelete: Audition?
@@ -73,81 +92,50 @@ struct AuditionsListView: View {
         }
     }
 
+    private var spotlightAudition: Audition? {
+        guard selectedFilter != .sent, !filteredAuditions.isEmpty else { return nil }
+        return filteredAuditions.first { $0.status == .active && $0.hasDeadline }
+            ?? filteredAuditions.first { $0.status == .active }
+            ?? filteredAuditions.first
+    }
+
+    private var compactAuditions: [Audition] {
+        guard let spotlight = spotlightAudition else { return filteredAuditions }
+        return filteredAuditions.filter { $0.id != spotlight.id }
+    }
+
     var body: some View {
         NavigationStack {
             List {
-                ForEach(filteredAuditions) { audition in
-                    NavigationLink {
-                        AuditionPackageHubView(audition: audition)
-                    } label: {
-                        AuditionCardRow(audition: audition)
+                if let spotlight = spotlightAudition {
+                    Section {
+                        auditionListRow(spotlight, isSpotlight: true)
+                    } header: {
+                        Text("UP NEXT")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                            .padding(.leading, 2)
                     }
-                    .contextMenu {
-                        Button {
-                            auditionToEdit = audition
-                        } label: {
-                            Label("Edit Details", systemImage: "pencil")
-                        }
+                }
 
-                        if audition.status == .active {
-                            Button {
-                                withAnimation {
-                                    appState.updateAuditionStatus(audition, to: .sent)
-                                }
-                            } label: {
-                                Label("Mark as Sent", systemImage: "paperplane")
-                            }
-                        } else {
-                            Button {
-                                withAnimation {
-                                    appState.updateAuditionStatus(audition, to: .active)
-                                }
-                            } label: {
-                                Label("Reactivate", systemImage: "arrow.uturn.backward")
-                            }
+                if !compactAuditions.isEmpty {
+                    Section {
+                        ForEach(compactAuditions) { audition in
+                            auditionListRow(audition, isSpotlight: false)
                         }
-
-                        Divider()
-
-                        Button(role: .destructive) {
-                            auditionToDelete = audition
-                            showingDeleteConfirmation = true
-                        } label: {
-                            Label("Delete Audition", systemImage: "trash")
-                        }
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            auditionToDelete = audition
-                            showingDeleteConfirmation = true
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-
-                        if audition.status == .active {
-                            Button {
-                                withAnimation {
-                                    appState.updateAuditionStatus(audition, to: .sent)
-                                }
-                            } label: {
-                                Label("Mark Sent", systemImage: "paperplane")
-                            }
-                            .tint(Theme.Colors.successGreen)
-                        } else {
-                            Button {
-                                withAnimation {
-                                    appState.updateAuditionStatus(audition, to: .active)
-                                }
-                            } label: {
-                                Label("Reactivate", systemImage: "arrow.uturn.backward")
-                            }
-                            .tint(Theme.Colors.accent)
+                    } header: {
+                        if spotlightAudition != nil {
+                            Text("ALL AUDITIONS")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                                .padding(.leading, 2)
                         }
                     }
                 }
             }
-            .listStyle(.insetGrouped)
+            .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .overlay {
                 if isParsingCall {
@@ -160,6 +148,9 @@ struct AuditionsListView: View {
             }
             .navigationTitle("Auditions")
             .navigationBarTitleDisplayMode(.large)
+            .onChange(of: selectedFilter) { _, _ in
+                Haptics.selectionTick()
+            }
             .toolbar {
                 if #available(iOS 26.0, *) {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -182,7 +173,7 @@ struct AuditionsListView: View {
                     .presentationDetents([.height(225)])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(28)
-                    .presentationBackground(Theme.Colors.surface)
+                    .presentationBackground(Theme.Colors.canvasBackground)
             }
             // Multi-Photo Picker
             .photosPicker(
@@ -266,16 +257,12 @@ struct AuditionsListView: View {
     // MARK: - Toolbar Controls
 
     private var filterTintColor: Color {
-        switch selectedFilter {
-        case .active: return Theme.Colors.accent
-        case .sent: return Theme.Colors.successGreen
-        case .all: return Theme.Colors.warningAmber
-        }
+        selectedFilter.tintColor
     }
 
     private var filterToolbarMenu: some View {
         Menu {
-            Picker("Filter", selection: $selectedFilter) {
+            Picker("Filter", selection: selectedFilterBinding) {
                 ForEach(AuditionListFilter.allCases) { filter in
                     Text(filter.rawValue).tag(filter)
                 }
@@ -509,6 +496,7 @@ struct AuditionsListView: View {
     }
 
     private func presentImportError(_ message: String) {
+        Haptics.error()
         importErrorMessage = message
         showingImportError = true
     }
@@ -570,7 +558,11 @@ struct AuditionsListView: View {
     @MainActor
     private func finishParsing(with parsed: ParsedCastingCall?) {
         isParsingCall = false
-        guard let parsed else { return }
+        guard let parsed else {
+            Haptics.warning()
+            return
+        }
+        Haptics.success()
         editorPresentation = AuditionEditorPresentation(parsedCall: parsed)
     }
 
@@ -630,9 +622,200 @@ struct AuditionsListView: View {
         }
         .padding(.horizontal, 24)
     }
+
+    @ViewBuilder
+    private func auditionListRow(_ audition: Audition, isSpotlight: Bool) -> some View {
+        ZStack {
+            if isSpotlight {
+                AuditionSpotlightCard(audition: audition)
+            } else {
+                AuditionCardRow(audition: audition)
+            }
+
+            NavigationLink {
+                AuditionPackageHubView(audition: audition)
+            } label: {
+                EmptyView()
+            }
+            .opacity(0)
+        }
+        .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: isSpotlight ? 10 : 5, trailing: 16))
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .contextMenu {
+            Button {
+                auditionToEdit = audition
+            } label: {
+                Label("Edit Details", systemImage: "pencil")
+            }
+
+            if audition.status == .active {
+                Button {
+                    withAnimation {
+                        appState.updateAuditionStatus(audition, to: .sent)
+                    }
+                } label: {
+                    Label("Mark as Sent", systemImage: "paperplane")
+                }
+            } else {
+                Button {
+                    withAnimation {
+                        appState.updateAuditionStatus(audition, to: .active)
+                    }
+                } label: {
+                    Label("Reactivate", systemImage: "arrow.uturn.backward")
+                }
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
+                auditionToDelete = audition
+                showingDeleteConfirmation = true
+            } label: {
+                Label("Delete Audition", systemImage: "trash")
+            }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                auditionToDelete = audition
+                showingDeleteConfirmation = true
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+
+            if audition.status == .active {
+                Button {
+                    withAnimation {
+                        appState.updateAuditionStatus(audition, to: .sent)
+                    }
+                } label: {
+                    Label("Mark Sent", systemImage: "paperplane")
+                }
+                .tint(Theme.Colors.successGreen)
+            } else {
+                Button {
+                    withAnimation {
+                        appState.updateAuditionStatus(audition, to: .active)
+                    }
+                } label: {
+                    Label("Reactivate", systemImage: "arrow.uturn.backward")
+                }
+                .tint(Theme.Colors.accent)
+            }
+        }
+    }
 }
 
-// MARK: - Audition Card Row with Dynamic Progress: 0 of 3 -> 1 of 3 -> 2 of 3 -> 3 of 3 ready -> Sent
+// MARK: - Option 3: Up Next Spotlight Card + Compact Ring Card
+
+private extension Audition {
+    var cardMetadataLine: String {
+        let role = roleName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if role.isEmpty {
+            return production.rawValue
+        }
+        return "\(role) · \(production.rawValue)"
+    }
+}
+
+private struct AuditionSpotlightCard: View {
+    let audition: Audition
+
+    private var customHeroImage: UIImage? {
+        guard let relPath = audition.heroImagePath,
+              let url = MediaStorage.resolveURL(for: relPath) else {
+            return nil
+        }
+        return UIImage(contentsOfFile: url.path)
+    }
+
+    private var artworkName: String {
+        if let custom = audition.heroArtworkName, !custom.isEmpty {
+            return custom
+        }
+        return audition.production == .theater ? Theme.Artwork.dramaBanner : Theme.Artwork.auditionBanner
+    }
+
+    private var badgeFillColor: Color {
+        if audition.isOverdue {
+            return Theme.Colors.errorCrimson.opacity(0.78)
+        }
+        if audition.hasDeadline && audition.daysUntilDeadline <= 1 && audition.status == .active {
+            return Theme.Colors.warningAmber.opacity(0.78)
+        }
+        return Color.black.opacity(0.56)
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            Color.clear
+                .frame(height: 158)
+                .background {
+                    Group {
+                        if let customHeroImage {
+                            Image(uiImage: customHeroImage)
+                                .resizable()
+                                .scaledToFill()
+                        } else {
+                            Image(artworkName)
+                                .resizable()
+                                .scaledToFill()
+                        }
+                    }
+                }
+                .clipped()
+
+            LinearGradient(
+                stops: [
+                    .init(color: Color.black.opacity(0.18), location: 0.0),
+                    .init(color: Color.black.opacity(0.55), location: 0.52),
+                    .init(color: Color.black.opacity(0.95), location: 1.0)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(audition.deadlineUrgencyLabel())
+                    .font(.system(size: 11, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(badgeFillColor, in: Capsule())
+                    .overlay(Capsule().stroke(.white.opacity(0.20), lineWidth: 0.8))
+
+                Text(audition.projectName)
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+
+                HStack {
+                    Text(audition.cardMetadataLine)
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.84))
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    Text(audition.status == .sent ? "Submitted" : "\(audition.packageReadyCount) of \(audition.packageTotalCount) ready")
+                        .font(.system(size: 12, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.white.opacity(0.92))
+                }
+            }
+            .padding(16)
+        }
+        .frame(height: 158)
+        .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(.white.opacity(0.15), lineWidth: 0.8)
+        )
+    }
+}
 
 struct AuditionCardRow: View {
     let audition: Audition
@@ -644,72 +827,37 @@ struct AuditionCardRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center) {
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(audition.projectName)
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.system(size: 17, weight: .bold))
                     .italic(isUntitled)
                     .foregroundStyle(isUntitled ? Theme.Colors.textSecondary : Theme.Colors.textPrimary)
                     .lineLimit(1)
 
-                Spacer()
-
-                if audition.status == .sent {
-                    Text("Sent • 30-Day Link Active")
-                        .statusBadge(color: Theme.Colors.successGreen)
-                } else if audition.packageReadyCount == 3 {
-                    Text("3 of 3 ready")
-                        .statusBadge(color: Theme.Colors.successGreen)
-                } else {
-                    Text("\(audition.packageReadyCount) of 3 ready")
-                        .statusBadge(color: Theme.Colors.accent)
-                }
-            }
-
-            HStack(spacing: 6) {
-                HStack(spacing: 4) {
-                    Text("Role:")
-                        .font(.system(size: 17, weight: .regular))
+                HStack(spacing: 6) {
+                    Text(audition.cardMetadataLine)
                         .foregroundStyle(Theme.Colors.textSecondary)
-
-                    Text(audition.roleName)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(Theme.Colors.textPrimary)
-                        .lineLimit(1)
+                    Text("·")
+                        .foregroundStyle(Theme.Colors.textSecondary.opacity(0.6))
+                    Text(audition.deadlineUrgencyLabel())
+                        .foregroundStyle(deadlineColor)
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
                 }
-
-                Text("•")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.Colors.textSecondary)
-
-                Text(audition.production.rawValue)
-                    .font(.system(size: 13, weight: .medium))
-                    .italic()
-                    .foregroundStyle(Theme.Colors.textSecondary)
-                    .lineLimit(1)
+                .font(.system(size: 13))
+                .lineLimit(1)
             }
 
-            HStack(spacing: 5) {
-                Image(systemName: "clock")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(deadlineColor)
+            Spacer()
 
-                Text(deadlineText)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(deadlineColor)
-            }
-
-            HStack(spacing: 6) {
-                ForEach(0..<3) { idx in
-                    Capsule()
-                        .fill(idx < audition.packageReadyCount ? (audition.status == .sent ? Theme.Colors.successGreen : Theme.Colors.accent) : Theme.Colors.lavenderSurface)
-                        .frame(height: 5)
-                }
-            }
-            .padding(.top, 4)
+            AuditionReadinessRing(
+                readyCount: audition.packageReadyCount,
+                totalCount: audition.packageTotalCount,
+                isSent: audition.status == .sent
+            )
         }
-        .padding(.vertical, 10)
-        .frame(minHeight: Theme.Layout.minTapTarget)
+        .compactListCardStyle()
     }
 
     private var deadlineColor: Color {
@@ -725,24 +873,25 @@ struct AuditionCardRow: View {
         }
         return Theme.Colors.textSecondary
     }
+}
 
-    private var deadlineText: String {
-        if audition.status == .sent {
-            return "Submitted"
-        }
-        if !audition.hasDeadline {
-            return "No deadline"
-        }
-        if audition.isOverdue {
-            return "Overdue"
-        }
-        let days = audition.daysUntilDeadline
-        if days == 0 {
-            return "Due today"
-        } else if days == 1 {
-            return "Due tomorrow"
+private struct AuditionReadinessRing: View {
+    let readyCount: Int
+    let totalCount: Int
+    let isSent: Bool
+
+    var body: some View {
+        if isSent {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 22))
+                .foregroundStyle(Theme.Colors.successGreen)
         } else {
-            return "\(days) days left"
+            let safeTotal = max(1, totalCount)
+            CompactProgressRing(
+                progress: Double(readyCount) / Double(safeTotal),
+                label: "\(readyCount)",
+                tint: totalCount > 0 && readyCount == totalCount ? Theme.Colors.successGreen : Theme.Colors.accent
+            )
         }
     }
 }

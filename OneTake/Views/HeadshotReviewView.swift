@@ -64,7 +64,7 @@ struct HeadshotReviewView: View {
                         cropFramingView
                             .padding(.horizontal, 20)
 
-                        HStack {
+                        HStack(spacing: 12) {
                             if currentScale > 1.01 || currentOffsetRatio != .zero {
                                 Button {
                                     resetFramingForCurrentAngle()
@@ -72,11 +72,14 @@ struct HeadshotReviewView: View {
                                     Label("Reset Framing", systemImage: "arrow.counterclockwise")
                                         .font(Theme.Typography.captionBadge)
                                         .foregroundStyle(Theme.Colors.textSecondary)
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 7)
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 9)
                                         .background(Theme.Colors.surfaceElevated)
                                         .clipShape(Capsule())
+                                        .frame(minHeight: Theme.Layout.minTapTarget)
+                                        .contentShape(Rectangle())
                                 }
+                                .buttonStyle(.plain)
                             }
 
                             Spacer()
@@ -101,12 +104,14 @@ struct HeadshotReviewView: View {
                                 .font(Theme.Typography.captionBadge)
                                 .foregroundStyle(Theme.Colors.accent)
                                 .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
+                                .padding(.vertical, 9)
                                 .background(Theme.Colors.lavenderSurface)
                                 .clipShape(Capsule())
+                                .frame(minHeight: Theme.Layout.minTapTarget)
+                                .contentShape(Rectangle())
                             }
                         }
-                        .padding(.horizontal, 24)
+                        .padding(.horizontal, 20)
 
                         threeAngleMiniBar
                             .padding(.horizontal, 20)
@@ -114,6 +119,7 @@ struct HeadshotReviewView: View {
                     }
                 }
                 .scrollDisabled(isInteractingWithCrop)
+                .scrollEdgeHaptics()
             }
             .navigationTitle("Review Headshots")
             .navigationBarTitleDisplayMode(.inline)
@@ -259,7 +265,6 @@ struct HeadshotReviewView: View {
                 Button {
                     withAnimation(.snappy(duration: 0.25)) {
                         setRatioForCurrentAngle(ratio)
-                        resetFramingForCurrentAngle()
                     }
                 } label: {
                     Text(ratio.rawValue)
@@ -286,16 +291,9 @@ struct HeadshotReviewView: View {
             if let img = currentImage {
                 GeometryReader { geo in
                     let effectiveScale = max(1.0, min(3.5, currentScale * pinchScale))
-                    let basePixelOffset = CGSize(
-                        width: currentOffsetRatio.width * geo.size.width,
-                        height: currentOffsetRatio.height * geo.size.height
-                    )
-                    let proposedOffset = CGSize(
-                        width: basePixelOffset.width + dragTranslation.width,
-                        height: basePixelOffset.height + dragTranslation.height
-                    )
-                    let liveClampedOffset = HeadshotCropMath.clampedOffset(
-                        proposedOffset,
+                    let liveClampedOffset = HeadshotCropMath.adjustedOffset(
+                        baseRatio: currentOffsetRatio,
+                        translation: dragTranslation,
                         imageSize: img.size,
                         containerSize: geo.size,
                         scale: effectiveScale
@@ -307,6 +305,12 @@ struct HeadshotReviewView: View {
                         .frame(width: geo.size.width, height: geo.size.height)
                         .scaleEffect(effectiveScale)
                         .offset(x: liveClampedOffset.width, y: liveClampedOffset.height)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .allowsHitTesting(false)
+
+                    Color.clear
+                        .frame(width: geo.size.width, height: geo.size.height)
                         .contentShape(Rectangle())
                         .highPriorityGesture(
                             SimultaneousGesture(
@@ -317,12 +321,9 @@ struct HeadshotReviewView: View {
                                     }
                                     .onEnded { scale in
                                         let finalScale = max(1.0, min(3.5, currentScale * scale))
-                                        let activeOffset = CGSize(
-                                            width: currentOffsetRatio.width * geo.size.width + dragTranslation.width,
-                                            height: currentOffsetRatio.height * geo.size.height + dragTranslation.height
-                                        )
-                                        let clamped = HeadshotCropMath.clampedOffset(
-                                            activeOffset,
+                                        let clamped = HeadshotCropMath.adjustedOffset(
+                                            baseRatio: currentOffsetRatio,
+                                            translation: dragTranslation,
                                             imageSize: img.size,
                                             containerSize: geo.size,
                                             scale: finalScale
@@ -343,12 +344,9 @@ struct HeadshotReviewView: View {
                                     }
                                     .onEnded { val in
                                         let activeScale = max(1.0, min(3.5, currentScale * pinchScale))
-                                        let rawOffset = CGSize(
-                                            width: currentOffsetRatio.width * geo.size.width + val.translation.width,
-                                            height: currentOffsetRatio.height * geo.size.height + val.translation.height
-                                        )
-                                        let clamped = HeadshotCropMath.clampedOffset(
-                                            rawOffset,
+                                        let clamped = HeadshotCropMath.adjustedOffset(
+                                            baseRatio: currentOffsetRatio,
+                                            translation: val.translation,
                                             imageSize: img.size,
                                             containerSize: geo.size,
                                             scale: activeScale
@@ -365,7 +363,6 @@ struct HeadshotReviewView: View {
                         .onTapGesture(count: 2) {
                             resetFramingForCurrentAngle()
                         }
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
                         .onAppear {
                             cropContainerSize = geo.size
                         }
@@ -391,6 +388,7 @@ struct HeadshotReviewView: View {
         }
         .frame(maxHeight: 390)
         .clipShape(RoundedRectangle(cornerRadius: 16))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: Color.black.opacity(0.12), radius: 10, x: 0, y: 4)
         .animation(.snappy(duration: 0.25), value: currentRatio)
     }
@@ -447,55 +445,60 @@ struct HeadshotReviewView: View {
             }
         } label: {
             VStack(spacing: 6) {
-                ZStack {
-                    Color.clear
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 112)
+                Color.clear
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 112)
+                    .overlay {
+                        GeometryReader { slotGeo in
+                            let boxSize = HeadshotCropMath.aspectFittedSize(aspect: angleAspect, inside: slotGeo.size)
 
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Theme.Colors.lavenderSurface)
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Theme.Colors.lavenderSurface)
 
-                        if let img = image {
-                            GeometryReader { miniGeo in
-                                let proposed = CGSize(
-                                    width: (baseOffsetRatio.width + liveDragRatioX) * miniGeo.size.width,
-                                    height: (baseOffsetRatio.height + liveDragRatioY) * miniGeo.size.height
-                                )
-                                let clampedMiniOffset = HeadshotCropMath.clampedOffset(
-                                    proposed,
-                                    imageSize: img.size,
-                                    containerSize: miniGeo.size,
-                                    scale: liveScale
-                                )
+                                if let img = image {
+                                    let proposed = CGSize(
+                                        width: (baseOffsetRatio.width + liveDragRatioX) * boxSize.width,
+                                        height: (baseOffsetRatio.height + liveDragRatioY) * boxSize.height
+                                    )
+                                    let clampedMiniOffset = HeadshotCropMath.clampedOffset(
+                                        proposed,
+                                        imageSize: img.size,
+                                        containerSize: boxSize,
+                                        scale: liveScale
+                                    )
 
-                                Image(uiImage: img)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: miniGeo.size.width, height: miniGeo.size.height)
-                                    .scaleEffect(liveScale)
-                                    .offset(x: clampedMiniOffset.width, y: clampedMiniOffset.height)
+                                    Image(uiImage: img)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: boxSize.width, height: boxSize.height)
+                                        .scaleEffect(liveScale)
+                                        .offset(x: clampedMiniOffset.width, y: clampedMiniOffset.height)
+                                        .frame(width: boxSize.width, height: boxSize.height)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                } else {
+                                    Image(systemName: "camera")
+                                        .font(.system(size: 14))
+                                        .foregroundStyle(Theme.Colors.textSecondary)
+                                }
                             }
+                            .frame(width: boxSize.width, height: boxSize.height)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
-                        } else {
-                            Image(systemName: "camera")
-                                .font(.system(size: 14))
-                                .foregroundStyle(Theme.Colors.textSecondary)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(isSelected ? Theme.Colors.accent : Color.clear, lineWidth: 2)
+                            )
+                            .frame(width: slotGeo.size.width, height: slotGeo.size.height)
                         }
                     }
-                    .aspectRatio(angleAspect, contentMode: .fit)
-                    .frame(maxHeight: 112)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(isSelected ? Theme.Colors.accent : Color.clear, lineWidth: 2)
-                    )
-                }
 
                 Text(title)
                     .font(.system(size: 11, weight: isSelected ? .bold : .medium))
                     .foregroundStyle(isSelected ? Theme.Colors.accent : Theme.Colors.textSecondary)
                     .lineLimit(1)
             }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

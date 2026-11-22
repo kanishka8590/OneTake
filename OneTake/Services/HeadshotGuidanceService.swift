@@ -122,6 +122,7 @@ nonisolated private final class GuidanceStateBox: @unchecked Sendable {
     private var _isRestartingRecognition = false
     private var _isAudioTapInstalled = false
     private var _recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var _isTTSSpeaking = false
     private var _lastFrameAnalyzedAt: Date = .distantPast
     private var _isAnalyzingFrame = false
     private var _visionFrameCounter: Int = 0
@@ -196,6 +197,11 @@ nonisolated private final class GuidanceStateBox: @unchecked Sendable {
     var recognitionRequest: SFSpeechAudioBufferRecognitionRequest? {
         get { withLock { $0._recognitionRequest } }
         set { withLock { $0._recognitionRequest = newValue } }
+    }
+
+    var isTTSSpeakingState: Bool {
+        get { withLock { $0._isTTSSpeaking } }
+        set { withLock { $0._isTTSSpeaking = newValue } }
     }
 
     func tryBeginFrameAnalysis(minInterval: TimeInterval = 0.16) -> Bool {
@@ -316,9 +322,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         didSet {
             if !voiceGuidanceEnabled {
                 poseAnnouncementToken = nil
-                if speechSynthesizer.isSpeaking {
-                    speechSynthesizer.stopSpeaking(at: .immediate)
-                }
+                stopSpeechImmediately()
             }
         }
     }
@@ -348,6 +352,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     @ObservationIgnored private let sessionQueue = DispatchQueue(label: "com.onetake.headshot.session")
     @ObservationIgnored private let visionQueue = DispatchQueue(label: "com.onetake.headshot.vision")
     @ObservationIgnored private let voiceAudioSessionQueue = DispatchQueue(label: "com.onetake.headshot.voice.audiosession", qos: .userInitiated)
+    @ObservationIgnored private let speechQueue = DispatchQueue(label: "com.onetake.headshot.speech", qos: .userInitiated)
     @ObservationIgnored private var taskRestartTimer: Timer?
     @ObservationIgnored private var recognitionRestartWorkItem: DispatchWorkItem?
     @ObservationIgnored private var audioSessionObservers: [NSObjectProtocol] = []
@@ -363,7 +368,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
     // Subsystems
     @ObservationIgnored private let motionManager = CMMotionManager()
-    @ObservationIgnored private let speechSynthesizer = AVSpeechSynthesizer()
+    @ObservationIgnored nonisolated(unsafe) private let speechSynthesizer = AVSpeechSynthesizer()
     @ObservationIgnored private var speechRecognizer: SFSpeechRecognizer?
     @ObservationIgnored private var recognitionTask: SFSpeechRecognitionTask?
     @ObservationIgnored private let audioEngine = AVAudioEngine()
@@ -375,7 +380,10 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     @ObservationIgnored private var lastSpokenMessage: String = ""
     @ObservationIgnored private let speechMinInterval: TimeInterval = 2.0
     @ObservationIgnored private let speechRepeatInterval: TimeInterval = 4.5
+    @ObservationIgnored private var wantsVoiceListening: Bool = false
     @ObservationIgnored private var pendingPhotoCompletion: ((UIImage?) -> Void)?
+    @ObservationIgnored private var activeCaptureID: UUID?
+    @ObservationIgnored private var captureWatchdogTask: Task<Void, Never>?
     @ObservationIgnored private var countdownToken: UUID?
     @ObservationIgnored private var isCountdownInProgress = false
     @ObservationIgnored private var isCountdownSpeechActive = false
@@ -741,6 +749,9 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         self.poseAnnouncementToken = nil
         self.countdownTask?.cancel()
         self.countdownTask = nil
+        self.captureWatchdogTask?.cancel()
+        self.captureWatchdogTask = nil
+        self.activeCaptureID = nil
         self.shutterStatusClearTask?.cancel()
         self.shutterStatusClearTask = nil
         self.shutterStatusMessage = nil
@@ -788,13 +799,15 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         }
         #endif
 
+        wantsVoiceListening = false
         stopVoiceTrigger()
         poseAnnouncementToken = nil
-        if speechSynthesizer.isSpeaking {
-            speechSynthesizer.stopSpeaking(at: .immediate)
-        }
+        stopSpeechImmediately()
         countdownTask?.cancel()
         countdownTask = nil
+        captureWatchdogTask?.cancel()
+        captureWatchdogTask = nil
+        activeCaptureID = nil
         shutterStatusClearTask?.cancel()
         shutterStatusClearTask = nil
         shutterStatusMessage = nil
@@ -974,7 +987,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     private func runCountdown(seconds: Int, token: UUID) async {
         // Wait briefly if a coaching phrase is already speaking, without stalling forever.
         var waitedSteps = 0
-        while speechSynthesizer.isSpeaking && waitedSteps < 15 {
+        while stateBox.isTTSSpeakingState && waitedSteps < 15 {
             guard !Task.isCancelled, isCapturing, isCountdownInProgress, countdownToken == token else { return }
             if requireAlignmentForActiveCountdown && !feedback.allChecksPassed {
                 cancelCountdownAndResumePoseGuidance()
@@ -984,9 +997,6 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
             waitedSteps += 1
         }
 
-        if isCountdownInProgress, !isCountdownSpeechActive, requireAlignmentForActiveCountdown {
-            // Reset grace baseline when starting countdown
-        }
         lastAlignedAt = feedback.allChecksPassed ? Date() : lastAlignedAt
         if seconds > 0 {
             for tick in stride(from: seconds, through: 1, by: -1) {
@@ -1000,8 +1010,10 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
                 }
 
                 countdownRemaining = tick
-                isCountdownSpeechActive = true
-                speak("\(tick)", forceSpeak: true)
+                if voiceGuidanceEnabled {
+                    isCountdownSpeechActive = true
+                    speak("\(tick)", forceSpeak: true)
+                }
 
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
@@ -1040,16 +1052,30 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         #else
         let angle = targetAngle
         let demoMode = isDemoMode
+        let captureID = UUID()
+        activeCaptureID = captureID
+        captureWatchdogTask?.cancel()
+        captureWatchdogTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled, let self,
+                  self.isCapturing,
+                  self.activeCaptureID == captureID else { return }
+            self.surfaceShutterStatus("Camera timed out — please try again")
+            self.completePhotoCapture(with: nil)
+        }
+
         sessionQueue.async { [weak self] in
             guard let self else { return }
-            guard let photoOutput = self.sessionPhotoOutput else {
+            guard let session = self.sessionCaptureSession,
+                  session.isRunning,
+                  let photoOutput = self.sessionPhotoOutput else {
                 Task { @MainActor [weak self] in
-                    guard let self else { return }
+                    guard let self, self.activeCaptureID == captureID else { return }
                     if demoMode {
                         let fallback = DemoMediaGenerator.renderHeadshotImage(angle: angle.rawValue)
                         self.completePhotoCapture(with: fallback)
                     } else {
-                        self.cameraErrorMessage = "Camera is unavailable. Please check permissions or use Photo Import."
+                        self.surfaceShutterStatus("Camera isn't ready yet — please try again")
                         self.completePhotoCapture(with: nil)
                     }
                 }
@@ -1063,6 +1089,9 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     }
 
     private func completePhotoCapture(with image: UIImage?) {
+        captureWatchdogTask?.cancel()
+        captureWatchdogTask = nil
+        activeCaptureID = nil
         setCapturingState(false)
         requireAlignmentForActiveCountdown = false
         countdownRemaining = 0
@@ -1248,23 +1277,25 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
     /// Explicit opt-in entry point when the user chooses to enable voice commands.
     func enableVoiceTriggers() {
+        wantsVoiceListening = true
         voiceStatus = .starting
         VoiceAuthorizationService.shared.requestAccess { [weak self] authorized in
             guard let self else { return }
             guard authorized else {
+                self.wantsVoiceListening = false
                 self.isVoiceListening = false
                 self.voiceStatus = .failed
                 self.surfaceShutterStatus("Allow Microphone & Speech access in Settings for voice commands")
                 return
             }
-            guard self.isSessionRunning else {
+            guard self.isSessionRunning, self.wantsVoiceListening else {
                 self.voiceStatus = .idle
                 return
             }
             self.voiceAudioSessionQueue.async { [weak self] in
                 let ok = VoiceAudioSessionCoordinator.shared.activate()
                 Task { @MainActor [weak self] in
-                    guard let self, self.isSessionRunning else { return }
+                    guard let self, self.isSessionRunning, self.wantsVoiceListening else { return }
                     guard ok else { self.voiceStatus = .failed; return }
                     self.startVoiceListening(audioAlreadyActivated: true)
                 }
@@ -1273,15 +1304,24 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     }
 
     func disableVoiceTriggers() {
+        wantsVoiceListening = false
         stopVoiceTrigger()
     }
 
-    private func configureGuidanceAudioSession() -> Bool {
-        VoiceAudioSessionCoordinator.shared.activate()
+    private func configureGuidanceAudioSessionAsync(completion: @escaping @MainActor (Bool) -> Void) {
+        voiceAudioSessionQueue.async {
+            let ok = VoiceAudioSessionCoordinator.shared.activate()
+            Task { @MainActor in
+                completion(ok)
+            }
+        }
     }
 
     private func startVoiceListening(audioAlreadyActivated: Bool = false) {
-        guard isSessionRunning, isVoiceAuthorizedInSystem else { voiceStatus = .failed; return }
+        guard isSessionRunning, wantsVoiceListening, isVoiceAuthorizedInSystem else {
+            voiceStatus = wantsVoiceListening ? .failed : .idle
+            return
+        }
         if isVoiceListening, recognitionTask != nil { return }
         if isVoiceListening && recognitionTask == nil {
             stopVoiceTrigger()
@@ -1291,8 +1331,14 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         guard let speechRecognizer, speechRecognizer.isAvailable else { voiceStatus = .unavailable; return }
 
         if !audioAlreadyActivated {
-            guard configureGuidanceAudioSession() else { voiceStatus = .failed; return }
+            configureGuidanceAudioSessionAsync { [weak self] ok in
+                guard let self, self.isSessionRunning, self.wantsVoiceListening else { return }
+                guard ok else { self.voiceStatus = .failed; return }
+                self.startVoiceListening(audioAlreadyActivated: true)
+            }
+            return
         }
+
         let installed = installAudioTapAndStartEngine()
         guard installed else {
             voiceStatus = .failed
@@ -1307,9 +1353,9 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
             object: audioEngine,
             queue: .main
         ) { [weak self] _ in
-            guard let self, self.isSessionRunning, self.isVoiceListening else { return }
-            self.stateBox.isAudioTapInstalled = false
-            if self.installAudioTapAndStartEngine() {
+            Task { @MainActor [weak self] in
+                guard let self, self.isSessionRunning, self.wantsVoiceListening else { return }
+                self.stateBox.isAudioTapInstalled = false
                 self.restartRecognitionTaskSeamlessly()
             }
         }
@@ -1320,14 +1366,22 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     }
 
     private func installAudioTapAndStartEngine() -> Bool {
+        let session = AVAudioSession.sharedInstance()
+        guard session.isInputAvailable, !session.currentRoute.inputs.isEmpty else {
+            stateBox.isAudioTapInstalled = false
+            return false
+        }
+
         let inputNode = audioEngine.inputNode
         let outputFormat = inputNode.outputFormat(forBus: 0)
         let inputFormat = inputNode.inputFormat(forBus: 0)
         guard let tapFormat = [outputFormat, inputFormat].first(where: { $0.sampleRate > 0 && $0.channelCount > 0 }) else {
+            stateBox.isAudioTapInstalled = false
             return false
         }
 
         inputNode.removeTap(onBus: 0)
+        stateBox.isAudioTapInstalled = false
         let box = stateBox
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: tapFormat) { readOnlyBuffer, _ in
             box.recognitionRequest?.append(readOnlyBuffer)
@@ -1410,7 +1464,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     }
 
     private func restartRecognitionTaskSeamlessly() {
-        guard isSessionRunning, !stateBox.isRestartingRecognition else { return }
+        guard isSessionRunning, wantsVoiceListening, !stateBox.isRestartingRecognition else { return }
         stateBox.isRestartingRecognition = true
 
         taskRestartTimer?.invalidate()
@@ -1420,13 +1474,21 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.stateBox.isRestartingRecognition = false
-            guard self.isSessionRunning else { return }
-            guard self.configureGuidanceAudioSession() else { self.voiceStatus = .failed; return }
-            if !self.audioEngine.isRunning {
-                do { try self.audioEngine.start() }
-                catch { self.voiceStatus = .failed; return }
+            guard self.isSessionRunning, self.wantsVoiceListening else { return }
+            self.configureGuidanceAudioSessionAsync { [weak self] ok in
+                guard let self, self.isSessionRunning, self.wantsVoiceListening else { return }
+                guard ok else {
+                    self.voiceStatus = .failed
+                    return
+                }
+                if !self.stateBox.isAudioTapInstalled || !self.audioEngine.isRunning {
+                    guard self.installAudioTapAndStartEngine() else {
+                        self.voiceStatus = .failed
+                        return
+                    }
+                }
+                self.startRecognitionTask()
             }
-            self.startRecognitionTask()
         }
         recognitionRestartWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
@@ -1450,12 +1512,14 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     // MARK: - AVSpeechSynthesizerDelegate (Speaker-Bleed Guard)
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
+        stateBox.isTTSSpeakingState = true
         Task { @MainActor [weak self] in
             self?.isTTSSpeaking = true
         }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        stateBox.isTTSSpeakingState = false
         Task { @MainActor [weak self] in
             self?.isTTSSpeaking = false
             self?.lastTTSEndedAt = Date()
@@ -1463,6 +1527,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        stateBox.isTTSSpeakingState = false
         Task { @MainActor [weak self] in
             self?.isTTSSpeaking = false
             self?.lastTTSEndedAt = Date()
@@ -1515,7 +1580,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
     private func speakPoseAnnouncementWhenReady(_ prompt: String, token: UUID, notBefore: Date) {
         guard poseAnnouncementToken == token, !isCapturing else { return }
-        guard Date() >= notBefore, !speechSynthesizer.isSpeaking else {
+        guard Date() >= notBefore, !stateBox.isTTSSpeakingState else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
                 self?.speakPoseAnnouncementWhenReady(prompt, token: token, notBefore: notBefore)
             }
@@ -1563,16 +1628,26 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
                 guard let self, self.isSessionRunning else { return }
                 let type = typeRaw.flatMap(AVAudioSession.InterruptionType.init(rawValue:))
                 if type == .began {
-                    self.isVoiceListening = false
-                    self.voiceStatus = .interrupted
-                } else if self.isVoiceAuthorizedInSystem {
+                    if self.wantsVoiceListening {
+                        self.isVoiceListening = false
+                        self.voiceStatus = .interrupted
+                    }
+                } else if self.wantsVoiceListening, self.isVoiceAuthorizedInSystem {
                     self.restartRecognitionTaskSeamlessly()
                 }
             }
         })
-        audioSessionObservers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
+        audioSessionObservers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
+            let reasonRaw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
             Task { @MainActor [weak self] in
-                guard let self, self.isSessionRunning, self.isVoiceAuthorizedInSystem else { return }
+                guard let self, self.isSessionRunning, self.wantsVoiceListening, self.isVoiceAuthorizedInSystem else { return }
+                let reason = reasonRaw.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
+                guard reason == .newDeviceAvailable
+                    || reason == .oldDeviceUnavailable
+                    || reason == .override else {
+                    return
+                }
+                self.stateBox.isAudioTapInstalled = false
                 self.restartRecognitionTaskSeamlessly()
             }
         })
@@ -1582,16 +1657,18 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
                 self.stateBox.isAudioTapInstalled = false
                 self.audioEngine.reset()
                 self.isVoiceListening = false
-                self.restartVoicePipeline()
+                if self.wantsVoiceListening {
+                    self.restartVoicePipeline()
+                }
             }
         })
     }
 
     private func restartVoicePipeline() {
-        guard isSessionRunning else { return }
+        guard isSessionRunning, wantsVoiceListening else { return }
         stateBox.isRestartingRecognition = false
         stopVoiceTrigger()
-        if isSessionRunning, isVoiceAuthorizedInSystem {
+        if isSessionRunning, wantsVoiceListening, isVoiceAuthorizedInSystem {
             voiceStatus = .starting
             startVoiceListening()
         }
@@ -1599,7 +1676,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
     nonisolated func speechRecognizer(_ speechRecognizer: SFSpeechRecognizer, availabilityDidChange available: Bool) {
         Task { @MainActor [weak self] in
-            guard let self, self.isSessionRunning else { return }
+            guard let self, self.isSessionRunning, self.wantsVoiceListening else { return }
             if available {
                 if !self.isVoiceListening, self.isVoiceAuthorizedInSystem {
                     self.restartRecognitionTaskSeamlessly()
@@ -1615,7 +1692,7 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
 
     func speakDebouncedWarning(_ message: String) {
         guard voiceGuidanceEnabled, !message.isEmpty, !isCapturing else { return }
-        guard !speechSynthesizer.isSpeaking else { return }
+        guard !stateBox.isTTSSpeakingState else { return }
         let now = Date()
         let elapsed = now.timeIntervalSince(lastSpokenTime)
         if message == lastSpokenMessage {
@@ -1628,19 +1705,34 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         speak(message, forceSpeak: false)
     }
 
+    private func stopSpeechImmediately() {
+        stateBox.isTTSSpeakingState = false
+        isTTSSpeaking = false
+        speechQueue.async { [weak self] in
+            guard let self else { return }
+            if self.speechSynthesizer.isSpeaking {
+                self.speechSynthesizer.stopSpeaking(at: .immediate)
+            }
+        }
+    }
+
     private func speak(_ text: String, forceSpeak: Bool) {
         guard forceSpeak || voiceGuidanceEnabled else { return }
-        if forceSpeak && speechSynthesizer.isSpeaking {
-            speechSynthesizer.stopSpeaking(at: .immediate)
-        } else if !forceSpeak && speechSynthesizer.isSpeaking {
-            return
+        let volume: Float = forceSpeak ? 0.6 : 0.4
+        speechQueue.async { [weak self] in
+            guard let self else { return }
+            if forceSpeak && self.speechSynthesizer.isSpeaking {
+                self.speechSynthesizer.stopSpeaking(at: .immediate)
+            } else if !forceSpeak && self.speechSynthesizer.isSpeaking {
+                return
+            }
+            let utterance = AVSpeechUtterance(string: text)
+            utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+            utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+            utterance.pitchMultiplier = 1.0
+            utterance.volume = volume
+            self.speechSynthesizer.speak(utterance)
         }
-        let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
-        utterance.pitchMultiplier = 1.0
-        utterance.volume = forceSpeak ? 0.6 : 0.4
-        speechSynthesizer.speak(utterance)
     }
 
     /// Called from live analysis and the view so alignment-gated countdowns (like Auto-Capture)
@@ -1675,14 +1767,14 @@ final class HeadshotGuidanceService: NSObject, HeadshotGuidanceServiceProtocol, 
         lastSpokenMessage = ""
 
         if wasSpeakingCountdown {
-            speechSynthesizer.stopSpeaking(at: .immediate)
+            stopSpeechImmediately()
         }
         speakCurrentPoseGuidanceIfNeeded()
     }
 
     private func speakCurrentPoseGuidanceIfNeeded() {
         guard voiceGuidanceEnabled, !isCapturing, !isCountdownInProgress else { return }
-        guard !speechSynthesizer.isSpeaking else {
+        guard !stateBox.isTTSSpeakingState else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
                 self?.speakCurrentPoseGuidanceIfNeeded()
             }

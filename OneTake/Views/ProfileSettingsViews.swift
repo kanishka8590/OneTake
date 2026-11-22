@@ -71,6 +71,7 @@ struct RecordingSettingsView: View {
                 }
             }
         }
+        .scrollEdgeHaptics()
         .navigationTitle("Recording settings")
         .toolbar(.hidden, for: .tabBar)
     }
@@ -104,6 +105,7 @@ struct NotificationPreferencesView: View {
                 Text(authorizationNote ?? "We only send the local reminders you choose.")
             }
         }
+        .scrollEdgeHaptics()
         .navigationTitle("Notifications")
         .toolbar(.hidden, for: .tabBar)
         .task {
@@ -221,6 +223,7 @@ struct PrivacyAndDataView: View {
                 Text("Deleting local data removes auditions, recordings, practice sessions, and your profile from this device.")
             }
         }
+        .scrollEdgeHaptics()
         .navigationTitle("Privacy & data")
         .toolbar(.hidden, for: .tabBar)
         .task {
@@ -228,6 +231,7 @@ struct PrivacyAndDataView: View {
         }
         .sheet(isPresented: $showingPolicy) {
             PrivacyPolicyView()
+                .presentationBackground(Theme.Colors.canvasBackground)
         }
     }
 
@@ -279,6 +283,7 @@ private struct PrivacyPolicyView: View {
                 }
                 .padding(Theme.Layout.screenHPadding)
             }
+            .scrollEdgeHaptics()
             .background(Theme.Colors.canvasBackground)
             .navigationTitle("Privacy Policy")
             .navigationBarTitleDisplayMode(.inline)

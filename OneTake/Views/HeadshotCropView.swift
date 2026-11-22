@@ -5,7 +5,32 @@ struct HeadshotCropView: View {
 
     let originalImage: UIImage
     let defaultRatio: HeadshotAspectRatio
+    let angle: HeadshotAngle?
+    let batchProgress: (current: Int, total: Int)?
     let onCropConfirmed: (UIImage, HeadshotAspectRatio, HeadshotCropPreset) -> Void
+
+    init(
+        originalImage: UIImage,
+        defaultRatio: HeadshotAspectRatio,
+        angle: HeadshotAngle? = nil,
+        batchProgress: (current: Int, total: Int)? = nil,
+        onCropConfirmed: @escaping (UIImage, HeadshotAspectRatio, HeadshotCropPreset) -> Void
+    ) {
+        self.originalImage = originalImage
+        self.defaultRatio = defaultRatio
+        self.angle = angle
+        self.batchProgress = batchProgress
+        self.onCropConfirmed = onCropConfirmed
+    }
+
+    static func navigationTitle(for angle: HeadshotAngle?) -> String {
+        switch angle {
+        case .front: return "Crop Front"
+        case .left: return "Crop Left Profile"
+        case .right: return "Crop Right Profile"
+        case nil: return "Adjust Crop"
+        }
+    }
 
     @State private var selectedRatio: HeadshotAspectRatio = .ratio4x5
     @State private var selectedPreset: HeadshotCropPreset = .theatrical
@@ -33,6 +58,7 @@ struct HeadshotCropView: View {
                         HStack(spacing: 8) {
                             ForEach(HeadshotCropPreset.allCases, id: \.self) { preset in
                                 Button {
+                                    Haptics.selectionTick()
                                     selectedPreset = preset
                                     updateRatioForPreset(preset)
                                     generateAutoCrop()
@@ -151,6 +177,7 @@ struct HeadshotCropView: View {
                     .pickerStyle(.segmented)
                     .padding(.horizontal, 24)
                     .onChange(of: selectedRatio) { _, newRatio in
+                        Haptics.selectionTick()
                         if selectedPreset == .commercial && newRatio != .free {
                             selectedPreset = .theatrical
                         }
@@ -185,12 +212,15 @@ struct HeadshotCropView: View {
                         }
                     }
 
-                    Spacer()
-
-                    // Confirm Crop
-                    Button {
-                        applyAndConfirmCrop()
-                    } label: {
+                    Spacer(minLength: 8)
+                }
+            }
+            .floatingBottomActionBar(horizontalPadding: 24) {
+                let disabled = croppedPreviewImage == nil || isProcessingCrop || isApplyingCrop
+                Button {
+                    applyAndConfirmCrop()
+                } label: {
+                    Group {
                         if isApplyingCrop {
                             ProgressView()
                                 .tint(.white)
@@ -198,19 +228,26 @@ struct HeadshotCropView: View {
                             Text("Apply Crop")
                         }
                     }
-                    .primaryCapsuleButton()
-                    .disabled(croppedPreviewImage == nil || isProcessingCrop || isApplyingCrop)
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 24)
+                    .primaryCapsuleButton(disabled: disabled)
                 }
+                .buttonStyle(.plain)
+                .disabled(disabled)
             }
-            .navigationTitle("Adjust Crop")
+            .navigationTitle(Self.navigationTitle(for: angle))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         autoCropTask?.cancel()
                         dismiss()
+                    }
+                }
+                if let batchProgress, batchProgress.total > 1 {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Text("\(batchProgress.current) of \(batchProgress.total)")
+                            .font(Theme.Typography.captionBadge)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                            .accessibilityLabel("Headshot \(batchProgress.current) of \(batchProgress.total)")
                     }
                 }
             }
@@ -304,6 +341,7 @@ struct HeadshotCropView: View {
     private func applyAndConfirmCrop() {
         guard let preview = croppedPreviewImage else { return }
         if zoomScale <= 1.001 && panOffset == .zero {
+            Haptics.success()
             onCropConfirmed(preview, selectedRatio, selectedPreset)
             dismiss()
             return

@@ -60,7 +60,11 @@ extension CuePartnerAudioEngineProtocol {
 final class CuePartnerAudioEngine: NSObject, CuePartnerAudioEngineProtocol {
     static let shared = CuePartnerAudioEngine()
 
-    var isRecordingCue: Bool = false
+    var isRecordingCue: Bool = false {
+        didSet {
+            Haptics.setMicCaptureActive(isRecordingCue, source: "cue")
+        }
+    }
     var isCuePlaying: Bool = false
     var isListening: Bool = false
     var currentAudioLevel: Float = 0.0

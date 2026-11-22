@@ -56,10 +56,26 @@ struct ProfileView: View {
                     }
 
                     // Profile & App Settings
-                    Section("Profile & settings") {
+                    Section {
                         NavigationLink("Recording settings") { RecordingSettingsView(appState: appState) }
                         NavigationLink("Notification Preferences") { NotificationPreferencesView(appState: appState) }
                         NavigationLink("Privacy & data") { PrivacyAndDataView(appState: appState) }
+
+                        Picker("Haptic feedback", selection: Bindable(appState.settings).hapticFeedbackLevel) {
+                            ForEach(HapticFeedbackLevel.allCases, id: \.self) { level in
+                                Text(level.rawValue).tag(level)
+                            }
+                        }
+                        .onChange(of: appState.settings.hapticFeedbackLevel) { _, newLevel in
+                            Haptics.setLevel(newLevel)
+                            if newLevel != .off {
+                                Haptics.impact(.light, tier: .essential)
+                            }
+                        }
+                    } header: {
+                        Text("Profile & settings")
+                    } footer: {
+                        Text("Selective cues captures, framing lock, and exports. Rich adds subtle feedback to screen edges and controls.")
                     }
 
                     // Demo Mode
@@ -156,6 +172,7 @@ struct ProfileView: View {
                 .listStyle(.insetGrouped)
                 .listSectionSpacing(.compact)
                 .scrollContentBackground(.hidden)
+                .scrollEdgeHaptics()
                 .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.large)
@@ -173,9 +190,11 @@ struct ProfileView: View {
             }
             .sheet(isPresented: $showingEditProfile) {
                 EditProfileSheet(appState: appState, isPresented: $showingEditProfile)
+                    .presentationBackground(Theme.Colors.canvasBackground)
             }
             .sheet(isPresented: $showingSignIn) {
                 AuthView(appState: appState)
+                    .presentationBackground(Theme.Colors.canvasBackground)
             }
         }
     }
@@ -347,6 +366,9 @@ struct EditProfileSheet: View {
                     PersonalDetailsFormRows(draft: $draft, includeEmail: true)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Edit Profile")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -306,4 +306,104 @@ final class MediaStorageAndModelsTests: XCTestCase {
         XCTAssertTrue(auditionMissingFiles.isSlateReady)
         XCTAssertTrue(auditionMissingFiles.isAuditionReady)
     }
+
+    func testAuditionCustomHeroImageCleanupAndMigration() throws {
+        let folder = "TestHero_\(UUID().uuidString)"
+        let folderURL = MediaStorage.documentsDirectory.appendingPathComponent(folder, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folderURL) }
+
+        let heroRelPath = try MediaStorage.saveData(Data([0xFF, 0xD8, 0xFF]), relativePath: "\(folder)/hero.jpg")
+        let absHeroPath = MediaStorage.documentsDirectory.appendingPathComponent(heroRelPath).path
+        let audition = Audition(
+            projectName: "Hero Project",
+            heroArtworkName: Theme.Artwork.dramaBanner,
+            heroImagePath: absHeroPath
+        )
+
+        XCTAssertTrue(MediaStorage.migratePathsIfNeeded(auditions: [audition], scripts: []))
+        XCTAssertEqual(audition.heroImagePath, heroRelPath)
+        XCTAssertEqual(audition.heroArtworkName, Theme.Artwork.dramaBanner)
+        XCTAssertTrue(MediaStorage.fileExists(at: audition.heroImagePath))
+
+        MediaStorage.cleanupFiles(for: audition)
+        XCTAssertFalse(MediaStorage.fileExists(at: heroRelPath))
+    }
+
+    func testAuditionDeadlineUrgencyLabelUsesCalendarDaysConsistently() throws {
+        let cal = Calendar.current
+        let now = try XCTUnwrap(cal.date(from: DateComponents(year: 2026, month: 11, day: 20, hour: 9, minute: 0)))
+
+        // Same day 5h ahead -> hours
+        let sameDay = try XCTUnwrap(cal.date(byAdding: .hour, value: 5, to: now))
+        XCTAssertEqual(Audition(deadline: sameDay).deadlineUrgencyLabel(referenceDate: now), "Due in 5h")
+
+        // Next calendar day even if <24h away (e.g. tomorrow 6 AM vs today 9 AM = 21h) -> Due Tomorrow
+        let tomorrowEarly = try XCTUnwrap(cal.date(from: DateComponents(year: 2026, month: 11, day: 21, hour: 6, minute: 0)))
+        XCTAssertEqual(Audition(deadline: tomorrowEarly).deadlineUrgencyLabel(referenceDate: now), "Due Tomorrow")
+
+        // 3 calendar days ahead even if <72h away (e.g. Nov 23 6 AM vs Nov 20 9 AM) -> 3 Days Left
+        let threeDaysEarly = try XCTUnwrap(cal.date(from: DateComponents(year: 2026, month: 11, day: 23, hour: 6, minute: 0)))
+        let audition = Audition(deadline: threeDaysEarly)
+        XCTAssertEqual(audition.daysUntilDeadline(from: now), 3)
+        XCTAssertEqual(audition.deadlineUrgencyLabel(referenceDate: now), "3 Days Left")
+
+        // Past deadline -> Overdue; no deadline -> No Deadline; sent -> Submitted
+        let past = try XCTUnwrap(cal.date(byAdding: .hour, value: -1, to: now))
+        XCTAssertEqual(Audition(deadline: past).deadlineUrgencyLabel(referenceDate: now), "Overdue")
+        XCTAssertEqual(Audition(hasDeadline: false).deadlineUrgencyLabel(referenceDate: now), "No Deadline")
+        XCTAssertEqual(Audition(deadline: past, statusRaw: AuditionStatus.sent.rawValue).deadlineUrgencyLabel(referenceDate: now), "Submitted")
+    }
+
+    func testAuditionRequiredDeliverablesReflectSubmissionRequirements() throws {
+        let folder = "TestReqs_\(UUID().uuidString)"
+        let folderURL = MediaStorage.documentsDirectory.appendingPathComponent(folder, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folderURL) }
+
+        _ = try MediaStorage.saveData(Data([1]), relativePath: "\(folder)/front.jpg")
+        _ = try MediaStorage.saveData(Data([2]), relativePath: "\(folder)/left.jpg")
+        _ = try MediaStorage.saveData(Data([3]), relativePath: "\(folder)/right.jpg")
+        _ = try MediaStorage.saveData(Data([4]), relativePath: "\(folder)/slate.mp4")
+        _ = try MediaStorage.saveData(Data([5]), relativePath: "\(folder)/clip.mp4")
+
+        // Empty requirements fall back to all 3 deliverables
+        let emptyReqs = Audition(requirements: [])
+        XCTAssertEqual(emptyReqs.requiredDeliverables, [.headshots, .slate, .audition])
+        XCTAssertEqual(emptyReqs.packageTotalCount, 3)
+        XCTAssertFalse(emptyReqs.isPackageComplete)
+
+        // When Self-Tape / Audition Clip is omitted or toggled off, only Headshots & Slate exist
+        let noSelfTape = Audition(
+            requirements: [
+                SubmissionRequirement(title: "Guided Headshots (3 Angles: Front, Left, Right)"),
+                SubmissionRequirement(title: "Slate / Introduction Video")
+            ],
+            headshots: [
+                HeadshotAsset(angle: .front, originalFilePath: "\(folder)/front.jpg", croppedFilePath: ""),
+                HeadshotAsset(angle: .left, originalFilePath: "\(folder)/left.jpg", croppedFilePath: ""),
+                HeadshotAsset(angle: .right, originalFilePath: "\(folder)/right.jpg", croppedFilePath: "")
+            ],
+            slateTakes: [VideoTake(title: "Slate", filePath: "\(folder)/slate.mp4", durationSeconds: 10, fileSizeMB: 1)],
+            auditionTakes: [VideoTake(title: "Clip", filePath: "\(folder)/clip.mp4", durationSeconds: 20, fileSizeMB: 2)]
+        )
+        XCTAssertTrue(noSelfTape.requiresHeadshots)
+        XCTAssertTrue(noSelfTape.requiresSlate)
+        XCTAssertFalse(noSelfTape.requiresAudition)
+        XCTAssertEqual(noSelfTape.requiredDeliverables, [.headshots, .slate])
+        XCTAssertEqual(noSelfTape.packageTotalCount, 2)
+        XCTAssertEqual(noSelfTape.packageReadyCount, 2)
+        XCTAssertTrue(noSelfTape.isPackageComplete)
+
+        // Adding Self-Tape requirement without a ready clip keeps package incomplete (2 of 3).
+        noSelfTape.auditionTakes = []
+        noSelfTape.requirements.append(SubmissionRequirement(title: "Audition Self-Tape Take"))
+        XCTAssertTrue(noSelfTape.requiresAudition)
+        XCTAssertEqual(noSelfTape.requiredDeliverables, [.headshots, .slate, .audition])
+        XCTAssertEqual(noSelfTape.packageTotalCount, 3)
+        XCTAssertEqual(noSelfTape.packageReadyCount, 2)
+        XCTAssertFalse(noSelfTape.isPackageComplete)
+
+        noSelfTape.auditionTakes = [VideoTake(title: "Clip", filePath: "\(folder)/clip.mp4", durationSeconds: 20, fileSizeMB: 2)]
+        XCTAssertEqual(noSelfTape.packageReadyCount, 3)
+        XCTAssertTrue(noSelfTape.isPackageComplete)
+    }
 }

@@ -145,6 +145,7 @@ struct TakeReviewView: View {
                     }
                     .padding(.bottom, 24)
                 }
+                .scrollEdgeHaptics()
             }
             .navigationTitle("Review Take")
             .navigationBarTitleDisplayMode(.inline)
@@ -157,21 +158,8 @@ struct TakeReviewView: View {
                     }
                     .disabled(isExporting)
                 }
-
-                ToolbarItem(placement: .confirmationAction) {
-                    if isExporting {
-                        ProgressView()
-                    } else {
-                        Button("Use Take") {
-                            finalizeAndSaveTake()
-                        }
-                        .font(Theme.Typography.cardTitle)
-                        .foregroundStyle(Theme.Colors.accent)
-                        .accessibilityLabel("Use This Take")
-                    }
-                }
             }
-            .safeAreaInset(edge: .bottom) {
+            .floatingBottomActionBar(horizontalPadding: 16) {
                 HStack(spacing: 12) {
                     Button {
                         teardownPlayer()
@@ -179,17 +167,28 @@ struct TakeReviewView: View {
                         onRetake()
                     } label: {
                         Label("Retake", systemImage: "arrow.counterclockwise")
-                            .font(.system(size: 15, weight: .semibold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
+                            .secondaryLavenderButton()
                     }
-                    .buttonStyle(.bordered)
-                    .tint(Theme.Colors.textPrimary)
+                    .buttonStyle(.plain)
                     .disabled(isExporting)
+
+                    Button {
+                        finalizeAndSaveTake()
+                    } label: {
+                        Group {
+                            if isExporting {
+                                ProgressView()
+                                    .tint(.white)
+                            } else {
+                                Text("Use Take")
+                            }
+                        }
+                        .primaryCapsuleButton(disabled: isExporting)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isExporting)
+                    .accessibilityLabel("Use This Take")
                 }
-                .padding(.horizontal, Theme.Layout.screenHPadding)
-                .padding(.vertical, 10)
-                .background(.ultraThinMaterial)
             }
             .alert("Export Failed", isPresented: $showingExportError) {
                 Button("Retry") {

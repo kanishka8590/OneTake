@@ -370,6 +370,7 @@ struct AuditionDetailsEditorView: View {
                     .padding(.top, 16)
                     .padding(.bottom, 28)
                 }
+                .scrollEdgeHaptics()
 
                 if isProcessingSides {
                     ZStack {
@@ -1054,6 +1055,9 @@ struct AuditionDetailsEditorView: View {
                     TextField("Enter project title", text: $draftProjectName)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Project Name")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1083,6 +1087,9 @@ struct AuditionDetailsEditorView: View {
                         .lineLimit(3...6)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Role Details")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1184,6 +1191,9 @@ struct AuditionDetailsEditorView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Deadline & Reminder")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1220,6 +1230,9 @@ struct AuditionDetailsEditorView: View {
                         .autocorrectionDisabled()
                 }
             }
+            .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Recipient Email")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1254,7 +1267,7 @@ struct AuditionDetailsEditorView: View {
                 title: "Guided Headshots (3 Angles: Front, Left, Right)",
                 subtitle: "Front, Left Profile & Right Profile photos",
                 icon: "person.crop.rectangle.stack",
-                matchKeywords: ["headshot"]
+                matchKeywords: PackageDeliverable.headshots.requirementKeywords
             ),
             PresetRequirementOption(
                 id: "slate",
@@ -1262,7 +1275,7 @@ struct AuditionDetailsEditorView: View {
                 title: "Slate / Introduction Video",
                 subtitle: "Name, agency & role introduction take",
                 icon: "person.wave.2",
-                matchKeywords: ["slate", "intro"]
+                matchKeywords: PackageDeliverable.slate.requirementKeywords
             ),
             PresetRequirementOption(
                 id: "selftape",
@@ -1270,7 +1283,7 @@ struct AuditionDetailsEditorView: View {
                 title: "Audition Self-Tape Take",
                 subtitle: "Main scene performance self-tape",
                 icon: "video",
-                matchKeywords: ["self-tape", "self tape", "audition", "monologue", "scene"]
+                matchKeywords: PackageDeliverable.audition.requirementKeywords
             )
         ]
     }
@@ -1370,6 +1383,9 @@ struct AuditionDetailsEditorView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Edit Requirements")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1420,6 +1436,9 @@ struct AuditionDetailsEditorView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .scrollEdgeHaptics()
+            .background(Theme.Colors.canvasBackground.ignoresSafeArea())
             .navigationTitle("Attach Sides")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
